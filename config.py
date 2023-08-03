@@ -1,0 +1,1 @@
+SYMBOL_SUFFIX = "__NaHCO3__"
