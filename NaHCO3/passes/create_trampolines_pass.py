@@ -3,12 +3,9 @@ from gtirb_rewriting import Pass, RewritingContext, Patch, patch_constraints
 from gtirb_rewriting.assembly import X86Syntax
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from capstone_gt import CsInsn
-from typing import Dict
-from uuid import UUID
 
-from datacls.copied_section_mapping import CopiedSectionMapping
-from utils.misc import distinguish_edges, generate_distinct_label_name
-from config import SYMBOL_SUFFIX
+from NaHCO3.datacls.copied_section_mapping import CopiedSectionMapping
+from NaHCO3.utils.misc import distinguish_edges, generate_distinct_label_name
 
 
 class CreateTrampolinesPass(Pass):

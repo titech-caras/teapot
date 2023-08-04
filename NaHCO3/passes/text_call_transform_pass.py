@@ -6,8 +6,8 @@ from capstone_gt import CsInsn
 from typing import List
 import functools
 
-from datacls.copied_section_mapping import CopiedSectionMapping
-from utils.misc import distinguish_edges, generate_distinct_label_name
+from NaHCO3.datacls.copied_section_mapping import CopiedSectionMapping
+from NaHCO3.utils.misc import distinguish_edges, generate_distinct_label_name
 
 
 class TextCallTransformPass(Pass):

@@ -1,8 +1,8 @@
 import gtirb
 from gtirb_rewriting import PassManager
 
-from preprocess.copy_section import copy_section
-from passes import CreateTrampolinesPass, TextCallTransformPass, TransientRetpolinesPass
+from NaHCO3.preprocess.copy_section import copy_section
+from NaHCO3.passes import CreateTrampolinesPass, TextCallTransformPass, TransientRetpolinesPass
 
 ir = gtirb.IR.load_protobuf("test/test.gtirb")
 module = ir.modules[0]

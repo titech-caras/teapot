@@ -1,9 +1,8 @@
 import gtirb
-from typing import Dict, Tuple
-from uuid import UUID
+from typing import Tuple
 
-from datacls.copied_section_mapping import CopiedSectionMapping
-from config import SYMBOL_SUFFIX
+from NaHCO3.datacls.copied_section_mapping import CopiedSectionMapping
+from NaHCO3.config import SYMBOL_SUFFIX
 
 
 def copy_section(section: gtirb.Section, name: str) \

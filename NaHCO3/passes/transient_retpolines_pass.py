@@ -2,11 +2,10 @@ import gtirb
 from gtirb_rewriting import Pass, RewritingContext, Patch, patch_constraints
 from gtirb_rewriting.assembly import X86Syntax
 from gtirb_capstone.instructions import GtirbInstructionDecoder
-from capstone_gt import CsInsn
 
-from datacls.copied_section_mapping import CopiedSectionMapping
-from utils.misc import distinguish_edges
-from config import SYMBOL_SUFFIX
+from NaHCO3.datacls.copied_section_mapping import CopiedSectionMapping
+from NaHCO3.utils.misc import distinguish_edges
+from NaHCO3.config import SYMBOL_SUFFIX
 
 
 class TransientRetpolinesPass(Pass):
@@ -37,12 +36,13 @@ class TransientRetpolinesPass(Pass):
 
     @patch_constraints(x86_syntax=X86Syntax.INTEL)
     def __patch(self, ctx):
+        r1, r2 = "r11", "r10"  # TODO: make it work with ctx.scratch_registers
         return f"""
-            pop r11
-            lea r10, [rip+{self.transient_section_end_symbol.name}]
-            cmp r10, r11
+            pop {r1}
+            lea {r2}, [rip+{self.transient_section_end_symbol.name}]
+            cmp {r2}, {r1}
             jl .L__retpoline_skip{SYMBOL_SUFFIX}
-            pop r11
+            pop {r1}
         .L__retpoline_skip{SYMBOL_SUFFIX}:
-            jmp r11            
+            jmp {r2}            
         """
