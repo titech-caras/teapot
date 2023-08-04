@@ -1,13 +1,13 @@
 import gtirb
 from typing import Dict, Tuple
 from uuid import UUID
-import functools
 
+from datacls.copied_section_mapping import CopiedSectionMapping
 from config import SYMBOL_SUFFIX
 
 
 def copy_section(section: gtirb.Section, name: str) \
-        -> Tuple[gtirb.Section, gtirb.Symbol, Dict[UUID, gtirb.CodeBlock], Dict[int, gtirb.Symbol]]:
+        -> Tuple[gtirb.Section, gtirb.Symbol, CopiedSectionMapping]:
     section_copy = gtirb.Section(
         name=name,
         byte_intervals=(),
@@ -82,4 +82,4 @@ def copy_section(section: gtirb.Section, name: str) \
             raise TypeError(symbolic_expression)
         byte_interval_copy.symbolic_expressions[pos] = symbolic_expression_copy
 
-    return section_copy, section_end_symbol, code_block_copy_mapping, symbol_copy_mapping
+    return section_copy, section_end_symbol, CopiedSectionMapping(code_block_copy_mapping, symbol_copy_mapping)
