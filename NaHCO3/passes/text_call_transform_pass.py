@@ -40,7 +40,7 @@ class TextCallTransformPass(Pass):
                     call_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
 
                     call_transform_target_symbol = gtirb.Symbol(
-                        name=generate_distinct_label_name(".__call_transform_target", fallthrough_edge.target.uuid),
+                        name=generate_distinct_label_name(".L__call_transform_target", fallthrough_edge.target.uuid),
                         payload=self.text_transient_mapping.code_blocks_map[fallthrough_edge.target.uuid],
                         module=module)
 

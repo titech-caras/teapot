@@ -1,5 +1,7 @@
 test/
 
+libcheckpoint_x64/build/
+
 # Created by gitignore.io
 ### Python ###
 # Byte-compiled / optimized / DLL files

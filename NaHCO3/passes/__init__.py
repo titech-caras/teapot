@@ -1,3 +1,4 @@
 from .create_trampolines_pass import CreateTrampolinesPass
 from .text_call_transform_pass import TextCallTransformPass
+from .text_insert_checkpoints_pass import TextInsertCheckpointsPass
 from .transient_retpolines_pass import TransientRetpolinesPass
