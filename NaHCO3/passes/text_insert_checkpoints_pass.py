@@ -46,10 +46,11 @@ class TextInsertCheckpointsPass(Pass):
     @staticmethod
     def __build_checkpoint_patch(block_uuid: UUID, make_checkpoint_symbol: gtirb.Symbol):
         return patch_constraints(x86_syntax=X86Syntax.INTEL)(lambda ctx: f"""
-            push r11
+            lea rsp, [rsp-8]
             push r11
             lea r11, [rip+{generate_distinct_label_name(".__trampoline_", block_uuid)}]
             mov [rsp+8], r11
             pop r11
             call {make_checkpoint_symbol.name}
+            lea rsp, [rsp+8]
         """)

@@ -1,5 +1,5 @@
 project(libcheckpoint_x64)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -fomit-frame-pointer")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")
 
 add_library(checkpoint_x64 SHARED checkpoint.c)

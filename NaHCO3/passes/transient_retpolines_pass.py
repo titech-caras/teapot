@@ -29,7 +29,7 @@ class TransientRetpolinesPass(Pass):
             for block in function.get_all_blocks():
                 if block.section != ".text":
                     continue
-                    
+
                 non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
                 if len(non_fallthrough_edges) == 0:
                     continue

@@ -6,12 +6,13 @@
 //#define ROB_LEN 224
 #define ROB_LEN 5
 
+#define MEM_HISTORY_LEN 1000
+
 #define MAX_CHECKPOINTS 3
 
 typedef struct memory_history {
-    void *addr;
+    void *aligned_addr;
     uint64_t data;
-    uint8_t size;
 } memory_history_t;
 
 typedef struct general_register_state {
@@ -28,6 +29,11 @@ typedef __attribute__((aligned(256))) struct checkpoint_metadata {
 
     uint64_t alignment[12];
 } checkpoint_metadata_t;
+
+typedef __attribute__((aligned(64))) struct xsave_area {
+    // Let's just give XSAVE more than enough room...
+    char data[2048];
+} xsave_area_t;
 
 void libcheckpoint_enable();
 void libcheckpoint_disable();

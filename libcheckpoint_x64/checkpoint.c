@@ -2,8 +2,11 @@
 #include <string.h>
 
 checkpoint_metadata_t checkpoint_metadata[MAX_CHECKPOINTS];
-memory_history_t memory_history[ROB_LEN];
+xsave_area_t processor_extended_states[MAX_CHECKPOINTS];
+
+memory_history_t memory_history[MEM_HISTORY_LEN];
 uint64_t checkpoint_cnt = MAX_CHECKPOINTS; // Library initially disabled
+uint64_t instruction_cnt = 0, memory_history_cnt = 0;
 
 void libcheckpoint_enable() {
     checkpoint_cnt = 0;
@@ -34,11 +37,25 @@ __attribute__((naked)) void make_checkpoint() {
         "mov (%rbx), %rax\n"
         "cmp $" STR(MAX_CHECKPOINTS) ", %rax\n"
         "jge .Lskip_checkpoint\n"
+        "incl (%rbx)\n" // Increment count in memory
+    );
+
+    // Store processor extended states
+    __asm __volatile__ (
+        "push %rax\n" // Save the original counter for now
+        "mov processor_extended_states@GOTPCREL(%rip), %rbx\n"
+        "shl $11, %rax\n" // XSAVE area is aligned to 2048 bytes
+        "add %rax, %rbx\n"
+        "push %rdx\n"
+        "mov $0xFFFFFFFF, %eax\n"
+        "mov $0xFFFFFFFF, %edx\n" // TODO: maybe save only the necessary components?
+        "xsave (%rbx)\n"
+        "pop %rdx\n"
+        "pop %rax\n"
     );
 
     // Dancing in stack to checkpoint %rax, %rbx, %rsp, return address, and FLAGS
     __asm__ __volatile__ (
-        "incl (%rbx)\n" // Increment count in memory
         "mov checkpoint_metadata@GOTPCREL(%rip), %rbx\n"
         "shl $8, %rax\n" // Because we assume metadata is aligned to 256 bytes
         "add %rbx, %rax\n"
@@ -75,28 +92,18 @@ __attribute__((naked)) void make_checkpoint() {
         // flags stored above
     );
 
-    // Check if is first checkpoint
+    // Store current counters
     __asm__ __volatile__ (
-        "cmp checkpoint_metadata@GOTPCREL(%rip), %rax\n"
-        "jne .Lnot_first_checkpoint\n"
-        // if is first checkpoint
-        "movq $0, 136(%rax)\n" // checkpoint->instruction_cnt
-        "movq $0, 144(%rax)\n" // checkpoint->memory_history_cnt
-        "jmp .Lcleanup_after_checkpoint\n"
-    );
-
-    // If is not first checkpoint, copy counters from previous checkpoint
-    __asm__ __volatile__ (
-        ".Lnot_first_checkpoint:\n"
-        "mov -120(%rax), %rbx\n" // prev_checkpoint->instruction_cnt
+        "mov instruction_cnt@GOTPCREL(%rip), %rbx\n"
+        "mov (%rbx), %rbx\n"
         "mov %rbx, 136(%rax)\n" // checkpoint->instruction_cnt
-        "mov -112(%rax), %rbx\n" // prevcheckpoint->memory_history_cnt
+        "mov memory_history_cnt@GOTPCREL(%rip), %rbx\n"
+        "mov (%rbx), %rbx\n"
         "mov %rbx, 144(%rax)\n" // checkpoint->memory_history_cnt
     );
 
-    // Exit cleanup, return to trampoline
+    // Exit cleanup, go to the trampoline
     __asm__ __volatile__ (
-        ".Lcleanup_after_checkpoint:"
         "pop %rbx\n"
         "pop %rax\n"
         "popfq\n"
@@ -104,7 +111,7 @@ __attribute__((naked)) void make_checkpoint() {
         "ret\n"
     );
 
-    // If we don't do checkpointing at all
+    // If we don't do checkpointing at all, we don't want to go to the trampoline
     __asm__ __volatile__ (
         ".Lskip_checkpoint:\n"
         "pop %rbx\n"
@@ -112,7 +119,6 @@ __attribute__((naked)) void make_checkpoint() {
         "mov %rax, 24(%rsp)\n" // overwrite trampoline address
         "pop %rax\n"
         "popfq\n"
-        "lea 8(%rsp), %rsp\n" // get rid of extra return address
         "ret\n"
     );
 
@@ -133,9 +139,22 @@ __attribute__((naked)) void restore_checkpoint_registers() {
     __asm__ __volatile__(
         "mov checkpoint_cnt@GOTPCREL(%rip), %rax\n"
         "mov (%rax), %rax\n"
+        "mov %rax, %r8\n" // Make a copy of the counter to use for XRSTOR stuff
         "mov checkpoint_metadata@GOTPCREL(%rip), %rbx\n"
         "shl $8, %rax\n" // Because we assume metadata is aligned to 256 bytes
         "add %rbx, %rax\n"
+    );
+
+    // Restore processor extended states
+    __asm __volatile__ (
+        "mov %rax, %r11\n"
+        "mov processor_extended_states@GOTPCREL(%rip), %r9\n"
+        "shl $11, %r8\n" // XSAVE area is aligned to 2048 bytes
+        "add %r9, %r8\n"
+        "mov $0xFFFFFFFF, %eax\n"
+        "mov $0xFFFFFFFF, %edx\n" // TODO: maybe restore only the necessary components?
+        "xrstor (%r8)\n"
+        "mov %r11, %rax\n"
     );
 
     // Restore registers
@@ -160,6 +179,7 @@ __attribute__((naked)) void restore_checkpoint_registers() {
 
     __asm__ __volatile__(
         "mov 128(%rax), %rbx\n" // checkpoint->flags
+        "sub $8, %rsp\n" // balance stack
         "push %rbx\n"
         "popfq\n"
         "mov 152(%rax), %rbx\n" // checkpoint->return_address
