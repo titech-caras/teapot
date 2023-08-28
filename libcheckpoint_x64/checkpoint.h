@@ -11,7 +11,7 @@
 #define MAX_CHECKPOINTS 3
 
 typedef struct memory_history {
-    void *aligned_addr;
+    void *addr;
     uint64_t data;
 } memory_history_t;
 
@@ -24,7 +24,7 @@ typedef struct general_register_state {
 typedef __attribute__((aligned(256))) struct checkpoint_metadata {
     // Size must be kept at 32 * 8 bytes
     general_register_state_t registers;
-    uint64_t instruction_cnt, memory_history_cnt;
+    uint64_t instruction_cnt, memory_history_top;
     uint64_t return_address;
 
     uint64_t alignment[12];

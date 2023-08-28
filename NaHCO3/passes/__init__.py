@@ -1,5 +1,6 @@
 from .create_trampolines_pass import CreateTrampolinesPass
 from .text_call_transform_pass import TextCallTransformPass
 from .text_insert_checkpoints_pass import TextInsertCheckpointsPass
+from .transient_insert_memory_logs_pass import TransientInsertMemoryLogsPass
 from .transient_insert_restore_points_pass import TransientInsertRestorePointsPass
 from .transient_retpolines_pass import TransientRetpolinesPass
