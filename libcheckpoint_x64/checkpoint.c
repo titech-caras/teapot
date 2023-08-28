@@ -16,6 +16,9 @@ void libcheckpoint_disable() {
     checkpoint_cnt = MAX_CHECKPOINTS;
 }
 
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
+
 /*
  * Takes two stack arguments: trampoline address and checkpoint return address.
  * The function will pop the checkpoint return address from stack and return to trampoline address.
@@ -25,8 +28,6 @@ void libcheckpoint_disable() {
  * call make_checkpoint
  */
 __attribute__((naked)) void make_checkpoint() {
-#define STR_HELPER(x) #x
-#define STR(x) STR_HELPER(x)
 
     // Store %rax and FLAGS
     __asm__ __volatile__ (
@@ -35,7 +36,7 @@ __attribute__((naked)) void make_checkpoint() {
         "push %rbx\n"
         "mov checkpoint_cnt@GOTPCREL(%rip), %rbx\n"
         "mov (%rbx), %rax\n"
-        "cmp $" STR(MAX_CHECKPOINTS) ", %rax\n"
+        "cmp $" STR(MAX_CHECKPOINTS) ", %rax\n" // TODO: use a better strategy to determine checkpoint skipping
         "jge .Lskip_checkpoint\n"
         "incl (%rbx)\n" // Increment count in memory
     );
@@ -121,9 +122,29 @@ __attribute__((naked)) void make_checkpoint() {
         "popfq\n"
         "ret\n"
     );
+}
 
-#undef STR_HELPER
-#undef STR
+__attribute__((naked)) void add_instruction_counter_check_restore() {
+    __asm__ __volatile__ (
+        "pushfq\n"
+        "push %rax\n"
+        "push %rbx\n"
+        "mov instruction_cnt@GOTPCREL(%rip), %rbx\n"
+        "mov (%rbx), %rax\n"
+        "add 32(%rsp), %rax\n" // instruction count parameter
+        "cmp $" STR(ROB_LEN) ", %rax\n"
+        "jge .Lgo_restore_checkpoint\n"
+        "mov %rax, (%rbx)\n"
+        "pop %rbx\n"
+        "pop %rax\n"
+        "popfq\n"
+        "ret\n"
+    );
+
+    __asm__ __volatile__ (
+        ".Lgo_restore_checkpoint:\n"
+        "call *restore_checkpoint@GOTPCREL(%rip)\n"
+    );
 }
 
 void restore_checkpoint() {

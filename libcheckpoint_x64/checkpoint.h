@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-//#define ROB_LEN 224
+//#define ROB_LEN 250
 #define ROB_LEN 5
 
 #define MEM_HISTORY_LEN 1000
@@ -38,6 +38,7 @@ typedef __attribute__((aligned(64))) struct xsave_area {
 void libcheckpoint_enable();
 void libcheckpoint_disable();
 void make_checkpoint();
+void add_instruction_counter_check_restore();
 void restore_checkpoint();
 void restore_checkpoint_registers();
 /*void log_write(void *addr, uint64_t data, uint8_t size);
