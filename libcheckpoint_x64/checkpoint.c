@@ -21,7 +21,6 @@ void libcheckpoint_disable() {
 
 /*
  * Takes two stack arguments: trampoline address and checkpoint return address.
- * The function will pop the checkpoint return address from stack and return to trampoline address.
  * Should be called like:
  *
  * push 0x114514 // trampoline address
@@ -34,17 +33,16 @@ __attribute__((naked)) void make_checkpoint() {
         "pushfq\n"
         "push %rax\n"
         "push %rbx\n"
-        "mov checkpoint_cnt@GOTPCREL(%rip), %rbx\n"
-        "mov (%rbx), %rax\n"
+        "mov checkpoint_cnt, %rax\n"
         "cmp $" STR(MAX_CHECKPOINTS) ", %rax\n" // TODO: use a better strategy to determine checkpoint skipping
         "jge .Lskip_checkpoint\n"
-        "incl (%rbx)\n" // Increment count in memory
+        "incl checkpoint_cnt\n" // Increment count in memory
     );
 
     // Store processor extended states
     __asm __volatile__ (
         "push %rax\n" // Save the original counter for now
-        "mov processor_extended_states@GOTPCREL(%rip), %rbx\n"
+        "lea processor_extended_states, %rbx\n"
         "shl $11, %rax\n" // XSAVE area is aligned to 2048 bytes
         "add %rax, %rbx\n"
         "push %rdx\n"
@@ -57,7 +55,7 @@ __attribute__((naked)) void make_checkpoint() {
 
     // Dancing in stack to checkpoint %rax, %rbx, %rsp, return address, and FLAGS
     __asm__ __volatile__ (
-        "mov checkpoint_metadata@GOTPCREL(%rip), %rbx\n"
+        "lea checkpoint_metadata, %rbx\n"
         "shl $8, %rax\n" // Because we assume metadata is aligned to 256 bytes
         "add %rbx, %rax\n"
         "mov (%rsp), %rbx\n" // Original %rbx
@@ -95,11 +93,9 @@ __attribute__((naked)) void make_checkpoint() {
 
     // Store current counters
     __asm__ __volatile__ (
-        "mov instruction_cnt@GOTPCREL(%rip), %rbx\n"
-        "mov (%rbx), %rbx\n"
+        "mov instruction_cnt, %rbx\n"
         "mov %rbx, 136(%rax)\n" // checkpoint->instruction_cnt
-        "mov memory_history_cnt@GOTPCREL(%rip), %rbx\n"
-        "mov (%rbx), %rbx\n"
+        "mov memory_history_cnt, %rbx\n"
         "mov %rbx, 144(%rax)\n" // checkpoint->memory_history_cnt
     );
 
@@ -128,22 +124,14 @@ __attribute__((naked)) void add_instruction_counter_check_restore() {
     __asm__ __volatile__ (
         "pushfq\n"
         "push %rax\n"
-        "push %rbx\n"
-        "mov instruction_cnt@GOTPCREL(%rip), %rbx\n"
-        "mov (%rbx), %rax\n"
-        "add 32(%rsp), %rax\n" // instruction count parameter
+        "mov instruction_cnt, %rax\n"
+        "add 24(%rsp), %rax\n" // instruction count parameter
         "cmp $" STR(ROB_LEN) ", %rax\n"
-        "jge .Lgo_restore_checkpoint\n"
-        "mov %rax, (%rbx)\n"
-        "pop %rbx\n"
+        "jge restore_checkpoint\n"
+        "mov %rax, instruction_cnt\n"
         "pop %rax\n"
         "popfq\n"
         "ret\n"
-    );
-
-    __asm__ __volatile__ (
-        ".Lgo_restore_checkpoint:\n"
-        "call *restore_checkpoint@GOTPCREL(%rip)\n"
     );
 }
 
@@ -158,10 +146,9 @@ void restore_checkpoint() {
 __attribute__((naked)) void restore_checkpoint_registers() {
     // Load address of current metadata into %rax
     __asm__ __volatile__(
-        "mov checkpoint_cnt@GOTPCREL(%rip), %rax\n"
-        "mov (%rax), %rax\n"
+        "mov checkpoint_cnt, %rax\n"
         "mov %rax, %r8\n" // Make a copy of the counter to use for XRSTOR stuff
-        "mov checkpoint_metadata@GOTPCREL(%rip), %rbx\n"
+        "lea checkpoint_metadata, %rbx\n"
         "shl $8, %rax\n" // Because we assume metadata is aligned to 256 bytes
         "add %rbx, %rax\n"
     );
@@ -169,7 +156,7 @@ __attribute__((naked)) void restore_checkpoint_registers() {
     // Restore processor extended states
     __asm __volatile__ (
         "mov %rax, %r11\n"
-        "mov processor_extended_states@GOTPCREL(%rip), %r9\n"
+        "lea processor_extended_states, %r9\n"
         "shl $11, %r8\n" // XSAVE area is aligned to 2048 bytes
         "add %r9, %r8\n"
         "mov $0xFFFFFFFF, %eax\n"

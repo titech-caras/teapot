@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 //#define ROB_LEN 250
-#define ROB_LEN 5
+#define ROB_LEN 50
 
 #define MEM_HISTORY_LEN 1000
 
