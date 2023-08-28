@@ -18,7 +18,7 @@ void libcheckpoint_disable() {
 }
 
 void restore_checkpoint() {
-    while (memory_history_top > &memory_history[0]) {
+    while (memory_history_top > checkpoint_metadata[checkpoint_cnt].memory_history_top) {
         memory_history_top--;
         *(uint64_t*)(memory_history_top->addr) = memory_history_top->data;
     }

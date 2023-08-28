@@ -21,6 +21,7 @@ trampoline_section = gtirb.Section(name=".NaHCO3_trampolines", flags=transient_s
 trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)
 
 pass_manager = PassManager()
+pass_manager.add(TransientInsertRestorePointsPass(transient_section))
 pass_manager.add(CreateTrampolinesPass(text_section, trampoline_section, text_transient_mapping))
 pass_manager.run(ir)
 
@@ -28,7 +29,6 @@ pass_manager = PassManager()
 pass_manager.add(TextCallTransformPass(text_section, text_transient_mapping))
 pass_manager.add(TextInsertCheckpointsPass(text_section))
 pass_manager.add(TransientInsertMemoryLogsPass(transient_section))
-pass_manager.add(TransientInsertRestorePointsPass(transient_section))
 pass_manager.add(TransientRetpolinesPass(text_section, transient_section_end_symbol, text_transient_mapping))
 pass_manager.run(ir)
 

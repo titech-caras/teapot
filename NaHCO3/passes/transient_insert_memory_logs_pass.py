@@ -36,14 +36,20 @@ class TransientInsertMemoryLogsPass(Pass):
                 mem_write_operand = [x for x in instruction.operands if x.type == CS_OP_MEM and x.access & CS_AC_WRITE]
                 if len(mem_write_operand) != 0:
                     if instruction.avx_cc == X86_AVX_CC_INVALID and instruction.sse_cc == X86_SSE_CC_INVALID:
-                        # Instruction operand is under or equal to 64 bits
+                        # Memory operand is under or equal to 64 bits
                         rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
                             self.__build_memory_log_patch(
                                 self.__print_mem_operand(instruction, mem_write_operand[0].mem)
                             )))
-                insertion_offset += instruction.size
+                    else:
+                        # AVX/SSE memory operand
+                        # TODO: support AVX instructions
+                        pass
+                elif instruction.mnemonic == "push" or instruction.mnemonic == "call":
+                    rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
+                        self.__build_memory_log_patch("[rsp - 8]")))
 
-            # TODO: support stack push, call, and AVX instructions
+                insertion_offset += instruction.size
 
 
     @staticmethod
