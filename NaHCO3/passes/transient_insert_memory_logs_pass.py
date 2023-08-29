@@ -17,7 +17,6 @@ from NaHCO3.config import CHECKPOINT_LIB_NAME
 
 class TransientInsertMemoryLogsPass(Pass):
     transient_section: gtirb.Section
-
     def __init__(self, transient_section: gtirb.Section):
         self.transient_section = transient_section
         self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
@@ -47,7 +46,7 @@ class TransientInsertMemoryLogsPass(Pass):
                         pass
                 elif instruction.mnemonic == "push" or instruction.mnemonic == "call":
                     rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
-                        self.__build_memory_log_patch("[rsp - 8]")))
+                        self.__build_memory_log_patch("[rsp-8]")))
 
                 insertion_offset += instruction.size
 

@@ -9,38 +9,31 @@ from NaHCO3.config import SYMBOL_SUFFIX
 
 
 class TransientRetpolinesPass(Pass):
-    text_section: gtirb.Section
+    transient_section: gtirb.Section
     transient_section_end_symbol: gtirb.Symbol
-    text_transient_mapping: CopiedSectionMapping
 
-    def __init__(self, text_section: gtirb.Section, transient_section_end_symbol: gtirb.Symbol,
-                 text_transient_mapping: CopiedSectionMapping):
-        self.text_section = text_section
+    def __init__(self, transient_section: gtirb.Section, transient_section_end_symbol: gtirb.Symbol):
+        self.transient_section = transient_section
         self.transient_section_end_symbol = transient_section_end_symbol
-        self.text_transient_mapping = text_transient_mapping
 
-        self.decoder = GtirbInstructionDecoder(text_section.module.isa)
+        self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         for function in functions:
-            if function.get_name() == "main":
+            if next(iter(function.get_entry_blocks())).section.name != self.transient_section.name:
+                continue
+
+            if function.get_name() == "main" + SYMBOL_SUFFIX:
                 continue
 
             for block in function.get_all_blocks():
-                if block.section != ".text":
-                    continue
-
                 non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
                 if len(non_fallthrough_edges) == 0:
                     continue
 
-                transient_block = self.text_transient_mapping.code_blocks_map[block.uuid]
-
                 if non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Return:
-                    # TODO: do not transform if function is `main`
                     # last instruction must be `ret`
-                    rewriting_ctx.replace_at(transient_block, transient_block.size - 1, 1,
-                                             Patch.from_function(self.__patch))
+                    rewriting_ctx.replace_at(block, block.size - 1, 1, Patch.from_function(self.__patch))
 
     @patch_constraints(x86_syntax=X86Syntax.INTEL)
     def __patch(self, ctx):

@@ -1,4 +1,7 @@
+import uuid
+
 import gtirb
+import copy
 from typing import Tuple
 
 from NaHCO3.datacls.copied_section_mapping import CopiedSectionMapping
@@ -80,5 +83,35 @@ def copy_section(section: gtirb.Section, name: str) \
         else:
             raise TypeError(symbolic_expression)
         byte_interval_copy.symbolic_expressions[pos] = symbolic_expression_copy
+
+    new_edges = []
+    for edge in section.ir.cfg:
+        if isinstance(edge.source, gtirb.CodeBlock) and edge.source.byte_interval.section.name == section.name:
+            edge_copy = gtirb.Edge(
+                code_block_copy_mapping[edge.source.uuid],
+                code_block_copy_mapping.get(edge.target.uuid, edge.target),
+                copy.copy(edge.label)
+            )
+            new_edges.append(edge_copy)
+
+    section.ir.cfg.update(new_edges)
+
+    new_functions = []
+    for fn_uuid, entry_blocks in section.module.aux_data['functionEntries'].data.items():
+        if next(iter(entry_blocks)).section.name != section.name:
+            continue
+
+        new_entry_blocks = set([code_block_copy_mapping[b.uuid] for b in entry_blocks])
+        new_blocks = set([code_block_copy_mapping[b.uuid]
+                          for b in section.module.aux_data["functionBlocks"].data[fn_uuid]])
+        new_name = symbol_copy_mapping[section.module.aux_data["functionNames"].data.get(fn_uuid).uuid]
+
+        new_functions.append((new_entry_blocks, new_blocks, new_name))
+
+    for new_entry_blocks, new_blocks, new_name in new_functions:
+        fn_uuid = uuid.uuid4()
+        section.module.aux_data['functionEntries'].data[fn_uuid] = new_entry_blocks
+        section.module.aux_data["functionBlocks"].data[fn_uuid] = new_blocks
+        section.module.aux_data["functionNames"].data[fn_uuid] = new_name
 
     return section_copy, section_end_symbol, CopiedSectionMapping(code_block_copy_mapping, symbol_copy_mapping)

@@ -28,8 +28,9 @@ pass_manager.run(ir)
 pass_manager = PassManager()
 pass_manager.add(TextCallTransformPass(text_section, text_transient_mapping))
 pass_manager.add(TextInsertCheckpointsPass(text_section))
+
 pass_manager.add(TransientInsertMemoryLogsPass(transient_section))
-pass_manager.add(TransientRetpolinesPass(text_section, transient_section_end_symbol, text_transient_mapping))
+pass_manager.add(TransientRetpolinesPass(transient_section, transient_section_end_symbol))
 pass_manager.run(ir)
 
 ir.save_protobuf("test/test_modified.gtirb")
