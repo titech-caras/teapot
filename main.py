@@ -1,5 +1,7 @@
 import gtirb
 from gtirb_rewriting import PassManager
+from gtirb_live_register_analysis import LiveRegisterManager
+import pprint
 
 from NaHCO3.preprocess.copy_section import copy_section
 from NaHCO3.passes import (
@@ -13,6 +15,8 @@ from NaHCO3.passes import (
 ir = gtirb.IR.load_protobuf("test/test.gtirb")
 module = ir.modules[0]
 text_section = [s for s in module.sections if s.name == ".text"][0]
+
+reg_manager = LiveRegisterManager(module)
 
 transient_section, transient_section_end_symbol, text_transient_mapping = (
     copy_section(text_section, ".NaHCO3_transient"))
@@ -29,7 +33,7 @@ pass_manager = PassManager()
 pass_manager.add(TextCallTransformPass(text_section, text_transient_mapping))
 pass_manager.add(TextInsertCheckpointsPass(text_section))
 
-pass_manager.add(TransientInsertMemoryLogsPass(transient_section))
+pass_manager.add(TransientInsertMemoryLogsPass(reg_manager, transient_section))
 pass_manager.add(TransientRetpolinesPass(transient_section, transient_section_end_symbol))
 pass_manager.run(ir)
 

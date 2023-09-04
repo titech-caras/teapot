@@ -2,9 +2,10 @@ import capstone_gt.x86
 import gtirb
 from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints,
                              AllFunctionsScope, FunctionPosition, BlockPosition)
-from gtirb_rewriting.patches import CallPatch
+from gtirb_rewriting import InsertionContext
 from gtirb_rewriting.assembly import X86Syntax
 from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_live_register_analysis import LiveRegisterManager
 from capstone_gt import CsInsn, CS_OP_MEM, CS_AC_WRITE
 from capstone_gt.x86 import X86_AVX_CC_INVALID, X86_SSE_CC_INVALID
 from typing import Iterable
@@ -16,8 +17,10 @@ from NaHCO3.config import CHECKPOINT_LIB_NAME
 
 
 class TransientInsertMemoryLogsPass(Pass):
+    reg_manager: LiveRegisterManager
     transient_section: gtirb.Section
-    def __init__(self, transient_section: gtirb.Section):
+    def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section):
+        self.reg_manager = reg_manager
         self.transient_section = transient_section
         self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
 
@@ -25,30 +28,33 @@ class TransientInsertMemoryLogsPass(Pass):
         rewriting_ctx.get_or_insert_extern_symbol("register_scratchpad", "")
         rewriting_ctx.get_or_insert_extern_symbol("memory_history_top", "")
 
-        for block in self.transient_section.code_blocks:
-            if block.size == 0:
+        for function in functions:
+            if next(iter(function.get_entry_blocks())).section.name != self.transient_section.name:
                 continue
+            self.reg_manager.analyze(function)
 
-            instructions: Iterable[CsInsn] = self.decoder.get_instructions(block)
-            insertion_offset = 0
-            for instruction in instructions:
-                mem_write_operand = [x for x in instruction.operands if x.type == CS_OP_MEM and x.access & CS_AC_WRITE]
-                if len(mem_write_operand) != 0:
-                    if instruction.avx_cc == X86_AVX_CC_INVALID and instruction.sse_cc == X86_SSE_CC_INVALID:
-                        # Memory operand is under or equal to 64 bits
+            for block in function.get_all_blocks():
+                instructions: Iterable[CsInsn] = self.decoder.get_instructions(block)
+                insertion_offset = 0
+                for idx, instruction in enumerate(instructions):
+                    mem_write_operand = [x for x in instruction.operands if x.type == CS_OP_MEM and x.access & CS_AC_WRITE]
+                    if len(mem_write_operand) != 0:
+                        if instruction.avx_cc == X86_AVX_CC_INVALID and instruction.sse_cc == X86_SSE_CC_INVALID:
+                            # Memory operand is under or equal to 64 bits
+                            rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
+                                self.__build_memory_log_patch(
+                                    function, block, idx,
+                                    self.__print_mem_operand(instruction, mem_write_operand[0].mem)
+                                )))
+                        else:
+                            # AVX/SSE memory operand
+                            # TODO: support AVX instructions
+                            pass
+                    elif instruction.mnemonic == "push" or instruction.mnemonic == "call":
                         rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
-                            self.__build_memory_log_patch(
-                                self.__print_mem_operand(instruction, mem_write_operand[0].mem)
-                            )))
-                    else:
-                        # AVX/SSE memory operand
-                        # TODO: support AVX instructions
-                        pass
-                elif instruction.mnemonic == "push" or instruction.mnemonic == "call":
-                    rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
-                        self.__build_memory_log_patch("[rsp-8]")))
+                            self.__build_memory_log_patch(function, block, idx, "[rsp-8]")))
 
-                insertion_offset += instruction.size
+                    insertion_offset += instruction.size
 
 
     @staticmethod
@@ -75,19 +81,20 @@ class TransientInsertMemoryLogsPass(Pass):
 
         return s
 
-    @staticmethod
-    def __build_memory_log_patch(mem_operand: str):
-        return patch_constraints(x86_syntax=X86Syntax.INTEL)(lambda ctx: f"""
-            mov [register_scratchpad + 88], r11
-            mov [register_scratchpad + 96], r12
-            lea r11, {mem_operand}
-            mov r12, [memory_history_top]
-            mov [r12], r11
-            mov r11, [r11]
-            mov [r12 + 8], r11
-            lea r12, [r12 + 16]
-            mov memory_history_top, r12            
-            mov r11, [register_scratchpad + 88]
-            mov r12, [register_scratchpad + 96]    
-        """)
+    def __build_memory_log_patch(self, function, block, instruction_idx, mem_operand: str):
+        @self.reg_manager.allocate_registers(function, block, instruction_idx, allow_fallback=False)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=2)
+        def patch(ctx: InsertionContext):
+            r1, r2 = ctx.scratch_registers
+            return f"""
+                lea {r1}, {mem_operand}
+                mov {r2}, [memory_history_top]
+                mov [{r2}], {r1}
+                mov {r1}, [{r1}]
+                mov [{r2} + 8], {r1}
+                lea {r2}, [{r2} + 16]
+                mov memory_history_top, {r2}
+            """
+
+        return patch
 
