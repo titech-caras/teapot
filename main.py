@@ -18,7 +18,7 @@ text_section = [s for s in module.sections if s.name == ".text"][0]
 
 reg_manager = LiveRegisterManager(module)
 
-transient_section, transient_section_end_symbol, text_transient_mapping = (
+transient_section, transient_section_start_symbol, transient_section_end_symbol, text_transient_mapping = (
     copy_section(text_section, ".NaHCO3_transient"))
 
 trampoline_section = gtirb.Section(name=".NaHCO3_trampolines", flags=transient_section.flags, module=module)
@@ -34,7 +34,7 @@ pass_manager.add(TextInsertCheckpointsPass(text_section))
 
 pass_manager.add(TransientInsertMemoryLogsPass(reg_manager, transient_section))
 pass_manager.add(TransientInsertRestorePointsPass(reg_manager, transient_section))
-pass_manager.add(TransientRetpolinesPass(transient_section, transient_section_end_symbol))
+pass_manager.add(TransientRetpolinesPass(transient_section, transient_section_start_symbol, transient_section_end_symbol))
 pass_manager.run(ir)
 
 ir.save_protobuf("test/test_modified.gtirb")

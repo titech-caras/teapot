@@ -9,7 +9,7 @@ from NaHCO3.config import SYMBOL_SUFFIX
 
 
 def copy_section(section: gtirb.Section, name: str) \
-        -> Tuple[gtirb.Section, gtirb.Symbol, CopiedSectionMapping]:
+        -> Tuple[gtirb.Section, gtirb.Symbol, gtirb.Symbol, CopiedSectionMapping]:
     section_copy = gtirb.Section(
         name=name,
         byte_intervals=(),
@@ -53,6 +53,17 @@ def copy_section(section: gtirb.Section, name: str) \
             module=section.module
         )
         symbol_copy_mapping[symbol.uuid] = symbol_copy
+
+    section_start_symbol = gtirb.Symbol(
+        name=".__section_start" + SYMBOL_SUFFIX,
+        uuid=None,
+        payload=gtirb.CodeBlock(
+            size=0, offset=0, uuid=None,
+            byte_interval=byte_interval_copy
+        ),
+        at_end=False,
+        module=section.module
+    )
 
     section_end_symbol = gtirb.Symbol(
         name=".__section_end" + SYMBOL_SUFFIX,
@@ -114,4 +125,5 @@ def copy_section(section: gtirb.Section, name: str) \
         section.module.aux_data["functionBlocks"].data[fn_uuid] = new_blocks
         section.module.aux_data["functionNames"].data[fn_uuid] = new_name
 
-    return section_copy, section_end_symbol, CopiedSectionMapping(code_block_copy_mapping, symbol_copy_mapping)
+    return (section_copy, section_start_symbol, section_end_symbol,
+            CopiedSectionMapping(code_block_copy_mapping, symbol_copy_mapping))

@@ -10,10 +10,13 @@ from NaHCO3.config import SYMBOL_SUFFIX
 
 class TransientRetpolinesPass(Pass):
     transient_section: gtirb.Section
+    transient_section_start_symbol: gtirb.Symbol
     transient_section_end_symbol: gtirb.Symbol
 
-    def __init__(self, transient_section: gtirb.Section, transient_section_end_symbol: gtirb.Symbol):
+    def __init__(self, transient_section: gtirb.Section,
+                 transient_section_start_symbol: gtirb.Symbol, transient_section_end_symbol: gtirb.Symbol):
         self.transient_section = transient_section
+        self.transient_section_start_symbol = transient_section_start_symbol
         self.transient_section_end_symbol = transient_section_end_symbol
 
         self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
@@ -37,12 +40,15 @@ class TransientRetpolinesPass(Pass):
 
     @patch_constraints(x86_syntax=X86Syntax.INTEL)
     def __patch(self, ctx):
-        r1, r2 = "r11", "r10"  # TODO: make it work with ctx.scratch_registers
+        r1, r2, r3 = "r9", "r10", "r11"  # TODO: make it work with ctx.scratch_registers
         return f"""
             pop {r1}
+            lea {r2}, [rip+{self.transient_section_start_symbol.name}]
+            mov {r3}, {r1}
+            sub {r3}, {r2}
             lea {r2}, [rip+{self.transient_section_end_symbol.name}]
-            cmp {r2}, {r1}
-            jg .L__retpoline_skip{SYMBOL_SUFFIX}
+            cmp {r2}, {r3}
+            ja .L__retpoline_skip{SYMBOL_SUFFIX}
             pop {r1}
         .L__retpoline_skip{SYMBOL_SUFFIX}:
             jmp {r1}            
