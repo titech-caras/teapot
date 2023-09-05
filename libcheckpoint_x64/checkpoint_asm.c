@@ -1,17 +1,11 @@
 #include "checkpoint.h"
 
-general_register_state_t register_scratchpad;
+#define SCRATCHPAD_SIZE 128
+uint64_t scratchpad[SCRATCHPAD_SIZE];
+const uint64_t *scratchpad_top = scratchpad + SCRATCHPAD_SIZE, old_rsp;
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
-
-#define STORE_REGISTER(rxx) asm volatile ("mov %%" STR(rxx) ", %0" : "=m" (register_scratchpad.rxx) : :)
-#define RESTORE_REGISTER(rxx) asm volatile ("mov %0, %%" STR(rxx) : : "m" (register_scratchpad.rxx) :)
-#define STORE_FLAGS() asm volatile ("lahf\n mov %%rax, %0" : "=m" (register_scratchpad.flags) : :)
-#define RESTORE_FLAGS() asm volatile ("mov %0, %%rax\n sahf" : : "m" (register_scratchpad.flags) :)
-
-#define RAW_LABEL(label) asm volatile(label ":");
-#define RAW_RETURN() asm volatile ("ret");
 
 /*
  * Takes two stack arguments: trampoline address and checkpoint return address.
@@ -102,8 +96,8 @@ __attribute__((naked)) void make_checkpoint() {
         );
 
     // If we don't do checkpointing at all, we don't want to go to the trampoline
-    RAW_LABEL(".Lskip_checkpoint");
     asm volatile (
+        ".Lskip_checkpoint:"
         "pop %rbx\n"
         "mov 16(%rsp), %rax\n" // return address
         "mov %rax, 24(%rsp)\n" // overwrite trampoline address
@@ -112,24 +106,6 @@ __attribute__((naked)) void make_checkpoint() {
         "ret\n"
         );
 }
-
-__attribute__((naked)) void add_instruction_counter_check_restore() {
-    STORE_REGISTER(rax);
-    STORE_FLAGS();
-
-    asm volatile (
-        "mov instruction_cnt, %rax\n"
-        "add 8(%rsp), %rax\n" // instruction count parameter
-        "cmp $" STR(ROB_LEN) ", %rax\n"
-        "jge restore_checkpoint\n"
-        "mov %rax, instruction_cnt\n"
-        );
-
-    RESTORE_FLAGS();
-    RESTORE_REGISTER(rax);
-    RAW_RETURN();
-}
-
 
 __attribute__((naked)) void restore_checkpoint_registers() {
     // Load address of current metadata into %rax

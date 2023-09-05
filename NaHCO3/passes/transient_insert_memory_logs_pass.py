@@ -25,7 +25,6 @@ class TransientInsertMemoryLogsPass(Pass):
         self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
-        rewriting_ctx.get_or_insert_extern_symbol("register_scratchpad", "")
         rewriting_ctx.get_or_insert_extern_symbol("memory_history_top", "")
 
         for function in functions:
@@ -42,17 +41,19 @@ class TransientInsertMemoryLogsPass(Pass):
                         if instruction.avx_cc == X86_AVX_CC_INVALID and instruction.sse_cc == X86_SSE_CC_INVALID:
                             # Memory operand is under or equal to 64 bits
                             rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
-                                self.__build_memory_log_patch(
-                                    function, block, idx,
-                                    self.__print_mem_operand(instruction, mem_write_operand[0].mem)
-                                )))
+                                self.reg_manager.allocate_registers(function, block, idx, False)(
+                                    self.__build_memory_log_patch(
+                                        self.__print_mem_operand(instruction, mem_write_operand[0].mem)
+                                    ))))
+
                         else:
                             # AVX/SSE memory operand
                             # TODO: support AVX instructions
                             pass
                     elif instruction.mnemonic == "push" or instruction.mnemonic == "call":
                         rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
-                            self.__build_memory_log_patch(function, block, idx, "[rsp-8]")))
+                            self.reg_manager.allocate_registers(function, block, idx)(
+                                self.__build_memory_log_patch("[rsp-8]"))))
 
                     insertion_offset += instruction.size
 
@@ -81,8 +82,8 @@ class TransientInsertMemoryLogsPass(Pass):
 
         return s
 
-    def __build_memory_log_patch(self, function, block, instruction_idx, mem_operand: str):
-        @self.reg_manager.allocate_registers(function, block, instruction_idx, allow_fallback=False)
+    @staticmethod
+    def __build_memory_log_patch(mem_operand: str):
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=2)
         def patch(ctx: InsertionContext):
             r1, r2 = ctx.scratch_registers

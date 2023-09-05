@@ -18,12 +18,13 @@ void libcheckpoint_disable() {
 }
 
 void restore_checkpoint() {
+    checkpoint_cnt--;
     while (memory_history_top > checkpoint_metadata[checkpoint_cnt].memory_history_top) {
         memory_history_top--;
         *(uint64_t*)(memory_history_top->addr) = memory_history_top->data;
     }
 
-    checkpoint_cnt--;
+    instruction_cnt = checkpoint_metadata[checkpoint_cnt].instruction_cnt;
 
     restore_checkpoint_registers();
 }
