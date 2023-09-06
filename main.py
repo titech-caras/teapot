@@ -3,6 +3,8 @@ from gtirb_rewriting import PassManager
 from gtirb_live_register_analysis import LiveRegisterManager
 import pprint
 
+from NaHCO3.abi.x86_64 import _X86_64_ELF
+
 from NaHCO3.preprocess.copy_section import copy_section
 from NaHCO3.passes import (
     CreateTrampolinesPass,
@@ -16,7 +18,7 @@ ir = gtirb.IR.load_protobuf("test/test.gtirb")
 module = ir.modules[0]
 text_section = [s for s in module.sections if s.name == ".text"][0]
 
-reg_manager = LiveRegisterManager(module)
+reg_manager = LiveRegisterManager(module, _X86_64_ELF())
 
 transient_section, transient_section_start_symbol, transient_section_end_symbol, text_transient_mapping = (
     copy_section(text_section, ".NaHCO3_transient"))

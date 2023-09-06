@@ -36,6 +36,8 @@ class CreateTrampolinesPass(Pass):
         return block
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
+        rewriting_ctx.get_or_insert_extern_symbol("scratchpad", "") # FIXME: shouldn't be put here!
+
         for block in self.text_section.code_blocks:
             non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
             if len(non_fallthrough_edges) == 0:

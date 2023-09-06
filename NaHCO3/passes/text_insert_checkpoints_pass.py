@@ -4,6 +4,7 @@ from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints,
 from gtirb_rewriting.patches import CallPatch
 from gtirb_rewriting.assembly import X86Syntax
 from gtirb_live_register_analysis import LiveRegisterManager
+from gtirb_live_register_analysis.manager import NotEnoughFreeRegistersException
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from capstone_gt import CsInsn
 from typing import List
@@ -48,21 +49,31 @@ class TextInsertCheckpointsPass(Pass):
                     instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
                     conditional_jump_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
 
-                    rewriting_ctx.insert_at(block, conditional_jump_offset, Patch.from_function(
-                        self.reg_manager.allocate_registers(
-                            function, block, len(instructions) - 1, False)(
-                            self.__build_checkpoint_patch(block.uuid))))
+                    try:
+                        rewriting_ctx.insert_at(block, conditional_jump_offset, Patch.from_function(
+                            self.reg_manager.allocate_registers(
+                                function, block, len(instructions) - 1, False)(
+                                self.__build_checkpoint_patch(block.uuid))))
+                    except NotEnoughFreeRegistersException:
+                        rewriting_ctx.insert_at(block, conditional_jump_offset, Patch.from_function(
+                            self.reg_manager.allocate_registers(
+                                function, block, len(instructions) - 1, False)(
+                                self.__build_checkpoint_patch(block.uuid, False))))
 
     @staticmethod
-    def __build_checkpoint_patch(block_uuid: UUID):
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1)
+    def __build_checkpoint_patch(block_uuid: UUID, use_scratch_registers: bool = True):
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1 if use_scratch_registers else 0)
         def patch(ctx: InsertionContext):
-            r = ctx.scratch_registers[0]
+            r = ctx.scratch_registers[0] if use_scratch_registers else "rax"
+            prologue = "" if use_scratch_registers else "mov scratchpad, rax"
+            epilogue = "" if use_scratch_registers else "mov rax, scratchpad"
             return f"""
+                {prologue}
                 lea {r}, [rip+{generate_distinct_label_name(".__trampoline_", block_uuid)}]
                 mov checkpoint_target_metadata, {r}
                 lea {r}, [rip+.L__after_checkpoint{SYMBOL_SUFFIX}]
                 mov [checkpoint_target_metadata+8], {r}
+                {epilogue}
                 jmp make_checkpoint
             .L__after_checkpoint{SYMBOL_SUFFIX}:
             """

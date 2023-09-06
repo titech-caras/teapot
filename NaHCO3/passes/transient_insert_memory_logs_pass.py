@@ -41,7 +41,7 @@ class TransientInsertMemoryLogsPass(Pass):
                         if instruction.avx_cc == X86_AVX_CC_INVALID and instruction.sse_cc == X86_SSE_CC_INVALID:
                             # Memory operand is under or equal to 64 bits
                             rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
-                                self.reg_manager.allocate_registers(function, block, idx, False)(
+                                self.reg_manager.allocate_registers(function, block, idx)(
                                     self.__build_memory_log_patch(
                                         self.__print_mem_operand(instruction, mem_write_operand[0].mem)
                                     ))))

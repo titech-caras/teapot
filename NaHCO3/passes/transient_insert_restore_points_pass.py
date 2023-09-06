@@ -74,7 +74,7 @@ class TransientInsertRestorePointsPass(Pass):
                         block,
                         instruction_len_sum[current_insertion_idx],
                         Patch.from_function(
-                            self.reg_manager.allocate_registers(function, block, current_insertion_idx, False)(
+                            self.reg_manager.allocate_registers(function, block, current_insertion_idx)(
                                 self.__build_conditional_restore_point_patch(current_insertion_idx - last_insertion_idx)
                             )))
                     last_insertion_idx = current_insertion_idx
