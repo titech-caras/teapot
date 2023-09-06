@@ -1,8 +1,9 @@
 import gtirb
 from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints,
-                             AllFunctionsScope, FunctionPosition, BlockPosition)
+                             AllFunctionsScope, FunctionPosition, BlockPosition, InsertionContext)
 from gtirb_rewriting.patches import CallPatch
 from gtirb_rewriting.assembly import X86Syntax
+from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from capstone_gt import CsInsn
 from typing import List
@@ -10,13 +11,15 @@ from uuid import UUID
 import functools
 
 from NaHCO3.utils.misc import distinguish_edges, generate_distinct_label_name
-from NaHCO3.config import CHECKPOINT_LIB_NAME
+from NaHCO3.config import CHECKPOINT_LIB_NAME, SYMBOL_SUFFIX
 
 
 class TextInsertCheckpointsPass(Pass):
+    reg_manager: LiveRegisterManager
     text_section: gtirb.Section
 
-    def __init__(self, text_section: gtirb.Section):
+    def __init__(self, reg_manager: LiveRegisterManager, text_section: gtirb.Section):
+        self.reg_manager = reg_manager
         self.text_section = text_section
         self.decoder = GtirbInstructionDecoder(text_section.module.isa)
 
@@ -28,29 +31,40 @@ class TextInsertCheckpointsPass(Pass):
             rewriting_ctx.get_or_insert_extern_symbol("libcheckpoint_disable", CHECKPOINT_LIB_NAME)
         ))
 
-        make_checkpoint_symbol = rewriting_ctx.get_or_insert_extern_symbol(
-            "make_checkpoint", CHECKPOINT_LIB_NAME)
-        for block in self.text_section.code_blocks:
-            non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
-            if len(non_fallthrough_edges) == 0:
+        rewriting_ctx.get_or_insert_extern_symbol("make_checkpoint", "")
+        rewriting_ctx.get_or_insert_extern_symbol("checkpoint_target_metadata", "")
+        for function in functions:
+            if next(iter(function.get_entry_blocks())).section.name != self.text_section.name:
                 continue
 
-            if (non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Branch and
-                    non_fallthrough_edges[0].label.conditional):
-                instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
-                conditional_jump_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
+            self.reg_manager.analyze(function)
+            for block in function.get_all_blocks():
+                non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
+                if len(non_fallthrough_edges) == 0:
+                    continue
 
-                rewriting_ctx.insert_at(block, conditional_jump_offset, Patch.from_function(
-                    self.__build_checkpoint_patch(block.uuid, make_checkpoint_symbol)))
+                if (non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Branch and
+                        non_fallthrough_edges[0].label.conditional):
+                    instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
+                    conditional_jump_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
+
+                    rewriting_ctx.insert_at(block, conditional_jump_offset, Patch.from_function(
+                        self.reg_manager.allocate_registers(
+                            function, block, len(instructions) - 1, False)(
+                            self.__build_checkpoint_patch(block.uuid))))
 
     @staticmethod
-    def __build_checkpoint_patch(block_uuid: UUID, make_checkpoint_symbol: gtirb.Symbol):
-        return patch_constraints(x86_syntax=X86Syntax.INTEL)(lambda ctx: f"""
-            lea rsp, [rsp-8]
-            push r11
-            lea r11, [rip+{generate_distinct_label_name(".__trampoline_", block_uuid)}]
-            mov [rsp+8], r11
-            pop r11
-            call {make_checkpoint_symbol.name}
-            lea rsp, [rsp+8]
-        """)
+    def __build_checkpoint_patch(block_uuid: UUID):
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1)
+        def patch(ctx: InsertionContext):
+            r = ctx.scratch_registers[0]
+            return f"""
+                lea {r}, [rip+{generate_distinct_label_name(".__trampoline_", block_uuid)}]
+                mov checkpoint_target_metadata, {r}
+                lea {r}, [rip+.L__after_checkpoint{SYMBOL_SUFFIX}]
+                mov [checkpoint_target_metadata+8], {r}
+                jmp make_checkpoint
+            .L__after_checkpoint{SYMBOL_SUFFIX}:
+            """
+
+        return patch

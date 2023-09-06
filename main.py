@@ -30,7 +30,7 @@ pass_manager.run(ir)
 
 pass_manager = PassManager()
 pass_manager.add(TextCallTransformPass(text_section, text_transient_mapping))
-pass_manager.add(TextInsertCheckpointsPass(text_section))
+pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section))
 
 pass_manager.add(TransientInsertMemoryLogsPass(reg_manager, transient_section))
 pass_manager.add(TransientInsertRestorePointsPass(reg_manager, transient_section))

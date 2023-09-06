@@ -1,22 +1,24 @@
 #include "checkpoint.h"
 
-#define SCRATCHPAD_SIZE 128
-uint64_t scratchpad[SCRATCHPAD_SIZE];
-const uint64_t *scratchpad_top = scratchpad + SCRATCHPAD_SIZE, old_rsp;
+#define SCRATCHPAD_SIZE 1024
+__attribute__((aligned(8))) uint8_t scratchpad[SCRATCHPAD_SIZE];
+void *old_rsp;
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
 
-/*
- * Takes two stack arguments: trampoline address and checkpoint return address.
- * Should be called like:
- *
- * push 0x114514 // trampoline address
- * call make_checkpoint
- */
+#define SCRATCHPAD_TOP "scratchpad+" STR(SCRATCHPAD_SIZE)
+
+#define SWITCH_TO_SCRATCHPAD_STACK "mov %rsp, old_rsp\n" "lea " SCRATCHPAD_TOP ", %rsp\n"
+#define SWITCH_TO_ORIGINAL_STACK "mov old_rsp, %rsp\n"
+
+struct {
+    void *trampoline_addr, *return_addr;
+} checkpoint_target_metadata;
 __attribute__((naked)) void make_checkpoint() {
     // Store %rax and FLAGS
     asm volatile (
+        SWITCH_TO_SCRATCHPAD_STACK
         "pushfq\n"
         "push %rax\n"
         "push %rbx\n"
@@ -51,9 +53,9 @@ __attribute__((naked)) void make_checkpoint() {
         "mov %rbx, (%rax)\n" // checkpoint->rax
         "mov 16(%rsp), %rbx\n" // Original FLAGS
         "mov %rbx, 128(%rax)\n" // checkpoint->flags
-        "mov 24(%rsp), %rbx\n" // return address
+        "mov checkpoint_target_metadata+8, %rbx\n" // return address
         "mov %rbx, 152(%rax)\n" // checkpoint->return_address
-        "lea 40(%rsp), %rbx\n" // Original %rsp, as we pushed five things onto the stack
+        "mov old_rsp, %rbx\n"
         "mov %rbx, 48(%rax)\n" // checkpoint->rsp
         );
 
@@ -87,23 +89,22 @@ __attribute__((naked)) void make_checkpoint() {
         );
 
     // Exit cleanup, go to the trampoline
-    __asm__ __volatile__ (
+    asm volatile (
         "pop %rbx\n"
         "pop %rax\n"
         "popfq\n"
-        "lea 8(%rsp), %rsp\n" // get rid of the return address because we want to go to the trampoline
-        "ret\n"
+        SWITCH_TO_ORIGINAL_STACK
+        "jmp *(checkpoint_target_metadata)\n" // Trampoline address
         );
 
     // If we don't do checkpointing at all, we don't want to go to the trampoline
     asm volatile (
         ".Lskip_checkpoint:"
         "pop %rbx\n"
-        "mov 16(%rsp), %rax\n" // return address
-        "mov %rax, 24(%rsp)\n" // overwrite trampoline address
         "pop %rax\n"
         "popfq\n"
-        "ret\n"
+        SWITCH_TO_ORIGINAL_STACK
+        "jmp *(checkpoint_target_metadata+8)\n" // Return address
         );
 }
 
@@ -150,14 +151,15 @@ __attribute__((naked)) void restore_checkpoint_registers() {
         );
 
     asm volatile(
+        SWITCH_TO_SCRATCHPAD_STACK
         "mov 128(%rax), %rbx\n" // checkpoint->flags
-        "sub $8, %rsp\n" // balance stack
         "push %rbx\n"
         "popfq\n"
+        SWITCH_TO_ORIGINAL_STACK
         "mov 152(%rax), %rbx\n" // checkpoint->return_address
-        "push %rbx\n"
+        "mov %rbx, checkpoint_target_metadata+8\n"
         "mov 8(%rax), %rbx\n" // restore %rbx
         "mov (%rax), %rax\n" // restore %rax
-        "ret"
+        "jmp *(checkpoint_target_metadata+8)"
         );
 }
