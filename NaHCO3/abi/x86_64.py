@@ -2,7 +2,10 @@ from gtirb_live_register_analysis.abi import _X86_64_ELF as _X86_64_ELF_BASE
 from gtirb_rewriting.abi import _PatchRegisterAllocation
 from gtirb_rewriting.assembly import Constraints, Register, _AsmSnippet
 
+from NaHCO3.config import SCRATCHPAD_SIZE
+
 from typing import Tuple, Iterable, Optional, List
+import copy
 
 
 class _X86_64_ELF(_X86_64_ELF_BASE):
@@ -12,15 +15,32 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
             register_use: _PatchRegisterAllocation,
             is_leaf_function: bool,
     ) -> Tuple[Iterable[_AsmSnippet], Iterable[_AsmSnippet], Optional[int]]:
-        prologue: List[_AsmSnippet] = []
-        epilogue: List[_AsmSnippet] = []
-
-        scratchpad_offset = 0
-        for reg in register_use.clobbered_registers:
-            prologue.append(_AsmSnippet(f"mov %{reg}, scratchpad+{scratchpad_offset}"))
-            epilogue.append(_AsmSnippet(f"mov scratchpad+{scratchpad_offset}, %{reg}"))
+        switch_to_scratchpad_stack_snippet = _AsmSnippet(f"""
+            mov %rsp, old_rsp
+            mov scratchpad+{SCRATCHPAD_SIZE}, %rsp
+        """)
+        switch_to_original_stack_snippet = _AsmSnippet(f"""
+            mov old_rsp, %rsp
+        """)
 
         if constraints.clobbers_flags:
-            raise NotImplementedError()
+            # Use switch-stack implementation.
+            new_constraints = copy.copy(constraints)
+            new_constraints.align_stack = False
+
+            prologue, epilogue, _ = super()._create_prologue_and_epilogue(new_constraints, register_use, False)
+
+            prologue.insert(0, switch_to_scratchpad_stack_snippet)
+            prologue.append(switch_to_original_stack_snippet)
+            epilogue.insert(0, switch_to_scratchpad_stack_snippet)
+            epilogue.append(switch_to_scratchpad_stack_snippet)
+        else:
+            prologue: List[_AsmSnippet] = []
+            epilogue: List[_AsmSnippet] = []
+
+            scratchpad_offset = 0
+            for reg in register_use.clobbered_registers:
+                prologue.append(_AsmSnippet(f"mov %{reg}, scratchpad+{scratchpad_offset}"))
+                epilogue.append(_AsmSnippet(f"mov scratchpad+{scratchpad_offset}, %{reg}"))
 
         return prologue, reversed(epilogue), None
