@@ -6,13 +6,7 @@ import pprint
 from NaHCO3.abi.x86_64 import _X86_64_ELF
 
 from NaHCO3.preprocess.copy_section import copy_section
-from NaHCO3.passes import (
-    CreateTrampolinesPass,
-    TextCallTransformPass,
-    TextInsertCheckpointsPass,
-    TransientInsertMemoryLogsPass,
-    TransientInsertRestorePointsPass,
-    TransientRetpolinesPass)
+from NaHCO3.passes import *
 
 ir = gtirb.IR.load_protobuf("test/test.gtirb")
 module = ir.modules[0]
@@ -28,6 +22,7 @@ trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)
 
 pass_manager = PassManager()
 pass_manager.add(CreateTrampolinesPass(text_section, trampoline_section, text_transient_mapping))
+pass_manager.add(ImportSymbolsPass())
 pass_manager.run(ir)
 
 pass_manager = PassManager()

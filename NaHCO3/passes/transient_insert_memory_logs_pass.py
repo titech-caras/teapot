@@ -1,21 +1,15 @@
 import capstone_gt.x86
 import gtirb
-from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints,
-                             AllFunctionsScope, FunctionPosition, BlockPosition)
+from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints)
 from gtirb_rewriting import InsertionContext
 from gtirb_rewriting.assembly import X86Syntax
 from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_capstone.x86 import mem_access_to_str
 from gtirb_live_register_analysis import LiveRegisterManager
 from capstone_gt import CsInsn, CS_OP_MEM, CS_AC_WRITE
-from capstone_gt.x86 import X86_AVX_CC_INVALID, X86_SSE_CC_INVALID
 from typing import Iterable, List
-from uuid import UUID
-import copy
 import math
 import functools
-
-
-from NaHCO3.config import CHECKPOINT_LIB_NAME
 
 
 class TransientInsertMemoryLogsPass(Pass):
@@ -27,8 +21,6 @@ class TransientInsertMemoryLogsPass(Pass):
         self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
-        rewriting_ctx.get_or_insert_extern_symbol("memory_history_top", "")
-
         for function in functions:
             if next(iter(function.get_entry_blocks())).section.name != self.transient_section.name:
                 continue
@@ -49,12 +41,9 @@ class TransientInsertMemoryLogsPass(Pass):
                                                           x.type == CS_OP_MEM and x.access & CS_AC_WRITE), None)
 
                         if mem_write_operand is not None:
-                            mem_operand_strs = []
-                            for i in range(math.ceil(mem_write_operand.size / 8)):
-                                op = copy.copy(mem_write_operand.mem)
-                                op.disp += i * 8
-                                mem_operand_strs += [self.__print_mem_operand(instruction, op)]
-                            print(instruction)
+                            mem_operand_strs = [mem_access_to_str(instruction, mem_write_operand.mem, None,
+                                                                  extra_displacement=i * 8)
+                                                for i in range(math.ceil(mem_write_operand.size / 8))]
                             rewriting_ctx.insert_at(block, insertion_offset, Patch.from_function(
                                 self.reg_manager.allocate_registers(function, block, idx)(
                                     self.__build_memory_log_patch(mem_operand_strs))))
@@ -64,31 +53,6 @@ class TransientInsertMemoryLogsPass(Pass):
                                     self.__build_memory_log_patch(["[rsp-8]"]))))
 
                     insertion_offset += instruction.size
-
-
-    @staticmethod
-    def __print_mem_operand(instruction: CsInsn, operand: capstone_gt.x86.X86OpMem) -> str:
-        need_sign = False
-        s = "["
-
-        if operand.base:
-            s += instruction.reg_name(operand.base)
-            need_sign = True
-
-        if operand.index:
-            if need_sign:
-                s += "+"
-            s += f"{instruction.reg_name(operand.index)}*{operand.scale}"
-            need_sign = True
-
-        if operand.disp:
-            if need_sign:
-                s += "+" if operand.disp > 0 else "-"
-            s += f"{abs(operand.disp)}"
-
-        s += "]"
-
-        return s
 
     @staticmethod
     def __build_memory_log_patch(mem_operand_strs: List[str]):

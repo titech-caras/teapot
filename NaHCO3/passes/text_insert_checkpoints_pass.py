@@ -12,7 +12,7 @@ from uuid import UUID
 import functools
 
 from NaHCO3.utils.misc import distinguish_edges, generate_distinct_label_name
-from NaHCO3.config import CHECKPOINT_LIB_NAME, SYMBOL_SUFFIX
+from NaHCO3.config import SYMBOL_SUFFIX
 
 
 class TextInsertCheckpointsPass(Pass):
@@ -26,14 +26,12 @@ class TextInsertCheckpointsPass(Pass):
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}), CallPatch(
-            rewriting_ctx.get_or_insert_extern_symbol("libcheckpoint_enable", CHECKPOINT_LIB_NAME)
+            rewriting_ctx.get_or_insert_extern_symbol("libcheckpoint_enable", '')
         ))
         rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.EXIT, BlockPosition.EXIT, {"main"}), CallPatch(
-            rewriting_ctx.get_or_insert_extern_symbol("libcheckpoint_disable", CHECKPOINT_LIB_NAME)
+            rewriting_ctx.get_or_insert_extern_symbol("libcheckpoint_disable", '')
         ))
 
-        rewriting_ctx.get_or_insert_extern_symbol("make_checkpoint", "")
-        rewriting_ctx.get_or_insert_extern_symbol("checkpoint_target_metadata", "")
         for function in functions:
             if next(iter(function.get_entry_blocks())).section.name != self.text_section.name:
                 continue

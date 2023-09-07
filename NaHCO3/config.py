@@ -1,3 +1,11 @@
 SYMBOL_SUFFIX = "__NaHCO3__"
-CHECKPOINT_LIB_NAME = ""
 ROB_LEN = 250
+
+CHECKPOINT_LIB_SYMBOLS = [
+    "make_checkpoint",
+    "restore_checkpoint",
+
+    "checkpoint_target_metadata",
+    "memory_history_top",
+    "instruction_cnt",
+]

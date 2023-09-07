@@ -12,7 +12,7 @@ import functools
 import itertools
 
 from NaHCO3.utils.misc import distinguish_edges
-from NaHCO3.config import CHECKPOINT_LIB_NAME, SYMBOL_SUFFIX, ROB_LEN
+from NaHCO3.config import SYMBOL_SUFFIX, ROB_LEN
 
 
 class TransientInsertRestorePointsPass(Pass):
@@ -33,10 +33,6 @@ class TransientInsertRestorePointsPass(Pass):
         self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
-        rewriting_ctx.get_or_insert_extern_symbol("instruction_cnt", "")
-        self.restore_checkpoint_symbol = rewriting_ctx.get_or_insert_extern_symbol(
-            "restore_checkpoint", CHECKPOINT_LIB_NAME)
-
         rewriting_ctx.register_insert(
             AllFunctionsScope(FunctionPosition.EXIT, BlockPosition.EXIT, {"main" + SYMBOL_SUFFIX}),
             Patch.from_function(self.__build_unconditional_restore_point_patch())
@@ -122,7 +118,7 @@ class TransientInsertRestorePointsPass(Pass):
                 mov {r}, instruction_cnt
                 add {r}, {instruction_count}
                 cmp {r}, {ROB_LEN}
-                jge {self.restore_checkpoint_symbol.name}
+                jge restore_checkpoint
                 mov instruction_cnt, {r}
             """
 
@@ -131,6 +127,6 @@ class TransientInsertRestorePointsPass(Pass):
     def __build_unconditional_restore_point_patch(self):
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1)
         def patch(ctx: InsertionContext):
-            return f"jmp {self.restore_checkpoint_symbol.name}"
+            return f"jmp restore_checkpoint"
 
         return patch
