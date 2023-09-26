@@ -1,0 +1,3 @@
+[submodule "libcheckpoint_x64"]
+	path = libcheckpoint_x64
+	url = https://github.com/lin-toto/libcheckpoint_x64
