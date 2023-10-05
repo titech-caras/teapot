@@ -14,11 +14,12 @@ class TextCallTransformPass(Pass):
     text_section: gtirb.Section
     text_transient_mapping: CopiedSectionMapping
 
-    def __init__(self, text_section: gtirb.Section, text_transient_mapping: CopiedSectionMapping):
+    def __init__(self, text_section: gtirb.Section, text_transient_mapping: CopiedSectionMapping,
+                 decoder: GtirbInstructionDecoder):
         self.text_section = text_section
         self.text_transient_mapping = text_transient_mapping
 
-        self.decoder = GtirbInstructionDecoder(text_section.module.isa)
+        self.decoder = decoder
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         for block in self.text_section.code_blocks:

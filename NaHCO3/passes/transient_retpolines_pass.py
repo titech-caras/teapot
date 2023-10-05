@@ -14,12 +14,13 @@ class TransientRetpolinesPass(Pass):
     transient_section_end_symbol: gtirb.Symbol
 
     def __init__(self, transient_section: gtirb.Section,
-                 transient_section_start_symbol: gtirb.Symbol, transient_section_end_symbol: gtirb.Symbol):
+                 transient_section_start_symbol: gtirb.Symbol, transient_section_end_symbol: gtirb.Symbol,
+                 decoder: GtirbInstructionDecoder):
         self.transient_section = transient_section
         self.transient_section_start_symbol = transient_section_start_symbol
         self.transient_section_end_symbol = transient_section_end_symbol
 
-        self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
+        self.decoder = decoder
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         for function in functions:

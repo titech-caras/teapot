@@ -15,10 +15,11 @@ import functools
 class TransientInsertMemoryLogsPass(Pass):
     reg_manager: LiveRegisterManager
     transient_section: gtirb.Section
-    def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section):
+    def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
+                 decoder: GtirbInstructionDecoder):
         self.reg_manager = reg_manager
         self.transient_section = transient_section
-        self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
+        self.decoder = decoder
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
         for function in functions:

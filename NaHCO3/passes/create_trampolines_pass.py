@@ -16,12 +16,12 @@ class CreateTrampolinesPass(Pass):
     text_transient_mapping: CopiedSectionMapping
 
     def __init__(self, text_section: gtirb.Section, trampoline_section: gtirb.Section,
-                 text_transient_mapping: CopiedSectionMapping):
+                 text_transient_mapping: CopiedSectionMapping, decoder: GtirbInstructionDecoder):
         self.text_section = text_section
         self.trampoline_section = trampoline_section
         self.text_transient_mapping = text_transient_mapping
 
-        self.decoder = GtirbInstructionDecoder(text_section.module.isa)
+        self.decoder = decoder
         self.trampoline_byte_interval = next(iter(trampoline_section.byte_intervals))
 
     def __initialize_empty_code_block(self):
