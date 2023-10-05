@@ -27,7 +27,8 @@ class TransientInsertRestorePointsPass(Pass):
         "syscall", "sysenter"
     ]
 
-    def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section):
+    def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
+                 decoder: GtirbInstructionDecoder):
         self.reg_manager = reg_manager
         self.transient_section = transient_section
         self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
@@ -53,13 +54,18 @@ class TransientInsertRestorePointsPass(Pass):
                                             Patch.from_function(self.__build_unconditional_restore_point_patch()))
                     final_conditional_rollback_idx = None
                 else:
-                    final_conditional_rollback_idx = (
-                        next(i for i in range(len(instructions) - 1, -1, -1)
-                             if self.__can_insert_checkpoint(function, block, i)))
-                    assert final_conditional_rollback_idx is not None
+                    try:
+                        final_conditional_rollback_idx = (
+                            next(i for i in range(len(instructions) - 1, -1, -1)
+                                 if self.__can_insert_checkpoint(function, block, i)))
+                    except StopIteration:
+                        print(f"Warning: nowhere to insert restore point at block {block.uuid} "
+                              f"({len(instructions)} instructions)")
+                        continue
 
                 last_insertion_idx = 0
-                insert_until_idx = unconditional_rollback_idx or final_conditional_rollback_idx
+                insert_until_idx = final_conditional_rollback_idx \
+                    if unconditional_rollback_idx is None else unconditional_rollback_idx
                 while insert_until_idx - last_insertion_idx > self.INSERTION_SPACING * 4 // 3:
                     # In the last sub-block, allow a bit more than 50 instructions to be handled by the final rollback
                     current_insertion_idx = last_insertion_idx + self.INSERTION_SPACING
@@ -93,8 +99,9 @@ class TransientInsertRestorePointsPass(Pass):
         if unconditional_rollback_idx is None:
             non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
             if (len(non_fallthrough_edges) > 0 and
-                    non_fallthrough_edges[0].label.type == gtirb.EdgeType.Call and
-                    non_fallthrough_edges[0].target.section.name != self.transient_section.name):
+                non_fallthrough_edges[0].label.type == gtirb.EdgeType.Call and
+                (isinstance(non_fallthrough_edges[0].target, gtirb.ProxyBlock) or
+                 non_fallthrough_edges[0].target.section.name != self.transient_section.name)):
                 # is a call to external library function, rollback before the call instruction
                 unconditional_rollback_idx = len(instructions) - 1
 
