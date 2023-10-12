@@ -1,6 +1,6 @@
 import gtirb
 from gtirb_functions import Function
-from gtirb_rewriting import Pass
+from gtirb_rewriting import Pass, RewritingContext
 from gtirb_rewriting.assembly import Register
 from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_capstone.instructions import GtirbInstructionDecoder
@@ -12,12 +12,19 @@ from .reg_inst_aware_pass_mixin import RegInstAwarePassMixin
 
 
 class VisitorPassMixin(Pass):
+    module: gtirb.Module
+    rewriting_ctx: RewritingContext
+
     def visit_function(self, function: Function):
         for block in function.get_all_blocks():
             self.visit_code_block(block, function)
 
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         pass
+
+    def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
+        self.module = module
+        self.rewriting_ctx = rewriting_ctx
 
     def visit_functions(self, functions, section: gtirb.Section = None):
         for function in functions:
