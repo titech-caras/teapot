@@ -1,4 +1,5 @@
 import gtirb
+from gtirb_functions import Function
 from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints,
                              AllFunctionsScope, SingleBlockScope, FunctionPosition, BlockPosition)
 from gtirb_rewriting import InsertionContext
@@ -11,11 +12,12 @@ from typing import List
 import functools
 import itertools
 
+from NaHCO3.passes.mixins import VisitorPassMixin, RegInstAwarePassMixin
 from NaHCO3.utils.misc import distinguish_edges
 from NaHCO3.config import SYMBOL_SUFFIX, ROB_LEN
 
 
-class TransientInsertRestorePointsPass(Pass):
+class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
     reg_manager: LiveRegisterManager
     transient_section: gtirb.Section
 
@@ -29,66 +31,67 @@ class TransientInsertRestorePointsPass(Pass):
 
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder):
-        self.reg_manager = reg_manager
+        super(RegInstAwarePassMixin).__init__(reg_manager, decoder)
         self.transient_section = transient_section
-        self.decoder = GtirbInstructionDecoder(transient_section.module.isa)
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
+        super(VisitorPassMixin).__init__(module, functions, rewriting_ctx)
         rewriting_ctx.register_insert(
             AllFunctionsScope(FunctionPosition.EXIT, BlockPosition.EXIT, {"main" + SYMBOL_SUFFIX}),
             Patch.from_function(self.__build_unconditional_restore_point_patch())
         )
 
-        for function in functions:
-            if next(iter(function.get_entry_blocks())).section.name != self.transient_section.name:
-                continue
-            self.reg_manager.analyze(function)
+        self.visit_functions(functions, self.transient_section)
 
-            for block in function.get_all_blocks():
-                instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
-                instruction_len_sum: List[int] = [0] + list(itertools.accumulate(i.size for i in instructions))
+    def visit_function(self, function: Function):
+        self.reg_manager.analyze(function)
+        super(VisitorPassMixin).visit_function(function)
 
-                unconditional_rollback_idx = self.__unconditional_rollback_at(block, instructions)
-                if unconditional_rollback_idx is not None:
-                    rewriting_ctx.insert_at(block, instruction_len_sum[unconditional_rollback_idx],
-                                            Patch.from_function(self.__build_unconditional_restore_point_patch()))
-                    final_conditional_rollback_idx = None
-                else:
-                    try:
-                        final_conditional_rollback_idx = (
-                            next(i for i in range(len(instructions) - 1, -1, -1)
-                                 if self.__can_insert_checkpoint(function, block, i)))
-                    except StopIteration:
-                        print(f"Warning: nowhere to insert restore point at block {block.uuid} "
-                              f"({len(instructions)} instructions)")
-                        continue
+    def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
+        instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
+        instruction_len_sum: List[int] = [0] + list(itertools.accumulate(i.size for i in instructions))
 
-                last_insertion_idx = 0
-                insert_until_idx = final_conditional_rollback_idx \
-                    if unconditional_rollback_idx is None else unconditional_rollback_idx
-                while insert_until_idx - last_insertion_idx > self.INSERTION_SPACING * 4 // 3:
-                    # In the last sub-block, allow a bit more than 50 instructions to be handled by the final rollback
-                    current_insertion_idx = last_insertion_idx + self.INSERTION_SPACING
-                    while not self.__can_insert_checkpoint(function, block, current_insertion_idx):
-                        current_insertion_idx += 1
+        unconditional_rollback_idx = self.__unconditional_rollback_at(block, instructions)
+        if unconditional_rollback_idx is not None:
+            self.rewriting_ctx.insert_at(block, instruction_len_sum[unconditional_rollback_idx],
+                                         Patch.from_function(self.__build_unconditional_restore_point_patch()))
+            final_conditional_rollback_idx = None
+        else:
+            try:
+                final_conditional_rollback_idx = (
+                    next(i for i in range(len(instructions) - 1, -1, -1)
+                         if self.__can_insert_checkpoint(function, block, i)))
+            except StopIteration:
+                print(f"Warning: nowhere to insert restore point at block {block.uuid} "
+                      f"({len(instructions)} instructions)")
+                return
 
-                    rewriting_ctx.insert_at(
-                        block,
-                        instruction_len_sum[current_insertion_idx],
-                        Patch.from_function(
-                            self.reg_manager.allocate_registers(function, block, current_insertion_idx)(
-                                self.__build_conditional_restore_point_patch(current_insertion_idx - last_insertion_idx)
-                            )))
-                    last_insertion_idx = current_insertion_idx
+        last_insertion_idx = 0
+        insert_until_idx = final_conditional_rollback_idx \
+            if unconditional_rollback_idx is None else unconditional_rollback_idx
+        while insert_until_idx - last_insertion_idx > self.INSERTION_SPACING * 4 // 3:
+            # In the last sub-block, allow a bit more than 50 instructions to be handled by the final rollback
+            current_insertion_idx = last_insertion_idx + self.INSERTION_SPACING
+            while not self.__can_insert_checkpoint(function, block, current_insertion_idx):
+                current_insertion_idx += 1
 
-                if final_conditional_rollback_idx is not None:
-                    rewriting_ctx.insert_at(
-                        block,
-                        instruction_len_sum[final_conditional_rollback_idx],
-                        Patch.from_function(
-                            self.reg_manager.allocate_registers(function, block, final_conditional_rollback_idx)(
-                                self.__build_conditional_restore_point_patch(len(instructions) - last_insertion_idx)
-                            )))
+            self.rewriting_ctx.insert_at(
+                block,
+                instruction_len_sum[current_insertion_idx],
+                Patch.from_function(
+                    self.reg_manager.allocate_registers(function, block, current_insertion_idx)(
+                        self.__build_conditional_restore_point_patch(current_insertion_idx - last_insertion_idx)
+                    )))
+            last_insertion_idx = current_insertion_idx
+
+        if final_conditional_rollback_idx is not None:
+            self.rewriting_ctx.insert_at(
+                block,
+                instruction_len_sum[final_conditional_rollback_idx],
+                Patch.from_function(
+                    self.reg_manager.allocate_registers(function, block, final_conditional_rollback_idx)(
+                        self.__build_conditional_restore_point_patch(len(instructions) - last_insertion_idx)
+                    )))
 
     def __can_insert_checkpoint(self, function, block, instruction_idx) -> bool:
         return "rflags" not in (r.name for r in self.reg_manager.live_registers(function, block, instruction_idx))

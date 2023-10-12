@@ -4,6 +4,8 @@ ROB_LEN = 250
 SCRATCHPAD_SIZE = 1024
 
 CHECKPOINT_LIB_SYMBOLS = [
+    "scratchpad",
+
     "make_checkpoint",
     "restore_checkpoint",
 
