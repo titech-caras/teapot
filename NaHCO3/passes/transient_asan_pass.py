@@ -61,6 +61,7 @@ class TransientAsanPass(InstVisitorPassMixin):
     def __build_asan_patch(inst: CsInsn, mem_operand_str: str, access_size: int):
         ASAN_SHADOW_OFFSET = "0x7FFF8000"
 
+        # FIXME: this actually clobbers flags!
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1, clobbers_flags=False)
         def patch(ctx: InsertionContext):
             r1, = ctx.scratch_registers

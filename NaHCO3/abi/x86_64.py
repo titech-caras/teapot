@@ -37,6 +37,7 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
                 new_constraints, new_register_use, False)
             epilogue = list(reversed(list(epilogue)))
 
+            # FIXME: actually should use scratchpad, but maybe only in transient?
             #prologue.insert(0, switch_to_scratchpad_stack_snippet)
             #prologue.append(switch_to_original_stack_snippet)
             #epilogue.insert(0, switch_to_original_stack_snippet)
