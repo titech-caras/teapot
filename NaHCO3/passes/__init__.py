@@ -3,6 +3,7 @@ from .import_symbols_pass import ImportSymbolsPass
 
 from .text_call_transform_pass import TextCallTransformPass
 from .text_insert_checkpoints_pass import TextInsertCheckpointsPass
+from .transient_asan_pass import TransientAsanPass
 from .transient_insert_memory_logs_pass import TransientInsertMemoryLogsPass
 from .transient_insert_restore_points_pass import TransientInsertRestorePointsPass
 from .transient_retpolines_pass import TransientRetpolinesPass
