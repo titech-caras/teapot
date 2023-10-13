@@ -43,7 +43,7 @@ class InstVisitorPassMixin(VisitorPassMixin, RegInstAwarePassMixin):
 
     def __init__(self, reg_manager: LiveRegisterManager, decoder: GtirbInstructionDecoder,
                  enable_live_reg_analysis: bool = True):
-        super(RegInstAwarePassMixin, self).__init__(reg_manager, decoder)
+        RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.enable_live_reg_analysis = enable_live_reg_analysis
 
     def visit_function(self, function: Function):
@@ -59,8 +59,8 @@ class InstVisitorPassMixin(VisitorPassMixin, RegInstAwarePassMixin):
             live_registers = self.reg_manager.live_registers(function, block, inst_idx) \
                 if function is not None and self.enable_live_reg_analysis else None
 
-            inst_offset += inst.size
             self.visit_inst(inst, inst_idx, inst_offset, block, function, live_registers)
+            inst_offset += inst.size
 
     def visit_inst(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                    block: gtirb.CodeBlock, function: Function = None,

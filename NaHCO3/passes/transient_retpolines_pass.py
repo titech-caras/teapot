@@ -32,14 +32,13 @@ class TransientRetpolinesPass(VisitorPassMixin):
         super().visit_function(function)
 
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
-        for block in function.get_all_blocks():
-            non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
-            if len(non_fallthrough_edges) == 0:
-                continue
+        non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
+        if len(non_fallthrough_edges) == 0:
+            return
 
-            if non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Return:
-                # last instruction must be `ret`
-                self.rewriting_ctx.replace_at(block, block.size - 1, 1, Patch.from_function(self.__patch))
+        if non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Return:
+            # last instruction must be `ret`
+            self.rewriting_ctx.replace_at(block, block.size - 1, 1, Patch.from_function(self.__patch))
 
     @patch_constraints(x86_syntax=X86Syntax.INTEL)
     def __patch(self, ctx):

@@ -19,6 +19,7 @@ from NaHCO3.passes.mixins import InstVisitorPassMixin
 class TransientInsertMemoryLogsPass(InstVisitorPassMixin):
     reg_manager: LiveRegisterManager
     transient_section: gtirb.Section
+
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder):
         super().__init__(reg_manager, decoder)

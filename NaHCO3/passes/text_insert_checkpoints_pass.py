@@ -23,11 +23,11 @@ class TextInsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def __init__(self, reg_manager: LiveRegisterManager, text_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder):
-        super(RegInstAwarePassMixin, self).__init__(reg_manager, decoder)
+        RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.text_section = text_section
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
-        super(VisitorPassMixin, self).begin_module(module, functions, rewriting_ctx)
+        VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
 
         rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}), CallPatch(
             rewriting_ctx.get_or_insert_extern_symbol("libcheckpoint_enable", '')

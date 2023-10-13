@@ -31,11 +31,11 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder):
-        super(RegInstAwarePassMixin).__init__(reg_manager, decoder)
+        RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.transient_section = transient_section
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
-        super(VisitorPassMixin).__init__(module, functions, rewriting_ctx)
+        VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
         rewriting_ctx.register_insert(
             AllFunctionsScope(FunctionPosition.EXIT, BlockPosition.EXIT, {"main" + SYMBOL_SUFFIX}),
             Patch.from_function(self.__build_unconditional_restore_point_patch())
@@ -45,7 +45,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def visit_function(self, function: Function):
         self.reg_manager.analyze(function)
-        super(VisitorPassMixin).visit_function(function)
+        VisitorPassMixin.visit_function(self, function)
 
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
