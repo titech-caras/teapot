@@ -1,5 +1,6 @@
 import gtirb
 from gtirb_rewriting import PassManager
+from gtirb_rewriting.abi import _ABIS
 from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 import pprint
@@ -16,7 +17,9 @@ ir = gtirb.IR.load_protobuf(f"test/{gtirb_name}.gtirb")
 module = ir.modules[0]
 text_section = [s for s in module.sections if s.name == ".text"][0]
 
-reg_manager = LiveRegisterManager(module, _X86_64_ELF())
+my_x64_elf_abi = _X86_64_ELF()
+reg_manager = LiveRegisterManager(module, my_x64_elf_abi)
+_ABIS[(gtirb.Module.ISA.X64, gtirb.Module.FileFormat.ELF)] = my_x64_elf_abi
 
 transient_section, transient_section_start_symbol, transient_section_end_symbol, text_transient_mapping = (
     copy_section(text_section, ".NaHCO3_transient"))

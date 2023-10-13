@@ -5,6 +5,7 @@ SCRATCHPAD_SIZE = 1024
 
 CHECKPOINT_LIB_SYMBOLS = [
     "scratchpad",
+    "old_rsp",
 
     "make_checkpoint",
     "restore_checkpoint",
