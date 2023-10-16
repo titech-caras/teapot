@@ -59,9 +59,10 @@ class TextCallTransformPass(VisitorPassMixin):
     def __build_transform_patch(target_symbol: gtirb.Symbol):
         return patch_constraints(x86_syntax=X86Syntax.INTEL)(lambda ctx: f"""
             lea r11, [rip+{target_symbol.name}]
+            sub rsp, 8
             push r11
         """)
 
     @patch_constraints(x86_syntax=X86Syntax.INTEL)
     def __patch_balance_stack(self, ctx):
-        return "add rsp, 8"
+        return "add rsp, 16"

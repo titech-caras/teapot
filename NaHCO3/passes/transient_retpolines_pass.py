@@ -52,6 +52,7 @@ class TransientRetpolinesPass(VisitorPassMixin):
             cmp {r2}, {r3}
             ja .L__retpoline_skip{SYMBOL_SUFFIX}
             pop {r1}
+            add rsp, 8
         .L__retpoline_skip{SYMBOL_SUFFIX}:
             jmp {r1}            
         """
