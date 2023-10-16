@@ -11,13 +11,12 @@ from capstone_gt import CsInsn, CS_OP_MEM
 from typing import List, Set
 import itertools
 
+from NaHCO3.config import ASAN_SHADOW_OFFSET
 from NaHCO3.passes.mixins import InstVisitorPassMixin
 from NaHCO3.utils.misc import distinguish_edges
 
 
 class TransientAsanPass(InstVisitorPassMixin):
-    ASAN_SHADOW_OFFSET = "0x7FFF8000"
-
     transient_section: gtirb.Section
 
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
@@ -73,7 +72,7 @@ class TransientAsanPass(InstVisitorPassMixin):
             return f"""
                 lea {r1}, {mem_operand_str}
                 shr {r1}, 3
-                mov {r1:8l}, [{r1}+{self.ASAN_SHADOW_OFFSET}]
+                mov {r1:8l}, [{r1}+{ASAN_SHADOW_OFFSET}]
                 test {r1:8l}, {r1:8l}
                 je .L__asan_check_ok
                 {detailed_check_snippet}

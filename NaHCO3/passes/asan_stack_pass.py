@@ -7,14 +7,12 @@ from gtirb_rewriting.assembly import X86Syntax, Register
 from typing import List, Set
 import itertools
 
-from NaHCO3.config import BLACKLIST_FUNCTION_NAMES
+from NaHCO3.config import BLACKLIST_FUNCTION_NAMES, ASAN_SHADOW_OFFSET
 from NaHCO3.passes.mixins import VisitorPassMixin
 from NaHCO3.utils.misc import distinguish_edges
 
 
 class AsanStackPass(VisitorPassMixin):
-    ASAN_SHADOW_OFFSET = "0x7FFF8000"
-
     text_section: gtirb.Section
     transient_section: gtirb.Section
 
@@ -62,7 +60,7 @@ class AsanStackPass(VisitorPassMixin):
         return f"""
             mov {r}, rsp
             shr {r}, 3
-            mov word ptr [{r}+{self.ASAN_SHADOW_OFFSET}], 0xffff
+            mov word ptr [{r}+{ASAN_SHADOW_OFFSET}], 0xffff
             sub rsp, 16
         """
 
@@ -74,5 +72,5 @@ class AsanStackPass(VisitorPassMixin):
             add rsp, 16
             mov {r}, rsp
             shr {r}, 3
-            mov word ptr [{r}+{self.ASAN_SHADOW_OFFSET}], 0x0000
+            mov word ptr [{r}+{ASAN_SHADOW_OFFSET}], 0x0000
         """
