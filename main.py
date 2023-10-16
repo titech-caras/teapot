@@ -35,6 +35,8 @@ pass_manager.add(ImportSymbolsPass())
 pass_manager.run(ir)
 
 pass_manager = PassManager()
+pass_manager.add(AsanStackPass())
+
 pass_manager.add(TextCallTransformPass(text_section, text_transient_mapping, decoder))
 pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section, decoder))
 

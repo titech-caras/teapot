@@ -1,6 +1,7 @@
 from .create_trampolines_pass import CreateTrampolinesPass
 from .import_symbols_pass import ImportSymbolsPass
 
+from .asan_stack_pass import AsanStackPass
 from .text_call_transform_pass import TextCallTransformPass
 from .text_insert_checkpoints_pass import TextInsertCheckpointsPass
 from .transient_asan_pass import TransientAsanPass

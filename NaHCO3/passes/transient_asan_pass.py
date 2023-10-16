@@ -34,21 +34,6 @@ class TransientAsanPass(InstVisitorPassMixin):
 
         self.visit_functions(functions, self.transient_section)
 
-    def visit_function(self, function: Function):
-        # poison stack
-        for block in function.get_entry_blocks():
-            self.rewriting_ctx.insert_at(block, 0, Patch.from_function(self.__poison_stack_patch))
-
-        # unpoison stack
-        for block in function.get_exit_blocks():
-            non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
-            if len(non_fallthrough_edges) == 0:
-                return
-
-            if non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Return:
-                self.rewriting_ctx.insert_at(block, block.size - 1, Patch.from_function(self.__unpoison_stack_patch))
-
-        super().visit_function(function)
     def visit_inst(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                    block: gtirb.CodeBlock, function: Function = None,
                    live_registers: Set[Register] = None):
@@ -71,33 +56,11 @@ class TransientAsanPass(InstVisitorPassMixin):
 
         self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
             self.reg_manager.allocate_registers(function, block, inst_idx)(
-                self.__build_asan_patch(inst, mem_operand_str, mem_operand.size)
+                self.__build_asan_check_patch(inst, mem_operand_str, mem_operand.size)
             )
         ))
 
-    @patch_constraints(x86_syntax=X86Syntax.INTEL)
-    def __poison_stack_patch(self, ctx: InsertionContext):
-        #r, = ctx.scratch_registers
-        r = "r11"
-        return f"""
-            sub rbp, 8
-            mov {r}, rbp
-            shr {r}, 3
-            mov byte ptr [{r}+{self.ASAN_SHADOW_OFFSET}], 0xff
-        """
-
-    @patch_constraints(x86_syntax=X86Syntax.INTEL)
-    def __unpoison_stack_patch(self, ctx: InsertionContext):
-        #r, = ctx.scratch_registers
-        r = "r11"
-        return f"""
-            mov {r}, rbp
-            shr {r}, 3
-            mov byte ptr [{r}+{self.ASAN_SHADOW_OFFSET}], 0x00
-            add rbp, 8
-        """
-
-    def __build_asan_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int):
+    def __build_asan_check_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int):
         # FIXME: this actually clobbers flags!
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1, clobbers_flags=False)
         def patch(ctx: InsertionContext):
@@ -114,7 +77,7 @@ class TransientAsanPass(InstVisitorPassMixin):
                 test {r1:8l}, {r1:8l}
                 je .L__asan_check_ok
                 {detailed_check_snippet}
-                int3
+                jmp restore_checkpoint
             .L__asan_check_ok:
             """
 
