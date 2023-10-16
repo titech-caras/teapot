@@ -27,6 +27,8 @@ class AsanStackPass(VisitorPassMixin):
         rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}), CallPatch(
             rewriting_ctx.get_or_insert_extern_symbol("__asan_init", '')
         ))
+        rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}),
+                                      Patch.from_function(self.__asan_trigger_on_null_patch))
 
         self.visit_functions(functions)
 
@@ -74,3 +76,7 @@ class AsanStackPass(VisitorPassMixin):
             shr {r}, 3
             mov word ptr [{r}+{ASAN_SHADOW_OFFSET}], 0x0000
         """
+
+    @patch_constraints(x86_syntax=X86Syntax.INTEL)
+    def __asan_trigger_on_null_patch(self, ctx: InsertionContext):
+        return f"mov byte ptr ds:{ASAN_SHADOW_OFFSET}, -1"
