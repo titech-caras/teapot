@@ -115,8 +115,11 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         if instruction.mnemonic in cls.SERIALIZING_MNEMONICS:
             return True
 
-        if any(prefix in instruction.prefix for prefix in [X86_PREFIX_REP, X86_PREFIX_REPE, X86_PREFIX_REPNE]):
+        if instruction.mnemonic.startswith("rep stos"):
             return True
+
+        #if any(prefix in instruction.prefix for prefix in [X86_PREFIX_REP, X86_PREFIX_REPE, X86_PREFIX_REPNE]):
+        #    return True
 
         return False
 
