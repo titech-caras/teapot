@@ -15,8 +15,13 @@ from NaHCO3.utils.misc import distinguish_edges
 class AsanStackPass(VisitorPassMixin):
     ASAN_SHADOW_OFFSET = "0x7FFF8000"
 
-    def __init__(self):
+    text_section: gtirb.Section
+    transient_section: gtirb.Section
+
+    def __init__(self, text_section: gtirb.Section, transient_section: gtirb.Section):
         super().__init__()
+        self.text_section = text_section
+        self.transient_section = transient_section
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         super().begin_module(module, functions, rewriting_ctx)
@@ -28,8 +33,8 @@ class AsanStackPass(VisitorPassMixin):
         self.visit_functions(functions)
 
     def visit_function(self, function: Function):
-        sn = next(iter(function.get_entry_blocks())).section.name
-        if sn != ".text" and sn != ".NaHCO3_transient":
+        section_name = next(iter(function.get_entry_blocks())).section.name
+        if section_name != self.text_section.name and section_name != self.transient_section.name:
             return
 
         if function.get_name() in BLACKLIST_FUNCTION_NAMES:
