@@ -27,10 +27,6 @@ class TransientAsanPass(InstVisitorPassMixin):
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         super().begin_module(module, functions, rewriting_ctx)
 
-        rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}), CallPatch(
-            rewriting_ctx.get_or_insert_extern_symbol("__asan_init", '')
-        ))
-
         self.visit_functions(functions, self.transient_section)
 
     def visit_inst(self, inst: CsInsn, inst_idx: int, inst_offset: int,
@@ -61,9 +57,9 @@ class TransientAsanPass(InstVisitorPassMixin):
 
     def __build_asan_check_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int):
         # FIXME: this actually clobbers flags!
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1, clobbers_flags=False)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=2, clobbers_flags=False)
         def patch(ctx: InsertionContext):
-            r1, = ctx.scratch_registers
+            r1, r2 = ctx.scratch_registers
 
             detailed_check_snippet = f"""
                 
@@ -71,6 +67,12 @@ class TransientAsanPass(InstVisitorPassMixin):
 
             return f"""
                 lea {r1}, {mem_operand_str}
+                mov {r2}, {r1}
+                sub {r2}, 0x7fff8000
+                shr {r2}, 44 # we want to compare it with 0xfff,ffff,ffff
+                test {r2}, {r2} # if zero, the target address falls into asan shadow
+                jz restore_checkpoint # maybe not directly restore? i don't know
+                
                 shr {r1}, 3
                 mov {r1:8l}, [{r1}+{ASAN_SHADOW_OFFSET}]
                 test {r1:8l}, {r1:8l}
