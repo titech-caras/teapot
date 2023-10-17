@@ -53,5 +53,6 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
 
                 prologue.append(_AsmSnippet(f"mov %{reg}, scratchpad+{scratchpad_offset}"))
                 epilogue.append(_AsmSnippet(f"mov scratchpad+{scratchpad_offset}, %{reg}"))
+                scratchpad_offset += 8
 
         return prologue, reversed(epilogue), None
