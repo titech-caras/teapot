@@ -60,7 +60,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
             try:
                 final_conditional_rollback_idx = (
                     next(i for i in range(len(instructions) - 1, -1, -1)
-                         if self.__can_insert_checkpoint(function, block, i)))
+                         if self.__can_insert_restore_point(function, block, i)))
             except StopIteration:
                 print(f"Warning: nowhere to insert restore point at block {block.uuid} "
                       f"({len(instructions)} instructions)")
@@ -72,7 +72,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         while insert_until_idx - last_insertion_idx > self.INSERTION_SPACING * 4 // 3:
             # In the last sub-block, allow a bit more than 50 instructions to be handled by the final rollback
             current_insertion_idx = last_insertion_idx + self.INSERTION_SPACING
-            while not self.__can_insert_checkpoint(function, block, current_insertion_idx):
+            while not self.__can_insert_restore_point(function, block, current_insertion_idx):
                 current_insertion_idx += 1
 
             self.rewriting_ctx.insert_at(
@@ -93,7 +93,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                         self.__build_conditional_restore_point_patch(len(instructions) - last_insertion_idx)
                     )))
 
-    def __can_insert_checkpoint(self, function, block, instruction_idx) -> bool:
+    def __can_insert_restore_point(self, function, block, instruction_idx) -> bool:
         return "rflags" not in (r.name for r in self.reg_manager.live_registers(function, block, instruction_idx))
 
     def __unconditional_rollback_at(self, block: gtirb.CodeBlock, instructions: List[CsInsn]):
@@ -101,11 +101,14 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                                            if self.__instruction_must_rollback(instruction)), None)
         if unconditional_rollback_idx is None:
             non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
-            if (len(non_fallthrough_edges) > 0 and
-                non_fallthrough_edges[0].label.type == gtirb.EdgeType.Call and
+            if len(non_fallthrough_edges) == 0:
+                return None
+
+            # The call may be a jmp because of tail-call optimization
+            if (non_fallthrough_edges[0].label.type in (gtirb.EdgeType.Call, gtirb.EdgeType.Branch) and
                 (isinstance(non_fallthrough_edges[0].target, gtirb.ProxyBlock) or
                  non_fallthrough_edges[0].target.section.name != self.transient_section.name)):
-                # is a call to external library function, rollback before the call instruction
+                # is a call to external library function, rollback
                 unconditional_rollback_idx = len(instructions) - 1
 
         return unconditional_rollback_idx
@@ -115,9 +118,10 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         if instruction.mnemonic in cls.SERIALIZING_MNEMONICS:
             return True
 
-        if instruction.mnemonic.startswith("rep stos"):
+        if instruction.mnemonic.startswith("rep"):
             return True
 
+        # why doesn't this work?
         #if any(prefix in instruction.prefix for prefix in [X86_PREFIX_REP, X86_PREFIX_REPE, X86_PREFIX_REPNE]):
         #    return True
 
