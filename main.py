@@ -17,6 +17,10 @@ ir = gtirb.IR.load_protobuf(f"test/{gtirb_name}.gtirb")
 module = ir.modules[0]
 text_section = [s for s in module.sections if s.name == ".text"][0]
 
+pass_manager = PassManager()
+pass_manager.add(AsanStackPass(text_section))
+pass_manager.run(ir)
+
 my_x64_elf_abi = _X86_64_ELF()
 reg_manager = LiveRegisterManager(module, my_x64_elf_abi)
 _ABIS[(gtirb.Module.ISA.X64, gtirb.Module.FileFormat.ELF)] = my_x64_elf_abi
@@ -35,8 +39,6 @@ pass_manager.add(ImportSymbolsPass())
 pass_manager.run(ir)
 
 pass_manager = PassManager()
-pass_manager.add(AsanStackPass(text_section, transient_section))
-
 pass_manager.add(TextCallTransformPass(text_section, text_transient_mapping, decoder))
 pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section, decoder))
 

@@ -14,30 +14,18 @@ from NaHCO3.utils.misc import distinguish_edges
 
 class AsanStackPass(VisitorPassMixin):
     text_section: gtirb.Section
-    transient_section: gtirb.Section
 
-    def __init__(self, text_section: gtirb.Section, transient_section: gtirb.Section):
+    def __init__(self, text_section: gtirb.Section):
         super().__init__()
         self.text_section = text_section
-        self.transient_section = transient_section
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         super().begin_module(module, functions, rewriting_ctx)
 
-        rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}), CallPatch(
-            rewriting_ctx.get_or_insert_extern_symbol("__asan_init", '')
-        ))
-        rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}),
-                                      Patch.from_function(self.__asan_trigger_on_null_patch))
-
-        self.visit_functions(functions)
+        self.visit_functions(functions, self.text_section)
 
     def visit_function(self, function: Function):
-        section_name = next(iter(function.get_entry_blocks())).section.name
-        if section_name != self.text_section.name and section_name != self.transient_section.name:
-            return
-
-        if function.get_name() in BLACKLIST_FUNCTION_NAMES:
+        if function.get_name() in BLACKLIST_FUNCTION_NAMES + ["main"]:
             return
 
         # poison stack
@@ -57,26 +45,22 @@ class AsanStackPass(VisitorPassMixin):
 
     @patch_constraints(x86_syntax=X86Syntax.INTEL)
     def __poison_stack_patch(self, ctx: InsertionContext):
-        #r, = ctx.scratch_registers
+        # Poison the return address
+
         r = "r11"
         return f"""
             mov {r}, rsp
             shr {r}, 3
-            mov word ptr [{r}+{ASAN_SHADOW_OFFSET}], 0xffff
-            sub rsp, 16
+            mov byte ptr [{r}+{ASAN_SHADOW_OFFSET}], -1
         """
 
     @patch_constraints(x86_syntax=X86Syntax.INTEL)
     def __unpoison_stack_patch(self, ctx: InsertionContext):
-        #r, = ctx.scratch_registers
+        # Unpoison the return address
+
         r = "r11"
         return f"""
-            add rsp, 16
             mov {r}, rsp
             shr {r}, 3
-            mov word ptr [{r}+{ASAN_SHADOW_OFFSET}], 0x0000
+            mov byte ptr [{r}+{ASAN_SHADOW_OFFSET}], 0
         """
-
-    @patch_constraints(x86_syntax=X86Syntax.INTEL)
-    def __asan_trigger_on_null_patch(self, ctx: InsertionContext):
-        return f"mov byte ptr ds:{ASAN_SHADOW_OFFSET}, -1"
