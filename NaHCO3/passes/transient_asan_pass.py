@@ -1,3 +1,4 @@
+import capstone_gt.x86
 import gtirb
 from gtirb_functions import Function
 from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints,
@@ -39,12 +40,21 @@ class TransientAsanPass(InstVisitorPassMixin):
         if mem_operand is None:
             return
 
+        # Do not instrument if base register is %rsp/%rbp and constant offset
+        if mem_operand.mem.base in (capstone_gt.x86.X86_REG_RSP, capstone_gt.x86.X86_REG_RBP) and \
+                mem_operand.mem.index == capstone_gt.x86.X86_REG_INVALID:
+            return
+
         # TODO: support > 8 bytes access
         # FIXME: capstone read/write info for SSE/AVX is incorrect
 
         try:
             mem_operand_str = mem_access_to_str(inst, mem_operand.mem,
                                                 operand_symbolic_expression(block, inst, mem_operand))
+
+            # Do not check for stack poisoning
+            if ASAN_SHADOW_OFFSET in mem_operand_str:
+                return
         except NotImplementedError:
             print(f"Warning: unsupported symexp at {inst}")
             mem_operand_str = mem_access_to_str(inst, mem_operand.mem, None)
@@ -56,11 +66,12 @@ class TransientAsanPass(InstVisitorPassMixin):
         ))
 
     def __build_asan_check_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int):
-        # FIXME: this actually clobbers flags!
+        # FIXME: this actually clobbers flags! (seems like it's usually ok though?)
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=2, clobbers_flags=False)
         def patch(ctx: InsertionContext):
             r1, r2 = ctx.scratch_registers
 
+            # FIXME: implement this thing
             detailed_check_snippet = f"""
                 
             """ if access_size < 8 else ""
@@ -68,17 +79,25 @@ class TransientAsanPass(InstVisitorPassMixin):
             return f"""
                 lea {r1}, {mem_operand_str}
                 mov {r2}, {r1}
-                sub {r2}, 0x7fff8000
-                shr {r2}, 44 # we want to compare it with 0xfff,ffff,ffff
-                test {r2}, {r2} # if zero, the target address falls into asan shadow
-                jz restore_checkpoint # maybe not directly restore? i don't know
+                #mov {r2}, {r1}
+                #shr {r2}, 44
+                #cmp {r2}, 7
+                #jg restore_checkpoint
+                
+                #mov {r2}, {r1}
+                #sub {r2}, 0x7fff8000
+                #shr {r2}, 44 # we want to compare it with 0xfff,ffff,ffff
+                #test {r2}, {r2} # if zero, the target address falls into asan shadow
+                #jz restore_checkpoint # maybe not directly restore? i don't know
                 
                 shr {r1}, 3
                 mov {r1:8l}, [{r1}+{ASAN_SHADOW_OFFSET}]
                 test {r1:8l}, {r1:8l}
                 je .L__asan_check_ok
                 {detailed_check_snippet}
-                jmp restore_checkpoint
+                mov rsi, {r2}
+                lea rdi, [rip]
+                jmp report_gadget_specfuzz
             .L__asan_check_ok:
             """
 
