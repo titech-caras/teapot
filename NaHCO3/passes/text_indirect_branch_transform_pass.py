@@ -35,13 +35,23 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
         super().visit_function(function)
 
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
-        # FIXME: Maybe should also check at the call/jmp site that this target is transformed (ref. SpecFuzz)
-        in_edges = list(block.incoming_edges)
-        if (len(in_edges) == 0 or  # Sometimes GTIRB doesn't detect indirect branches
-                any(e.label.type in (gtirb.cfg.Edge.Type.Call, gtirb.cfg.Edge.Type.Return) for e in in_edges) or
-                any(e.label.type == gtirb.cfg.Edge.Type.Branch and not e.label.direct for e in in_edges)):
+        incoming_edges = list(block.incoming_edges)
+        non_fallthrough_edges, fallthrough_edges = distinguish_edges(incoming_edges)
+
+        transform = False
+
+        if (len(incoming_edges) == 0 or  # Sometimes GTIRB doesn't detect indirect branches
+                any(e.label.type in (gtirb.cfg.Edge.Type.Call, gtirb.cfg.Edge.Type.Return) for e in non_fallthrough_edges) or
+                any(e.label.type == gtirb.cfg.Edge.Type.Branch and not e.label.direct for e in non_fallthrough_edges) or
+                any(e.label.type == gtirb.cfg.Edge.Type.Branch and not e.label.direct for e in non_fallthrough_edges)):
+            transform = True
+
+        if len(fallthrough_edges) > 0 and any(e.label.type == gtirb.cfg.Edge.Type.Call for e in fallthrough_edges[0].source.outgoing_edges):
+            transform = True
+
+        if transform:
             call_transform_target_symbol = gtirb.Symbol(
-                name=generate_distinct_label_name(".L__indbr_transform_target", block.uuid),
+                name=generate_distinct_label_name(".L__indbr_transform_target_" + function.get_name() + "_", block.uuid),
                 payload=self.text_transient_mapping.code_blocks_map[block.uuid],
                 module=self.module)
             self.rewriting_ctx.insert_at(block, 0, Patch.from_function(
@@ -51,7 +61,13 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
 
     @staticmethod
     def __build_indirect_branch_target_patch(target_symbol: gtirb.Symbol):
+        # FIXME: why this magic gets kicked out by GTIRB?.
         return patch_constraints(x86_syntax=X86Syntax.INTEL)(lambda ctx: f"""
+            #nop dword ptr [rsi+64] # Magic byte for transformed jump target
+            nop
+            nop
+            nop
+            nop
             cmp qword ptr checkpoint_cnt, 0
             jne {target_symbol.name}
         """)
