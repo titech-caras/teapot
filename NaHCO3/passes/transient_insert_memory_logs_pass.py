@@ -76,8 +76,8 @@ class TransientInsertMemoryLogsPass(InstVisitorPassMixin):
                 """
 
             return f"""
-                mov {r2}, [memory_history_top]
                 lea {r1}, {mem_operand_str}
+                mov {r2}, [memory_history_top]
                 {store_instructions}
                 mov memory_history_top, {r2}
             """
