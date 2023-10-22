@@ -1,13 +1,12 @@
 SYMBOL_SUFFIX = "__NaHCO3__"
 
 ROB_LEN = 250
-SCRATCHPAD_SIZE = 1024
+SCRATCHPAD_SIZE = 1048576
 
-ASAN_SHADOW_OFFSET = "0x7FFF8000"
+ASAN_SHADOW_OFFSET = "0x7fff8000"
 
 BLACKLIST_FUNCTION_NAMES = [
     "_start",
-    "main",
     "register_tm_clones",
     "deregister_tm_clones",
     "__do_global_dtors_aux",
@@ -18,11 +17,18 @@ BLACKLIST_FUNCTION_NAMES = [
 CHECKPOINT_LIB_SYMBOLS = [
     "scratchpad",
     "old_rsp",
+    "shadow_stack",
+    "shadow_stack_top",
 
     "make_checkpoint",
-    "restore_checkpoint",
+    "restore_checkpoint_ROB_LEN",
+    "restore_checkpoint_EXT_LIB",
+    "restore_checkpoint_MALFORMED_INDIRECT_BR",
+
+    "report_gadget_specfuzz",
 
     "checkpoint_target_metadata",
     "memory_history_top",
+    "checkpoint_cnt",
     "instruction_cnt",
 ]
