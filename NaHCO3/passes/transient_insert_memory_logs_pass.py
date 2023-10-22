@@ -23,9 +23,7 @@ class TransientInsertMemoryLogsPass(InstVisitorPassMixin):
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder):
         super().__init__(reg_manager, decoder)
-        self.reg_manager = reg_manager
         self.transient_section = transient_section
-        self.decoder = decoder
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
         super().begin_module(module, functions, rewriting_ctx)
@@ -45,45 +43,41 @@ class TransientInsertMemoryLogsPass(InstVisitorPassMixin):
                                               x.type == CS_OP_MEM and x.access & CS_AC_WRITE), None)
 
             if mem_write_operand is not None:
-                # FIXME: maybe clean up this code?
                 try:
-                    mem_operand_strs = [mem_access_to_str(inst, mem_write_operand.mem,
-                                                          operand_symbolic_expression(block, inst, mem_write_operand),
-                                                          extra_displacement=i * 8)
-                                        for i in range(math.ceil(mem_write_operand.size / 8))]
+                    mem_operand_str = mem_access_to_str(inst, mem_write_operand.mem,
+                                                        operand_symbolic_expression(block, inst, mem_write_operand))
                 except NotImplementedError:
                     print(f"Warning: unsupported symexp at {inst}")
-                    mem_operand_strs = [mem_access_to_str(inst, mem_write_operand.mem, None,
-                                                          extra_displacement=i * 8)
-                                        for i in range(math.ceil(mem_write_operand.size / 8))]
+                    mem_operand_str = mem_access_to_str(inst, mem_write_operand.mem, None)
 
                 self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                     self.reg_manager.allocate_registers(function, block, inst_idx)(
-                        self.__build_memory_log_patch(mem_operand_strs))))
+                        self.__build_memory_log_patch(mem_operand_str, mem_write_operand.size))))
             elif inst.mnemonic == "push" or inst.mnemonic == "call":
+                # Stack operations
+                access_size = inst.operands[0].size
                 self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                     self.reg_manager.allocate_registers(function, block, inst_idx)(
-                        self.__build_memory_log_patch(["[rsp-8]"]))))
+                        self.__build_memory_log_patch(f"[rsp-{access_size}]", access_size))))
 
-    @staticmethod
-    def __build_memory_log_patch(mem_operand_strs: List[str]):
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=2)
+    def __build_memory_log_patch(self, mem_operand_str: str, access_size: int):
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3)
         def patch(ctx: InsertionContext):
-            r1, r2 = ctx.scratch_registers
+            r1, r2, r3 = ctx.scratch_registers
 
             store_instructions = ""
-            for mem_operand_str in mem_operand_strs:
+            for i in range(0, access_size, 8):
                 store_instructions += f"""
-                lea {r1}, {mem_operand_str}
+                mov {r3}, [{r1}]
                 mov [{r2}], {r1}
-                mov {r1}, [{r1}]
-                mov [{r2} + 8], {r1}
+                mov [{r2} + 8], {r3}
                 lea {r2}, [{r2} + 16]
+                lea {r1}, [{r1} + 8]
                 """
-                pass
 
             return f"""
                 mov {r2}, [memory_history_top]
+                lea {r1}, {mem_operand_str}
                 {store_instructions}
                 mov memory_history_top, {r2}
             """
