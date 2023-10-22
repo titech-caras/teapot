@@ -45,9 +45,6 @@ class TransientAsanPass(InstVisitorPassMixin):
                 mem_operand.mem.index == capstone_gt.x86.X86_REG_INVALID:
             return
 
-        # TODO: support > 8 bytes access
-        # FIXME: capstone read/write info for SSE/AVX is incorrect
-
         try:
             mem_operand_str = mem_access_to_str(inst, mem_operand.mem,
                                                 operand_symbolic_expression(block, inst, mem_operand))
@@ -67,38 +64,43 @@ class TransientAsanPass(InstVisitorPassMixin):
 
     def __build_asan_check_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int):
         # FIXME: this actually clobbers flags! (seems like it's usually ok though?)
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=2, clobbers_flags=False)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3, clobbers_flags=False)
         def patch(ctx: InsertionContext):
-            r1, r2 = ctx.scratch_registers
+            r1, r2, r3 = ctx.scratch_registers
 
-            # FIXME: implement this thing
-            detailed_check_snippet = f"""
-                
-            """ if access_size < 8 else ""
+            r1_shadow_subreg = r1.sizes["8l" if access_size <= 8 else str(access_size)]
 
+            detailed_check_snippet = ""
+            if access_size < 8:
+                detailed_check_snippet += f"""
+                    mov {r3:8l}, {r2:8l}
+                    and {r3:8l}, 7 
+                """
+
+                if access_size > 1:
+                    detailed_check_snippet += f"add {r3:8l}, {access_size - 1}\n"
+
+                detailed_check_snippet += f"""
+                    cmp {r3:8l}, {r1_shadow_subreg}
+                    jnb .L__asan_check_ok
+                """
+
+            # FIXME: SpecFuzz actually continues to execute after Asan trigger
+            # FIXME: report gadget, skip the read & write operation, and continue execution if possible
             return f"""
-                lea {r1}, {mem_operand_str}
-                mov {r2}, {r1}
-                #mov {r2}, {r1}
-                #shr {r2}, 44
-                #cmp {r2}, 7
-                #jg restore_checkpoint
-                
-                #mov {r2}, {r1}
-                #sub {r2}, 0x7fff8000
-                #shr {r2}, 44 # we want to compare it with 0xfff,ffff,ffff
-                #test {r2}, {r2} # if zero, the target address falls into asan shadow
-                #jz restore_checkpoint # maybe not directly restore? i don't know
-                
+                lea {r2}, {mem_operand_str}
+                mov {r1}, {r2}
                 shr {r1}, 3
-                mov {r1:8l}, [{r1}+{ASAN_SHADOW_OFFSET}]
-                test {r1:8l}, {r1:8l}
+                mov {r1_shadow_subreg}, [{r1}+{ASAN_SHADOW_OFFSET}]
+                test {r1_shadow_subreg}, {r1_shadow_subreg}
                 je .L__asan_check_ok
                 {detailed_check_snippet}
+            .L__asan_check_fail:
                 mov rsi, {r2}
                 lea rdi, [rip]
                 jmp report_gadget_specfuzz
             .L__asan_check_ok:
+                nop
             """
 
         return patch
