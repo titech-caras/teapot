@@ -61,7 +61,8 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
 
     @staticmethod
     def __build_indirect_branch_target_patch(target_symbol: gtirb.Symbol):
-        # FIXME: why this magic gets kicked out by GTIRB?.
+        # FIXME: why this magic gets kicked out by GTIRB?
+        # FIXME: this conflicts with GTIRB alignment sometimes, need to hack
         return patch_constraints(x86_syntax=X86Syntax.INTEL)(lambda ctx: f"""
             #nop dword ptr [rsi+64] # Magic byte for transformed jump target
             nop

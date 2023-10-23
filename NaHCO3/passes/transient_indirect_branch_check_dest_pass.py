@@ -60,6 +60,7 @@ class TransientIndirectBranchCheckDestPass(VisitorPassMixin, RegInstAwarePassMix
                     self.__build_indirect_branch_check_dist_patch(operand_str))))
 
     def __build_indirect_branch_check_dist_patch(self, operand_str: str):
+        # FIXME: maybe should apply asan check here too?
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3)
         def patch(ctx):
             r1, r2, r3 = ctx.scratch_registers
