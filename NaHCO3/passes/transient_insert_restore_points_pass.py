@@ -19,6 +19,7 @@ from NaHCO3.config import SYMBOL_SUFFIX, ROB_LEN
 
 class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
     reg_manager: LiveRegisterManager
+    text_section: gtirb.Section
     transient_section: gtirb.Section
 
     # Insert restore points about every 50 instructions, and before the end of each basic block
@@ -29,9 +30,11 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         "syscall", "sysenter"
     ]
 
-    def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
+    def __init__(self, reg_manager: LiveRegisterManager,
+                 text_section: gtirb.Section, transient_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
+        self.text_section = text_section
         self.transient_section = transient_section
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
@@ -107,7 +110,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
             # The call may be a jmp because of tail-call optimization
             if (non_fallthrough_edges[0].label.type in (gtirb.EdgeType.Call, gtirb.EdgeType.Branch) and
                 (isinstance(non_fallthrough_edges[0].target, gtirb.ProxyBlock) or
-                 non_fallthrough_edges[0].target.section.name != self.transient_section.name)):
+                 non_fallthrough_edges[0].target.section.name not in (self.text_section.name, self.transient_section.name))):
                 # is a call to external library function, rollback
                 unconditional_rollback_idx = len(instructions) - 1
 
@@ -135,15 +138,16 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                 mov {r}, instruction_cnt
                 add {r}, {instruction_count}
                 cmp {r}, {ROB_LEN}
-                jge restore_checkpoint
+                jge restore_checkpoint_ROB_LEN
                 mov instruction_cnt, {r}
             """
 
         return patch
 
     def __build_unconditional_restore_point_patch(self):
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL)
         def patch(ctx: InsertionContext):
-            return f"jmp restore_checkpoint"
+            # FIXME: also serializing mnemonics
+            return f"jmp restore_checkpoint_EXT_LIB"
 
         return patch

@@ -42,10 +42,11 @@ pass_manager = PassManager()
 pass_manager.add(TextIndirectBranchTransformPass(text_section, text_transient_mapping, decoder))
 pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section, decoder))
 
-pass_manager.add(TransientInsertRestorePointsPass(reg_manager, transient_section, decoder))
+pass_manager.add(TransientInsertRestorePointsPass(reg_manager, text_section, transient_section, decoder))
 pass_manager.add(TransientAsanPass(reg_manager, transient_section, decoder))
 pass_manager.add(TransientInsertMemoryLogsPass(reg_manager, transient_section, decoder))
-pass_manager.add(TransientIndirectBranchCheckDestPass(reg_manager, transient_section, decoder, transient_section_start_symbol, transient_section_end_symbol))
+pass_manager.add(TransientIndirectBranchCheckDestPass(reg_manager, transient_section, decoder,
+                                                      transient_section_start_symbol, transient_section_end_symbol))
 pass_manager.run(ir)
 
 ir.save_protobuf(f"test/{gtirb_name}_modified.gtirb")
