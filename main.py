@@ -17,8 +17,10 @@ ir = gtirb.IR.load_protobuf(f"test/{gtirb_name}.gtirb")
 module = ir.modules[0]
 text_section = [s for s in module.sections if s.name == ".text"][0]
 
+decoder = CachedGtirbInstructionDecoder(module.isa)
+
 pass_manager = PassManager()
-pass_manager.add(AsanStackPass(text_section))
+pass_manager.add(AsanStackPass(text_section, decoder))
 pass_manager.run(ir)
 
 my_x64_elf_abi = _X86_64_ELF()
@@ -30,8 +32,6 @@ transient_section, transient_section_start_symbol, transient_section_end_symbol,
 
 trampoline_section = gtirb.Section(name=".NaHCO3_trampolines", flags=transient_section.flags, module=module)
 trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)
-
-decoder = CachedGtirbInstructionDecoder(module.isa)
 
 pass_manager = PassManager()
 pass_manager.add(CreateTrampolinesPass(text_section, trampoline_section, text_transient_mapping, decoder))

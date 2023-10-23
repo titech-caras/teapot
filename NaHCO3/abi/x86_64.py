@@ -4,12 +4,58 @@ from gtirb_rewriting.assembly import Constraints, Register, _AsmSnippet
 
 from NaHCO3.config import SCRATCHPAD_SIZE
 
-from typing import Tuple, Iterable, Optional, List
+from typing import Tuple, Iterable, Optional, List, Set
 import copy
 import pprint
 
 
 class _X86_64_ELF(_X86_64_ELF_BASE):
+    def caller_saved_registers(self) -> Set[Register]:
+        return {self.get_register("RFLAGS")}
+
+    def _allocate_patch_registers(
+        self, constraints: Constraints
+    ) -> _PatchRegisterAllocation:
+        """
+        Allocates registers to satisfy a patch's constraints.
+        """
+        available_scratch_registers = list(self._scratch_registers())
+        clobbered_registers: Set[Register] = set()
+
+        for clobber in constraints.clobbers_registers:
+            reg = self.get_register(clobber)
+            if reg in available_scratch_registers:
+                available_scratch_registers.remove(reg)
+            clobbered_registers.add(reg)
+
+        for read in constraints.reads_registers:
+            reg = self.get_register(read)
+            if reg in available_scratch_registers:
+                available_scratch_registers.remove(reg)
+
+        if constraints.scratch_registers > len(available_scratch_registers):
+            raise ValueError("unable to allocate enough scratch registers")
+
+        scratch_registers = available_scratch_registers[
+            : constraints.scratch_registers
+        ]
+        clobbered_registers.update(scratch_registers)
+
+        if constraints.preserve_caller_saved_registers:
+            clobbered_registers.update(self.caller_saved_registers())
+
+        # We want deterministic register order out of this function, so we'll
+        # sort it by the order the ABI class gave them out. This avoids
+        # silliness like x1, x10, x2 that we'd get sorting by name.
+        registers_indices = {
+            reg: i for i, reg in enumerate(self.all_registers())
+        }
+        return _PatchRegisterAllocation(
+            sorted(clobbered_registers, key=lambda r: registers_indices[r]),
+            scratch_registers,
+            available_scratch_registers,
+        )
+
     def _create_prologue_and_epilogue(
             self,
             constraints: Constraints,
@@ -37,16 +83,15 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
                 new_constraints, new_register_use, False)
             epilogue = list(reversed(list(epilogue)))
 
-            # FIXME: actually should use scratchpad, but maybe only in transient?
-            #prologue.insert(0, switch_to_scratchpad_stack_snippet)
-            #prologue.append(switch_to_original_stack_snippet)
-            #epilogue.insert(0, switch_to_original_stack_snippet)
-            #epilogue.append(switch_to_scratchpad_stack_snippet)
+            prologue.insert(0, switch_to_scratchpad_stack_snippet)
+            prologue.append(switch_to_original_stack_snippet)
+            epilogue.insert(0, switch_to_original_stack_snippet)
+            epilogue.append(switch_to_scratchpad_stack_snippet)
         else:
             prologue: List[_AsmSnippet] = []
             epilogue: List[_AsmSnippet] = []
 
-            scratchpad_offset = 0
+            scratchpad_offset = 1024
             for reg in register_use.clobbered_registers:
                 if reg.name == "rflags":
                     continue
