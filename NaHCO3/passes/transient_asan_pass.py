@@ -46,12 +46,16 @@ class TransientAsanPass(InstVisitorPassMixin):
             return
 
         try:
-            mem_operand_str = mem_access_to_str(inst, mem_operand.mem,
-                                                operand_symbolic_expression(block, inst, mem_operand))
-
-            # Do not check for stack poisoning
-            if ASAN_SHADOW_OFFSET in mem_operand_str:
+            symexp = operand_symbolic_expression(block, inst, mem_operand)
+            if symexp is not None and any(s.name == "scratchpad" for s in symexp.symbols):
+                # write to the scratchpad in previous instrumentation, quit
                 return
+
+            if int(ASAN_SHADOW_OFFSET, 16) == mem_operand.mem.disp:
+                # Do not check for stack poisoning
+                return
+
+            mem_operand_str = mem_access_to_str(inst, mem_operand.mem, symexp)
         except NotImplementedError:
             print(f"Warning: unsupported symexp at {inst}")
             mem_operand_str = mem_access_to_str(inst, mem_operand.mem, None)

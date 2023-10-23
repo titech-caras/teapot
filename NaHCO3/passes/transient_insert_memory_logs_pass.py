@@ -44,8 +44,12 @@ class TransientInsertMemoryLogsPass(InstVisitorPassMixin):
 
             if mem_write_operand is not None:
                 try:
-                    mem_operand_str = mem_access_to_str(inst, mem_write_operand.mem,
-                                                        operand_symbolic_expression(block, inst, mem_write_operand))
+                    symexp = operand_symbolic_expression(block, inst, mem_write_operand)
+                    if symexp is not None and any(s.name == "scratchpad" for s in symexp.symbols):
+                        # write to the scratchpad in previous instrumentation, quit
+                        return
+
+                    mem_operand_str = mem_access_to_str(inst, mem_write_operand.mem, symexp)
                 except NotImplementedError:
                     print(f"Warning: unsupported symexp at {inst}")
                     mem_operand_str = mem_access_to_str(inst, mem_write_operand.mem, None)
