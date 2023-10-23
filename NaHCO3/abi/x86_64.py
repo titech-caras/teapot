@@ -64,7 +64,7 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
     ) -> Tuple[Iterable[_AsmSnippet], Iterable[_AsmSnippet], Optional[int]]:
         switch_to_scratchpad_stack_snippet = _AsmSnippet(f"""
             mov %rsp, old_rsp
-            mov scratchpad+{SCRATCHPAD_SIZE - 8}, %rsp
+            lea scratchpad+{SCRATCHPAD_SIZE - 8}, %rsp
         """)
         switch_to_original_stack_snippet = _AsmSnippet(f"""
             mov old_rsp, %rsp

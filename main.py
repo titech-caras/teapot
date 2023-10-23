@@ -20,6 +20,7 @@ text_section = [s for s in module.sections if s.name == ".text"][0]
 decoder = CachedGtirbInstructionDecoder(module.isa)
 
 pass_manager = PassManager()
+pass_manager.add(ImportSymbolsPass())
 pass_manager.add(AsanStackPass(text_section, decoder))
 pass_manager.run(ir)
 
@@ -35,7 +36,6 @@ trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)
 
 pass_manager = PassManager()
 pass_manager.add(CreateTrampolinesPass(text_section, trampoline_section, text_transient_mapping, decoder))
-pass_manager.add(ImportSymbolsPass())
 pass_manager.run(ir)
 
 pass_manager = PassManager()

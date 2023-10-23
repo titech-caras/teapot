@@ -70,7 +70,7 @@ class AsanStackPass(VisitorPassMixin):
 
         r = "r11"
         return f"""
-            mov scratchpad+1024, {r}
+            mov scratchpad, {r}
             mov {r}, rsp
             shr {r}, 3
             mov byte ptr [{r}+{ASAN_SHADOW_OFFSET}], 0
