@@ -36,11 +36,17 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
     def visit_inst(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                    block: gtirb.CodeBlock, function: Function = None,
                    live_registers: Set[Register] = None):
-        if inst.mnemonic == "lea" or inst.mnemonic == "nop":
+        if inst.mnemonic in ("lea", "nop", "ret") or inst.mnemonic.startswith("j"):
+            # Do not inspect control flow transfers here. For call, we only handle it like a stack push.
             return
 
         mem_operand = next(iter(x for x in inst.operands if x.type == CS_OP_MEM), None)
-        if mem_operand is not None:
+        if inst.mnemonic == "push" or inst.mnemonic == "call":
+            asan_instrument = False
+            memlog_instrument = True
+            mem_operand_str = "[rsp-8]"
+            access_size = 8
+        elif mem_operand is not None:
             # Workaround for capstone: capstone doesn't correctly identify accesses for
             # a lot of SSE/AVX instructions, so we conservatively identify all first
             # SSE/AVX memory operands as being written.
@@ -71,11 +77,6 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
                 mem_operand_str = mem_access_to_str(inst, mem_operand.mem, None)
 
             access_size = mem_operand.size
-        elif inst.mnemonic == "push" or inst.mnemonic == "call":
-            asan_instrument = False
-            memlog_instrument = True
-            mem_operand_str = "[rsp-8]"
-            access_size = 8
         else:
             return
 

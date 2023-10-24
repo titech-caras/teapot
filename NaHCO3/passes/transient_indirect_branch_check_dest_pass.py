@@ -30,6 +30,10 @@ class TransientIndirectBranchCheckDestPass(VisitorPassMixin, RegInstAwarePassMix
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
         self.visit_functions(functions, self.transient_section)
 
+    def visit_function(self, function: Function):
+        self.reg_manager.analyze(function)
+        VisitorPassMixin.visit_function(self, function)
+
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
         if len(non_fallthrough_edges) == 0:
