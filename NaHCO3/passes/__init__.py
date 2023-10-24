@@ -4,7 +4,6 @@ from .import_symbols_pass import ImportSymbolsPass
 from .asan_stack_pass import AsanStackPass
 from .text_indirect_branch_transform_pass import TextIndirectBranchTransformPass
 from .text_insert_checkpoints_pass import TextInsertCheckpointsPass
-from .transient_asan_pass import TransientAsanPass
-from .transient_insert_memory_logs_pass import TransientInsertMemoryLogsPass
+from .transient_asan_memlog_pass import TransientAsanMemlogPass
 from .transient_insert_restore_points_pass import TransientInsertRestorePointsPass
 from .transient_indirect_branch_check_dest_pass import TransientIndirectBranchCheckDestPass

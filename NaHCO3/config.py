@@ -17,15 +17,15 @@ BLACKLIST_FUNCTION_NAMES = [
 CHECKPOINT_LIB_SYMBOLS = [
     "scratchpad",
     "old_rsp",
-    "shadow_stack",
-    "shadow_stack_top",
 
+    "libcheckpoint_enable",
+    "libcheckpoint_disable",
     "make_checkpoint",
     "restore_checkpoint_ROB_LEN",
     "restore_checkpoint_EXT_LIB",
     "restore_checkpoint_MALFORMED_INDIRECT_BR",
 
-    "report_gadget_specfuzz",
+    "report_gadget_specfuzz_asan",
 
     "checkpoint_target_metadata",
     "memory_history_top",

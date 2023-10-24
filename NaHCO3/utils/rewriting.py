@@ -1,6 +1,8 @@
 import gtirb
 from gtirb_capstone import RewritingContext
+from gtirb_capstone.x86 import operand_symbolic_expression, operand_to_str
 from typing import Union, Optional
+from capstone_gt import CsInsn
 
 
 def initialize_empty_code_block(byte_interval: gtirb.ByteInterval):
@@ -15,17 +17,12 @@ def initialize_empty_code_block(byte_interval: gtirb.ByteInterval):
     return block
 
 
-def insert_instruction_with_symbol(
-        rewriting_context: RewritingContext,
-        block: gtirb.CodeBlock,
-        code: Union[list, bytes],
-        symbol: gtirb.Symbol,
-        insertion_offset: Optional[int] = None,
-        symbol_offset_from_back: int = 4):
-    if insertion_offset is None:  # Default to inserting at end
-        insertion_offset = block.size
-    rewriting_context.modify_block_insert(block.module, block, bytes(code), insertion_offset)
-    block.byte_interval.symbolic_expressions[block.offset + insertion_offset + len(code) - symbol_offset_from_back] = \
-        gtirb.SymAddrConst(offset=0, symbol=symbol)
+def reconstruct_instruction_str(block: gtirb.CodeBlock, inst: CsInsn):
+    operand_strs = []
+    for op in inst.operands:
+        try:
+            operand_strs.append(operand_to_str(inst, op, operand_symbolic_expression(block, inst, op)))
+        except NotImplementedError:
+            operand_strs.append(operand_to_str(inst, op, None))
 
-    return len(code)
+    return f"{inst.mnemonic} {', '.join(operand_strs)}"

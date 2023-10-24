@@ -23,13 +23,19 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
         clobbered_registers: Set[Register] = set()
 
         for clobber in constraints.clobbers_registers:
-            reg = self.get_register(clobber)
+            try:
+                reg = self.get_register(clobber)
+            except KeyError:
+                continue
             if reg in available_scratch_registers:
                 available_scratch_registers.remove(reg)
             clobbered_registers.add(reg)
 
         for read in constraints.reads_registers:
-            reg = self.get_register(read)
+            try:
+                reg = self.get_register(read)
+            except KeyError:
+                continue
             if reg in available_scratch_registers:
                 available_scratch_registers.remove(reg)
 
