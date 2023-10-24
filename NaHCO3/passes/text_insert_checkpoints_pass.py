@@ -28,11 +28,10 @@ class TextInsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
-
-        # FIXME: this is broken because it won't push the caller-saved registers!
-        rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}), CallPatch(
-            rewriting_ctx.get_or_insert_extern_symbol("libcheckpoint_enable", '')
-        ))
+        rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}),
+                                      Patch.from_function(patch_constraints(x86_syntax=X86Syntax.INTEL)(
+                                          lambda ctx: "call libcheckpoint_enable"
+                                      )))
 
         self.visit_functions(functions, self.text_section)
 
@@ -47,9 +46,9 @@ class TextInsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                     continue
 
                 if non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Return:
-                    self.rewriting_ctx.insert_at(block, block.size - 1, CallPatch(
-                        self.rewriting_ctx.get_or_insert_extern_symbol("libcheckpoint_disable", '')
-                    ))
+                    self.rewriting_ctx.insert_at(
+                        block, block.size - 1, Patch.from_function(patch_constraints(x86_syntax=X86Syntax.INTEL)(
+                            lambda ctx: "call libcheckpoint_disable")))
 
         self.reg_manager.analyze(function)
         super().visit_function(function)
@@ -71,12 +70,11 @@ class TextInsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                         self.__build_checkpoint_patch(block.uuid))))
             except NotEnoughFreeRegistersException:
                 self.rewriting_ctx.insert_at(block, conditional_jump_offset, Patch.from_function(
-                    self.reg_manager.allocate_registers(
-                        function, block, len(instructions) - 1, False)(
-                        self.__build_checkpoint_patch(block.uuid, False))))
+                    self.__build_checkpoint_patch(block.uuid, False)))
 
     @staticmethod
     def __build_checkpoint_patch(block_uuid: UUID, use_scratch_registers: bool = True):
+        # FIXME: ugly, refactor
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1 if use_scratch_registers else 0)
         def patch(ctx: InsertionContext):
             r = ctx.scratch_registers[0] if use_scratch_registers else "rax"
