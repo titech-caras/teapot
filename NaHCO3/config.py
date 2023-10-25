@@ -25,7 +25,7 @@ CHECKPOINT_LIB_SYMBOLS = [
     "restore_checkpoint_EXT_LIB",
     "restore_checkpoint_MALFORMED_INDIRECT_BR",
 
-    "report_gadget_specfuzz_asan",
+    "report_gadget_SPECFUZZ_ASAN",
 
     "checkpoint_target_metadata",
     "memory_history_top",

@@ -156,7 +156,7 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
                 mov scratchpad+8, rdi
                 mov rsi, {r2}
                 lea rdi, [rip]
-                call report_gadget_specfuzz_asan
+                call report_gadget_SPECFUZZ_ASAN
                 mov rdi, scratchpad+8
                 mov rsi, scratchpad
                 mov rsp, old_rsp
