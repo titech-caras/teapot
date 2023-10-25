@@ -15,8 +15,7 @@ from NaHCO3.config import SYMBOL_SUFFIX
 class TransientIndirectBranchCheckDestPass(VisitorPassMixin, RegInstAwarePassMixin):
     transient_section: gtirb.Section
 
-    MAGIC = "0x90909090"  # FIXME: the magic got eaten by gtirb!
-    # MAGIC = "0x40461f0f"  # nop dword ptr [rsi+64]; magic of a transformed destination
+    MAGIC = "0x90db8748"
 
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder,

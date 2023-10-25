@@ -38,37 +38,32 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
         incoming_edges = list(block.incoming_edges)
         non_fallthrough_edges, fallthrough_edges = distinguish_edges(incoming_edges)
 
-        transform = False
-
         if (len(incoming_edges) == 0 or  # Sometimes GTIRB doesn't detect indirect branches
-                any(e.label.type in (gtirb.cfg.Edge.Type.Call, gtirb.cfg.Edge.Type.Return) for e in non_fallthrough_edges) or
-                any(e.label.type == gtirb.cfg.Edge.Type.Branch and not e.label.direct for e in non_fallthrough_edges) or
-                any(e.label.type == gtirb.cfg.Edge.Type.Branch and not e.label.direct for e in non_fallthrough_edges)):
-            transform = True
-
-        if len(fallthrough_edges) > 0 and any(e.label.type == gtirb.cfg.Edge.Type.Call for e in fallthrough_edges[0].source.outgoing_edges):
-            transform = True
-
-        if transform:
-            call_transform_target_symbol = gtirb.Symbol(
-                name=generate_distinct_label_name(".L__indbr_transform_target_" + function.get_name() + "_", block.uuid),
+                any(e.label.type in (gtirb.cfg.Edge.Type.Call, gtirb.cfg.Edge.Type.Branch) and
+                    not e.label.direct for e in non_fallthrough_edges)):
+            # FIXME: Can we handle jump tables better altogether? Maybe there's a better way...
+            indbr_transform_target_symbol = gtirb.Symbol(
+                name=generate_distinct_label_name(".L__indbr_transform_target_" + function.get_name() + "_",
+                                                  block.uuid),
                 payload=self.text_transient_mapping.code_blocks_map[block.uuid],
                 module=self.module)
             self.rewriting_ctx.insert_at(block, 0, Patch.from_function(
-                self.__build_indirect_branch_target_patch(call_transform_target_symbol)))
+                self.__build_indirect_branch_target_patch(indbr_transform_target_symbol)))
 
-        # FIXME: Can we handle jump tables better altogether? Maybe there's a better way...
+        if (len(fallthrough_edges) > 0 and
+                any(e.label.type == gtirb.cfg.Edge.Type.Call for e in fallthrough_edges[0].source.outgoing_edges)):
+            ret_transform_target_symbol = gtirb.Symbol(
+                name=generate_distinct_label_name(".L__ret_transform_target_" + function.get_name() + "_",
+                                                  block.uuid),
+                payload=self.text_transient_mapping.code_blocks_map[block.uuid],
+                module=self.module)
+            self.rewriting_ctx.insert_at(fallthrough_edges[0].source, fallthrough_edges[0].source.size, Patch.from_function(
+                self.__build_indirect_branch_target_patch(ret_transform_target_symbol)))
 
     @staticmethod
     def __build_indirect_branch_target_patch(target_symbol: gtirb.Symbol):
-        # FIXME: why this magic gets kicked out by GTIRB?
-        # FIXME: this conflicts with GTIRB alignment sometimes, need to hack
         return patch_constraints(x86_syntax=X86Syntax.INTEL)(lambda ctx: f"""
-            #nop dword ptr [rsi+64] # Magic byte for transformed jump target
-            nop
-            nop
-            nop
-            nop
+            .byte 0x48, 0x87, 0xdb, 0x90 # xchg rbx, rbx; nop
             cmp qword ptr checkpoint_cnt, 0
             jne {target_symbol.name}
         """)
