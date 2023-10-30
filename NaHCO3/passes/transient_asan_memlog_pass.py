@@ -81,11 +81,11 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
             return
 
         if asan_instrument:
-            self.rewriting_ctx.replace_at(block, inst_offset, inst.size, Patch.from_function(
+            self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                 self.reg_manager.allocate_registers(function, block, inst_idx)(
-                    self.__build_asan_patch(inst, mem_operand_str, access_size,
-                                            reconstruct_instruction_str(block, inst), memlog_instrument))))
-        elif memlog_instrument:
+                    self.__build_asan_patch(inst, mem_operand_str, access_size))))
+
+        if memlog_instrument:
             self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                 self.reg_manager.allocate_registers(function, block, inst_idx)(
                     self.__build_memlog_patch(inst, mem_operand_str, access_size))))
@@ -93,7 +93,7 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
     @staticmethod
     def __build_memlog_patch(inst: CsInsn, mem_operand_str: str, access_size: int):
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3)
-        def memlog_patch(ctx: InsertionContext):
+        def patch(ctx: InsertionContext):
             r1, r2, r3 = ctx.scratch_registers
 
             store_instructions = ""
@@ -113,14 +113,14 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
                 mov memory_history_top, {r1}
             """
 
-        return memlog_patch
+        return patch
 
     @classmethod
-    def __build_asan_patch(cls, inst: CsInsn, mem_operand_str: str, access_size: int, inst_str: str, with_memlog_instrument: bool):
-        reads_registers = set([inst.reg_name(r) for r in inst.regs_access()[0] + inst.regs_access()[1]])
+    def __build_asan_patch(cls, inst: CsInsn, mem_operand_str: str, access_size: int):
+        #reads_registers = set([inst.reg_name(r) for r in inst.regs_access()[0] + inst.regs_access()[1]])
 
         # this actually clobbers flags! (seems like it's usually ok though?)
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3, reads_registers=reads_registers)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3)
         def patch(ctx: InsertionContext):
             r1, r2, r3 = ctx.scratch_registers
 
@@ -160,11 +160,7 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
                 mov rdi, scratchpad+8
                 mov rsi, scratchpad
                 mov rsp, old_rsp
-                jmp .L__asan_memop_skip{SYMBOL_SUFFIX}
             .L__asan_check_ok{SYMBOL_SUFFIX}:
-                {cls.__build_memlog_patch(inst, mem_operand_str, access_size)(ctx) if with_memlog_instrument else ""}
-                {inst_str}
-            .L__asan_memop_skip{SYMBOL_SUFFIX}:
                 nop
             """
 
