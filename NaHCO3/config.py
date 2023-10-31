@@ -11,7 +11,8 @@ BLACKLIST_FUNCTION_NAMES = [
     "deregister_tm_clones",
     "__do_global_dtors_aux",
     "dummy",
-    "frame_dummy"
+    "frame_dummy",
+    "__libc_csu_init",
 ]
 
 CHECKPOINT_LIB_SYMBOLS = [
@@ -31,4 +32,6 @@ CHECKPOINT_LIB_SYMBOLS = [
     "memory_history_top",
     "checkpoint_cnt",
     "instruction_cnt",
+
+    "dift_reg_tags",
 ]
