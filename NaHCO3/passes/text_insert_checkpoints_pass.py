@@ -28,27 +28,11 @@ class TextInsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
-        rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}),
-                                      Patch.from_function(patch_constraints(x86_syntax=X86Syntax.INTEL)(
-                                          lambda ctx: "call libcheckpoint_enable"
-                                      )))
-
         self.visit_functions(functions, self.text_section)
 
     def visit_function(self, function: Function):
         if function.get_name() in BLACKLIST_FUNCTION_NAMES:
             return
-
-        if function.get_name() == "main":
-            for block in function.get_exit_blocks():
-                non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
-                if len(non_fallthrough_edges) == 0:
-                    continue
-
-                if non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Return:
-                    self.rewriting_ctx.insert_at(
-                        block, block.size - 1, Patch.from_function(patch_constraints(x86_syntax=X86Syntax.INTEL)(
-                            lambda ctx: "call libcheckpoint_disable")))
 
         self.reg_manager.analyze(function)
         super().visit_function(function)
