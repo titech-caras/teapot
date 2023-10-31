@@ -117,10 +117,7 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
 
     @classmethod
     def __build_asan_patch(cls, inst: CsInsn, mem_operand_str: str, access_size: int):
-        #reads_registers = set([inst.reg_name(r) for r in inst.regs_access()[0] + inst.regs_access()[1]])
-
-        # this actually clobbers flags! (seems like it's usually ok though?)
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3, clobbers_flags=True)
         def patch(ctx: InsertionContext):
             r1, r2, r3 = ctx.scratch_registers
 
