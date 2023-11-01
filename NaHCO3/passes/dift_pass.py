@@ -95,13 +95,10 @@ class DiftPass(InstVisitorPassMixin):
         dift_reg_ids_read = [self.__reg_to_dift_reg_id(reg) for reg in regs_read]
         dift_reg_ids_write = [self.__reg_to_dift_reg_id(reg) for reg in regs_write]
 
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=2)#, clobbers_flags=True)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=2, clobbers_flags=True)
         def patch(ctx: InsertionContext):
             r1, r2 = ctx.scratch_registers
-            #r1, r2 = "rax", "rbx"
-
-            asm = "pushfq\n"#push rax\npush rbx\n"
-            #asm = ""
+            asm = ""
 
             if mem_operand_str:
                 asm += f"""
@@ -122,9 +119,6 @@ class DiftPass(InstVisitorPassMixin):
 
             if mem_operand_write:
                 asm += f"mov [{r2}], {r1}\n"
-
-            #asm += "pop rbx\npop rax\n"
-            asm += "popfq\n"
 
             return asm
 

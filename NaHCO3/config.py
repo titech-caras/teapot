@@ -18,6 +18,7 @@ BLACKLIST_FUNCTION_NAMES = [
 CHECKPOINT_LIB_SYMBOLS = [
     "scratchpad",
     "old_rsp",
+    "scratchpad_rsp",
 
     "libcheckpoint_enable",
     "libcheckpoint_disable",
