@@ -2,7 +2,7 @@ from .create_trampolines_pass import CreateTrampolinesPass
 from .import_symbols_pass import ImportSymbolsPass
 
 from .asan_stack_pass import AsanStackPass
-from .dift_pass import DiftPass
+from .dift_propagation_pass import DiftPropagationPass
 from .text_initialize_library_pass import TextInitializeLibraryPass
 from .text_indirect_branch_transform_pass import TextIndirectBranchTransformPass
 from .text_insert_checkpoints_pass import TextInsertCheckpointsPass

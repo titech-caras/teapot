@@ -16,7 +16,7 @@ from NaHCO3.config import BLACKLIST_FUNCTION_NAMES
 from NaHCO3.passes.mixins import InstVisitorPassMixin
 
 
-class DiftPass(InstVisitorPassMixin):
+class DiftPropagationPass(InstVisitorPassMixin):
     section: gtirb.Section
 
     def __init__(self, reg_manager: LiveRegisterManager, section: gtirb.Section, decoder: GtirbInstructionDecoder):
