@@ -68,11 +68,16 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
             register_use: _PatchRegisterAllocation,
             is_leaf_function: bool,
     ) -> Tuple[Iterable[_AsmSnippet], Iterable[_AsmSnippet], Optional[int]]:
+        init_and_switch_to_scratchpad_stack_snippet = _AsmSnippet(f"""
+            mov %rsp, old_rsp
+            lea scratchpad+{SCRATCHPAD_SIZE - 16}, %rsp
+        """)
         switch_to_scratchpad_stack_snippet = _AsmSnippet(f"""
             mov %rsp, old_rsp
-            lea scratchpad+{SCRATCHPAD_SIZE - 8}, %rsp
+            mov scratchpad_rsp, %rsp
         """)
         switch_to_original_stack_snippet = _AsmSnippet(f"""
+            mov %rsp, scratchpad_rsp
             mov old_rsp, %rsp
         """)
 
@@ -89,7 +94,7 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
                 new_constraints, new_register_use, False)
             epilogue = list(reversed(list(epilogue)))
 
-            prologue.insert(0, switch_to_scratchpad_stack_snippet)
+            prologue.insert(0, init_and_switch_to_scratchpad_stack_snippet)
             prologue.append(switch_to_original_stack_snippet)
             epilogue.insert(0, switch_to_original_stack_snippet)
             epilogue.append(switch_to_scratchpad_stack_snippet)
