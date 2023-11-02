@@ -52,7 +52,7 @@ class TransientIndirectBranchCheckDestPass(VisitorPassMixin, RegInstAwarePassMix
                 if dest_operand.type == CS_OP_MEM:
                     try:
                         operand_str = mem_access_to_str(last_inst, last_inst.operands[0].mem,
-                                                            operand_symbolic_expression(block, last_inst, last_inst.operands[0]))
+                                                        operand_symbolic_expression(block, last_inst, last_inst.operands[0]))
                     except NotImplementedError:
                         print(f"Warning: unsupported symexp at {last_inst}")
                         operand_str = mem_access_to_str(last_inst, last_inst.operands[0].mem, None)
