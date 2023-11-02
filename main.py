@@ -19,11 +19,6 @@ text_section = [s for s in module.sections if s.name == ".text"][0]
 
 decoder = CachedGtirbInstructionDecoder(module.isa)
 
-pass_manager = PassManager()
-pass_manager.add(ImportSymbolsPass())
-pass_manager.add(AsanStackPass(text_section, decoder))
-pass_manager.run(ir)
-
 my_x64_elf_abi = _X86_64_ELF()
 reg_manager = LiveRegisterManager(module, my_x64_elf_abi)
 _ABIS[(gtirb.Module.ISA.X64, gtirb.Module.FileFormat.ELF)] = my_x64_elf_abi
@@ -35,13 +30,19 @@ trampoline_section = gtirb.Section(name=".NaHCO3_trampolines", flags=transient_s
 trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)
 
 pass_manager = PassManager()
+pass_manager.add(ImportSymbolsPass())
 pass_manager.add(CreateTrampolinesPass(text_section, trampoline_section, text_transient_mapping, decoder))
 pass_manager.run(ir)
 
 pass_manager = PassManager()
+pass_manager.add(TextInitializeLibraryPass(text_section))
+pass_manager.add(AsanStackPass(reg_manager, text_section, decoder, False))
+#pass_manager.add(DiftPropagationPass(reg_manager, text_section, decoder))
+#pass_manager.add(DiftExtCallPass(text_section))
 pass_manager.add(TextIndirectBranchTransformPass(text_section, text_transient_mapping, decoder))
 pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section, decoder))
 
+pass_manager.add(AsanStackPass(reg_manager, transient_section, decoder, True))
 pass_manager.add(TransientInsertRestorePointsPass(reg_manager, text_section, transient_section, decoder))
 pass_manager.add(TransientAsanMemlogPass(reg_manager, transient_section, decoder))
 pass_manager.add(TransientIndirectBranchCheckDestPass(reg_manager, transient_section, decoder,

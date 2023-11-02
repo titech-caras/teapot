@@ -62,9 +62,9 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
                 asan_instrument = False
 
             symexp = operand_symbolic_expression(block, inst, mem_operand)
-            if symexp is not None and any(s.name in ("old_rsp", "scratchpad") for s in symexp.symbols):
-                # write to the scratchpad in previous instrumentation, don't instrument at all
-                return
+            #if symexp is not None and any(s.name in ("old_rsp", "scratchpad") for s in symexp.symbols):
+            #    # write to the scratchpad in previous instrumentation, don't instrument at all
+            #    return
 
             if int(ASAN_SHADOW_OFFSET, 16) == mem_operand.mem.disp:
                 # Do not check asan for stack poisoning
