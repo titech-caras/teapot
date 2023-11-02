@@ -19,9 +19,11 @@ from NaHCO3.passes.mixins import InstVisitorPassMixin
 class DiftPropagationPass(InstVisitorPassMixin):
     section: gtirb.Section
 
-    def __init__(self, reg_manager: LiveRegisterManager, section: gtirb.Section, decoder: GtirbInstructionDecoder):
+    def __init__(self, reg_manager: LiveRegisterManager, section: gtirb.Section, decoder: GtirbInstructionDecoder,
+                 insert_memlog: bool):
         super().__init__(reg_manager, decoder)
         self.section = section
+        self.insert_memlog = insert_memlog
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         super().begin_module(module, functions, rewriting_ctx)
@@ -95,9 +97,16 @@ class DiftPropagationPass(InstVisitorPassMixin):
         dift_reg_ids_read = [self.__reg_to_dift_reg_id(reg) for reg in regs_read]
         dift_reg_ids_write = [self.__reg_to_dift_reg_id(reg) for reg in regs_write]
 
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=2, clobbers_flags=True)
+        scratch_registers = 4 if self.insert_memlog else 2
+
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
-            r1, r2 = ctx.scratch_registers
+            if not self.insert_memlog:
+                r2, r4 = ctx.scratch_registers
+                r1, r3 = None, None
+            else:
+                r1, r2, r3, r4 = ctx.scratch_registers
+
             asm = ""
 
             if mem_operand_str:
@@ -106,19 +115,28 @@ class DiftPropagationPass(InstVisitorPassMixin):
                     btc {r2}, 45
                 """
 
-            asm += f"xor {r1}, {r1}\n"
+            asm += f"xor {r4:8l}, {r4:8l}\n"
 
             for reg_id in dift_reg_ids_read:
-                asm += f"or {r1}, dift_reg_tags+{reg_id}\n"
+                asm += f"or {r4:8l}, dift_reg_tags+{reg_id}\n"
 
             if mem_operand_read:
-                asm += f"or {r1}, [{r2}]\n"
+                asm += f"or {r4:8l}, [{r2}]\n"
 
             for reg_id in dift_reg_ids_write:
-                asm += f"mov dift_reg_tags+{reg_id}, {r1}\n"
+                asm += f"mov dift_reg_tags+{reg_id}, {r4:8l}\n"
 
             if mem_operand_write:
-                asm += f"mov [{r2}], {r1}\n"
+                # FIXME: refactor this please! share the code with the other memlogs
+                if self.insert_memlog:
+                    asm += f"""
+                        mov {r1}, [memory_history_top]
+                        mov {r3}, [{r2}]
+                        mov [{r1}], {r2}
+                        mov [{r1} + 8], {r3}
+                        add qword ptr [memory_history_top], 16 
+                    """
+                asm += f"mov [{r2}], {r4:8l}\n"
 
             return asm
 

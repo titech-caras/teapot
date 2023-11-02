@@ -32,17 +32,18 @@ trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)
 pass_manager = PassManager()
 pass_manager.add(ImportSymbolsPass())
 pass_manager.add(CreateTrampolinesPass(text_section, trampoline_section, text_transient_mapping, decoder))
+pass_manager.add(DiftExtCallPass(text_section))
 pass_manager.run(ir)
 
 pass_manager = PassManager()
 pass_manager.add(TextInitializeLibraryPass(text_section))
 pass_manager.add(AsanStackPass(reg_manager, text_section, decoder, False))
-#pass_manager.add(DiftPropagationPass(reg_manager, text_section, decoder))
-#pass_manager.add(DiftExtCallPass(text_section))
+pass_manager.add(DiftPropagationPass(reg_manager, text_section, decoder, False))  # TODO: Use LLVM-based DIFT here
 pass_manager.add(TextIndirectBranchTransformPass(text_section, text_transient_mapping, decoder))
 pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section, decoder))
 
 pass_manager.add(AsanStackPass(reg_manager, transient_section, decoder, True))
+pass_manager.add(DiftPropagationPass(reg_manager, transient_section, decoder, True))
 pass_manager.add(TransientInsertRestorePointsPass(reg_manager, text_section, transient_section, decoder))
 pass_manager.add(TransientAsanMemlogPass(reg_manager, transient_section, decoder))
 pass_manager.add(TransientIndirectBranchCheckDestPass(reg_manager, transient_section, decoder,
