@@ -36,3 +36,12 @@ CHECKPOINT_LIB_SYMBOLS = [
 
     "dift_reg_tags",
 ]
+
+# TODO: eventually take an abilist file instead
+DIFT_IGNORE_LIST = [
+    "printf", "puts", "putchar", "fprintf",
+    "fwrite", "fopen", "fclose", "fflush", "ferror",
+    "malloc", "free", "realloc", "calloc",
+    "strcmp", "strncmp",
+    "abort", "__assert_fail",
+]
