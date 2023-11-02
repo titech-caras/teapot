@@ -42,7 +42,11 @@ class DiftPropagationPass(InstVisitorPassMixin):
         if inst.mnemonic in ("nop", "ret", "call") or inst.mnemonic.startswith("j"):
             return
 
-        # TODO: deal with push/pop properly
+        if inst.mnemonic in ("push", "pop"):
+            # TODO: deal with push/pop properly
+            return
+
+        # FIXME: deal with cmov properly
 
         regs_read = {self.reg_manager.abi.get_register(inst.reg_name(r))
                      for r in inst.regs_access()[0] if r != X86_REG_EFLAGS and inst.reg_name(r).lower() in self.reg_manager.abi._register_map}
@@ -64,7 +68,7 @@ class DiftPropagationPass(InstVisitorPassMixin):
                 print(f"Warning: unsupported symexp at {inst}")
                 mem_operand_str = mem_access_to_str(inst, mem_operand.mem, None)
 
-        if regs_read == regs_write and not mem_operand:
+        if (len(regs_read) == 0 or regs_read == regs_write) and not mem_operand:
             return
 
         if len(regs_write) > 0 or mem_operand_write:
@@ -97,15 +101,15 @@ class DiftPropagationPass(InstVisitorPassMixin):
         dift_reg_ids_read = [self.__reg_to_dift_reg_id(reg) for reg in regs_read]
         dift_reg_ids_write = [self.__reg_to_dift_reg_id(reg) for reg in regs_write]
 
-        scratch_registers = 4 if self.insert_memlog else 2
+        scratch_registers = 4 if self.insert_memlog and mem_operand_write else 2
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
-            if not self.insert_memlog:
+            if self.insert_memlog and mem_operand_write:
+                r1, r2, r3, r4 = ctx.scratch_registers
+            else:
                 r2, r4 = ctx.scratch_registers
                 r1, r3 = None, None
-            else:
-                r1, r2, r3, r4 = ctx.scratch_registers
 
             asm = ""
 
