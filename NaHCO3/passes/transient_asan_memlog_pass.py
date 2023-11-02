@@ -148,7 +148,7 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
                 {detailed_check_snippet}
             .L__asan_check_fail{SYMBOL_SUFFIX}:
                 mov old_rsp, rsp
-                lea rsp, scratchpad+1048568
+                lea rsp, scratchpad+1048560
                 mov scratchpad, rsi
                 mov scratchpad+8, rdi
                 mov rsi, {r2}
