@@ -65,9 +65,8 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                     next(i for i in range(len(instructions) - 1, -1, -1)
                          if self.__can_insert_restore_point(function, block, i)))
             except StopIteration:
-                print(f"Warning: nowhere to insert restore point at block {block.uuid} "
-                      f"({len(instructions)} instructions)")
-                return
+                # Nowhere to insert this without clobbering flags, so just let it be and save the flags
+                final_conditional_rollback_idx = len(instructions) - 1
 
         last_insertion_idx = 0
         insert_until_idx = final_conditional_rollback_idx \
@@ -131,7 +130,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         return False
 
     def __build_conditional_restore_point_patch(self, instruction_count: int):
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1, clobbers_flags=True)
         def patch(ctx: InsertionContext):
             r = ctx.scratch_registers[0]
             return f"""
