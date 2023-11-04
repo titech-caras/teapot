@@ -1,6 +1,6 @@
 import gtirb
 from uuid import UUID
-from typing import List, Tuple, Iterable
+from typing import List, Tuple, Iterable, Optional
 
 from NaHCO3.config import SYMBOL_SUFFIX
 

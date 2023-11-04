@@ -45,3 +45,11 @@ DIFT_IGNORE_LIST = [
     "strcmp", "strncmp",
     "abort", "__assert_fail",
 ]
+
+TAG_ATTACKER = 1
+TAG_SECRET = 2
+
+MODE = "SpecFuzz"
+#MODE = "Kasper"
+
+assert MODE in ("SpecFuzz", "Kasper")

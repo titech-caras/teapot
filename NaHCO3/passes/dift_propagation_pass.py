@@ -10,7 +10,11 @@ from capstone_gt.x86 import X86_REG_EFLAGS
 from typing import List, Set, Optional
 
 from NaHCO3.config import BLACKLIST_FUNCTION_NAMES, SYMBOL_SUFFIX
+from NaHCO3.patch_helpers import dift_add_reg_tag_snippet
+from NaHCO3.utils.dift import reg_to_dift_reg_id
+from NaHCO3.utils.rewriting import mem_access_to_symbolic_str
 from NaHCO3.passes.mixins import InstVisitorPassMixin
+from NaHCO3.patch_helpers import conditional_patch_wrapper, memlog_snippet
 
 
 class DiftPropagationPass(InstVisitorPassMixin):
@@ -67,15 +71,9 @@ class DiftPropagationPass(InstVisitorPassMixin):
             mem_operand = next(iter(x for x in inst.operands if x.type == CS_OP_MEM), None) \
                 if inst.mnemonic != "lea" else None
             if mem_operand is not None:
+                mem_operand_str = mem_access_to_symbolic_str(block, inst, mem_operand)
                 mem_operand_read = mem_operand.access & CS_AC_READ
                 mem_operand_write = mem_operand.access & CS_AC_WRITE
-
-                symexp = operand_symbolic_expression(block, inst, mem_operand)
-                try:
-                    mem_operand_str = mem_access_to_str(inst, mem_operand.mem, symexp)
-                except NotImplementedError:
-                    print(f"Warning: unsupported symexp at {inst}")
-                    mem_operand_str = mem_access_to_str(inst, mem_operand.mem, None)
 
         # Handle special instructions
         if inst.mnemonic == "xor" and regs_read == regs_write and not mem_operand_str:
@@ -91,7 +89,7 @@ class DiftPropagationPass(InstVisitorPassMixin):
         conditional = inst.mnemonic[4:] if inst.mnemonic.startswith("cmov") else None
 
         if len(regs_write) > 0 or mem_operand_write:
-            if (len(regs_read) == 0 or regs_read == regs_write) and not mem_operand_str:
+            if not clear_dest_tags and (len(regs_read) == 0 or regs_read == regs_write) and not mem_operand_str:
                 # Instruction does not involve tag propagation
                 return
 
@@ -110,17 +108,6 @@ class DiftPropagationPass(InstVisitorPassMixin):
         return {self.reg_manager.abi.get_register(inst.reg_name(r)) for r in inst.regs_access()[acc_type]
                 if r != X86_REG_EFLAGS and inst.reg_name(r).lower() in self.reg_manager.abi._register_map}
 
-    @staticmethod
-    def __reg_to_dift_reg_id(reg: Register) -> int:
-        if reg.name.startswith("xmm"):  # xmm0~xmm31 -> 16~47
-            return int(reg.name.replace("xmm", "")) + 16
-        else:
-            # rax~r15 -> 0~15
-            mapping = {k: v for v, k in enumerate([
-                "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rsp", "rbp",
-                "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"])}
-            return mapping[reg.name]
-
     def __build_dift_patch(self, regs_read: Set[Register], regs_write: Set[Register], *,
                            conditional: Optional[str] = None,
                            clear_dest_tags: bool = False,  # Ignore tag propagation and zero out the tags
@@ -130,28 +117,25 @@ class DiftPropagationPass(InstVisitorPassMixin):
         if mem_operand_str is not None:
             assert mem_operand_read or mem_operand_write
 
-        dift_reg_ids_read = [self.__reg_to_dift_reg_id(reg) for reg in regs_read]
-        dift_reg_ids_write = [self.__reg_to_dift_reg_id(reg) for reg in regs_write]
-
-        scratch_registers = 4 if self.insert_memlog and mem_operand_write else 2
+        if self.insert_memlog and mem_operand_write:
+            scratch_registers = 4
+        elif mem_operand_str:
+            scratch_registers = 2
+        else:
+            scratch_registers = 1
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
             if self.insert_memlog and mem_operand_write:
                 r1, r2, r3, r4 = ctx.scratch_registers
-            else:
+            elif mem_operand_str:
                 r2, r4 = ctx.scratch_registers
                 r1, r3 = None, None
+            else:
+                r4, = ctx.scratch_registers
+                r1, r2, r3 = None, None, None
 
             asm = ""
-
-            if conditional is not None:
-                # FIXME: refactor this please! share the code with the other conditionals
-                asm += f"""
-                j{conditional} .L__dift_doit{SYMBOL_SUFFIX} 
-                jmp .L__dift_skip{SYMBOL_SUFFIX}
-                .L__dift_doit{SYMBOL_SUFFIX}:
-                """
 
             if mem_operand_str:
                 asm += f"""
@@ -162,32 +146,21 @@ class DiftPropagationPass(InstVisitorPassMixin):
             asm += f"xor {r4:8l}, {r4:8l}\n"
 
             if not clear_dest_tags:
-                for reg_id in dift_reg_ids_read:
-                    asm += f"or {r4:8l}, dift_reg_tags+{reg_id}\n"
+                for reg in regs_read:
+                    asm += dift_add_reg_tag_snippet(r4, reg_add=reg)
 
                 if mem_operand_read:
                     asm += f"or {r4:8l}, [{r2}]\n"
 
-            for reg_id in dift_reg_ids_write:
-                asm += f"mov dift_reg_tags+{reg_id}, {r4:8l}\n"
+            for reg in regs_write:
+                asm += f"mov dift_reg_tags+{reg_to_dift_reg_id(reg)}, {r4:8l}\n"
 
             if mem_operand_write:
-                # FIXME: refactor this please! share the code with the other memlogs
                 if self.insert_memlog:
-                    asm += f"""
-                        mov {r1}, [memory_history_top]
-                        mov {r3}, [{r2}]
-                        mov [{r1}], {r2}
-                        mov [{r1} + 8], {r3}
-                        add qword ptr [memory_history_top], 16 
-                    """
+                    asm += memlog_snippet(r2, 1, r1=r1, r2=r3, no_clobber_addr=True)
                 asm += f"mov [{r2}], {r4:8l}\n"
 
-            if conditional:
-                asm += f"""
-                .L__dift_skip{SYMBOL_SUFFIX}:
-                    nop
-                """
+            asm = conditional_patch_wrapper(asm, conditional, label_key="dift")
 
             return asm
 

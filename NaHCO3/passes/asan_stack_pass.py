@@ -12,6 +12,7 @@ import itertools
 from NaHCO3.config import BLACKLIST_FUNCTION_NAMES, ASAN_SHADOW_OFFSET
 from NaHCO3.passes.mixins import VisitorPassMixin, RegInstAwarePassMixin
 from NaHCO3.utils.misc import distinguish_edges
+from NaHCO3.patch_helpers import memlog_snippet
 
 
 class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
@@ -64,24 +65,16 @@ class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
             if self.insert_memlog:
                 # Poison the return address
                 r1, r2, r3 = ctx.scratch_registers
-
-                # FIXME: refactor this please! share the code with the other memlogs
-                memlog_snippet = f"""
-                    mov {r1}, [memory_history_top]
-                    mov {r3}, [{r2}]
-                    mov [{r1}], {r2}
-                    mov [{r1} + 8], {r3}
-                    add qword ptr [memory_history_top], 16 
-                """
+                my_memlog_snippet = memlog_snippet(r2, 1, r1=r1, r2=r3, no_clobber_addr=True)
             else:
                 r2, = ctx.scratch_registers
-                memlog_snippet = ""
+                my_memlog_snippet = ""
 
             return f"""
                 mov {r2}, rsp
                 shr {r2}, 3
                 lea {r2}, [{r2}+{ASAN_SHADOW_OFFSET}]
-                {memlog_snippet}
+                {my_memlog_snippet}
                 mov byte ptr [{r2}], {asan_val}
             """
 
