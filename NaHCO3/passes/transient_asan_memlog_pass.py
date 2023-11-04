@@ -11,7 +11,7 @@ from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
 from capstone_gt import CsInsn, CS_OP_MEM, CS_AC_WRITE
-from typing import List, Set
+from typing import List, Set, Optional
 import itertools
 
 from NaHCO3.config import ASAN_SHADOW_OFFSET, SYMBOL_SUFFIX
@@ -80,12 +80,16 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
         else:
             return
 
+        # Handle conditional moves
+        conditional = inst.mnemonic[4:] if inst.mnemonic.startswith("cmov") else None
+
         if asan_instrument:
             self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                 self.reg_manager.allocate_registers(function, block, inst_idx)(
-                    self.__build_asan_patch(inst, mem_operand_str, access_size))))
+                    self.__build_asan_patch(inst, mem_operand_str, access_size, conditional=conditional))))
 
         if memlog_instrument:
+            # We don't care about the conditional for now since it doesn't matter, but maybe fix it later
             self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                 self.reg_manager.allocate_registers(function, block, inst_idx)(
                     self.__build_memlog_patch(inst, mem_operand_str, access_size))))
@@ -116,7 +120,8 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
         return patch
 
     @classmethod
-    def __build_asan_patch(cls, inst: CsInsn, mem_operand_str: str, access_size: int):
+    def __build_asan_patch(cls, inst: CsInsn, mem_operand_str: str, access_size: int, *,
+                           conditional: Optional[str] = None):
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3, clobbers_flags=True)
         def patch(ctx: InsertionContext):
             r1, r2, r3 = ctx.scratch_registers
@@ -138,7 +143,7 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
                     jnb .L__asan_check_ok{SYMBOL_SUFFIX}
                 """
 
-            return f"""
+            asm = f"""
                 lea {r2}, {mem_operand_str}
                 mov {r1}, {r2}
                 shr {r1}, 3
@@ -160,5 +165,16 @@ class TransientAsanMemlogPass(InstVisitorPassMixin):
             .L__asan_check_ok{SYMBOL_SUFFIX}:
                 nop
             """
+
+            if conditional is not None:
+                # FIXME: refactor this please! share the code with the other conditionals
+                asm = f"""
+                    j{conditional} .L__asan_doit{SYMBOL_SUFFIX} 
+                    jmp .L__asan_check_ok{SYMBOL_SUFFIX}
+                .L__asan_doit{SYMBOL_SUFFIX}:
+                    {asm}
+                """
+
+            return asm
 
         return patch
