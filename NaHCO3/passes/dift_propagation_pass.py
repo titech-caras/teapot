@@ -1,18 +1,15 @@
 import gtirb
 from gtirb_functions import Function
-from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints,
-                             AllFunctionsScope, FunctionPosition, BlockPosition, InsertionContext)
-from gtirb_rewriting.patches import CallPatch
+from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints, InsertionContext)
 from gtirb_rewriting.assembly import X86Syntax, Register
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
 from gtirb_live_register_analysis import LiveRegisterManager
-from capstone_gt import CsInsn, CS_OP_MEM, CS_AC_READ, CS_AC_WRITE
+from capstone_gt import CsInsn, CS_OP_MEM, CS_OP_REG, CS_AC_READ, CS_AC_WRITE
 from capstone_gt.x86 import X86_REG_EFLAGS
 from typing import List, Set, Optional
-from dataclasses import dataclass
 
-from NaHCO3.config import BLACKLIST_FUNCTION_NAMES
+from NaHCO3.config import BLACKLIST_FUNCTION_NAMES, SYMBOL_SUFFIX
 from NaHCO3.passes.mixins import InstVisitorPassMixin
 
 
@@ -43,43 +40,75 @@ class DiftPropagationPass(InstVisitorPassMixin):
             return
 
         if inst.mnemonic in ("push", "pop"):
-            # TODO: deal with push/pop properly
-            return
+            if inst.operands[0].type == CS_OP_MEM:
+                print(f"Warning: {inst.mnemonic} with memory operand is not supported by DIFT pass")
+                return
+            elif inst.operands[0].type == CS_OP_REG:
+                reg_operand_set = {self.reg_manager.abi.get_register(inst.reg_name(inst.operands[0].reg))}
+            else:  # either constant or unsupported stuff
+                reg_operand_set = {}
 
-        # FIXME: deal with cmov properly
+            if inst.mnemonic == "push":
+                regs_read = reg_operand_set
+                regs_write = {}
+                mem_operand_str = "[rsp-8]"
+                mem_operand_read, mem_operand_write = False, True
+            else:  # pop
+                regs_read = {}
+                regs_write = reg_operand_set
+                mem_operand_str = "[rsp]"
+                mem_operand_read, mem_operand_write = True, False
+        else:
+            regs_read = self.__access_regs_to_register_set(inst, 0)
+            regs_write = self.__access_regs_to_register_set(inst, 1)
 
-        regs_read = {self.reg_manager.abi.get_register(inst.reg_name(r))
-                     for r in inst.regs_access()[0] if r != X86_REG_EFLAGS and inst.reg_name(r).lower() in self.reg_manager.abi._register_map}
-        regs_write = {self.reg_manager.abi.get_register(inst.reg_name(r))
-                      for r in inst.regs_access()[1] if r != X86_REG_EFLAGS and inst.reg_name(r).lower() in self.reg_manager.abi._register_map}
+            mem_operand_str, mem_operand_read, mem_operand_write = None, False, False
 
-        mem_operand_str, mem_operand_read, mem_operand_write = None, False, False
+            mem_operand = next(iter(x for x in inst.operands if x.type == CS_OP_MEM), None) \
+                if inst.mnemonic != "lea" else None
+            if mem_operand is not None:
+                mem_operand_read = mem_operand.access & CS_AC_READ
+                mem_operand_write = mem_operand.access & CS_AC_WRITE
 
-        mem_operand = next(iter(x for x in inst.operands if x.type == CS_OP_MEM), None) \
-            if inst.mnemonic != "lea" else None
-        if mem_operand is not None:
-            mem_operand_read = mem_operand.access & CS_AC_READ
-            mem_operand_write = mem_operand.access & CS_AC_WRITE
+                symexp = operand_symbolic_expression(block, inst, mem_operand)
+                try:
+                    mem_operand_str = mem_access_to_str(inst, mem_operand.mem, symexp)
+                except NotImplementedError:
+                    print(f"Warning: unsupported symexp at {inst}")
+                    mem_operand_str = mem_access_to_str(inst, mem_operand.mem, None)
 
-            symexp = operand_symbolic_expression(block, inst, mem_operand)
-            try:
-                mem_operand_str = mem_access_to_str(inst, mem_operand.mem, symexp)
-            except NotImplementedError:
-                print(f"Warning: unsupported symexp at {inst}")
-                mem_operand_str = mem_access_to_str(inst, mem_operand.mem, None)
+        # Handle special instructions
+        if inst.mnemonic == "xor" and regs_read == regs_write and not mem_operand_str:
+            # xor rax, rax clears the target register
+            clear_dest_tags = True
+        elif (inst.mnemonic in ("mov", "push") or inst.mnemonic.startswith("cmov")) and len(regs_read) == 0:
+            # is mov/push from a constant
+            clear_dest_tags = True
+        else:
+            clear_dest_tags = False
 
-        if (len(regs_read) == 0 or regs_read == regs_write) and not mem_operand:
-            return
+        # Handle conditional moves
+        conditional = inst.mnemonic[4:] if inst.mnemonic.startswith("cmov") else None
 
         if len(regs_write) > 0 or mem_operand_write:
+            if (len(regs_read) == 0 or regs_read == regs_write) and not mem_operand_str:
+                # Instruction does not involve tag propagation
+                return
+
             self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                 self.reg_manager.allocate_registers(function, block, inst_idx)(
                     self.__build_dift_patch(regs_read, regs_write,
+                                            conditional=conditional,
+                                            clear_dest_tags=clear_dest_tags,
                                             mem_operand_str=mem_operand_str,
                                             mem_operand_read=mem_operand_read,
                                             mem_operand_write=mem_operand_write)
                 )
             ))
+
+    def __access_regs_to_register_set(self, inst: CsInsn, acc_type: int) -> Set[Register]:
+        return {self.reg_manager.abi.get_register(inst.reg_name(r)) for r in inst.regs_access()[acc_type]
+                if r != X86_REG_EFLAGS and inst.reg_name(r).lower() in self.reg_manager.abi._register_map}
 
     @staticmethod
     def __reg_to_dift_reg_id(reg: Register) -> int:
@@ -93,8 +122,11 @@ class DiftPropagationPass(InstVisitorPassMixin):
             return mapping[reg.name]
 
     def __build_dift_patch(self, regs_read: Set[Register], regs_write: Set[Register], *,
+                           conditional: Optional[str] = None,
+                           clear_dest_tags: bool = False,  # Ignore tag propagation and zero out the tags
                            mem_operand_str: Optional[str] = None,
-                           mem_operand_read: bool = False, mem_operand_write: bool = False):
+                           mem_operand_read: bool = False,
+                           mem_operand_write: bool = False):
         if mem_operand_str is not None:
             assert mem_operand_read or mem_operand_write
 
@@ -113,6 +145,14 @@ class DiftPropagationPass(InstVisitorPassMixin):
 
             asm = ""
 
+            if conditional is not None:
+                # FIXME: refactor this please! share the code with the other conditionals
+                asm += f"""
+                j{conditional} .L__dift_doit{SYMBOL_SUFFIX} 
+                jmp .L__dift_skip{SYMBOL_SUFFIX}
+                .L__dift_doit{SYMBOL_SUFFIX}:
+                """
+
             if mem_operand_str:
                 asm += f"""
                     lea {r2}, {mem_operand_str}
@@ -121,11 +161,12 @@ class DiftPropagationPass(InstVisitorPassMixin):
 
             asm += f"xor {r4:8l}, {r4:8l}\n"
 
-            for reg_id in dift_reg_ids_read:
-                asm += f"or {r4:8l}, dift_reg_tags+{reg_id}\n"
+            if not clear_dest_tags:
+                for reg_id in dift_reg_ids_read:
+                    asm += f"or {r4:8l}, dift_reg_tags+{reg_id}\n"
 
-            if mem_operand_read:
-                asm += f"or {r4:8l}, [{r2}]\n"
+                if mem_operand_read:
+                    asm += f"or {r4:8l}, [{r2}]\n"
 
             for reg_id in dift_reg_ids_write:
                 asm += f"mov dift_reg_tags+{reg_id}, {r4:8l}\n"
@@ -141,6 +182,12 @@ class DiftPropagationPass(InstVisitorPassMixin):
                         add qword ptr [memory_history_top], 16 
                     """
                 asm += f"mov [{r2}], {r4:8l}\n"
+
+            if conditional:
+                asm += f"""
+                .L__dift_skip{SYMBOL_SUFFIX}:
+                    nop
+                """
 
             return asm
 
