@@ -28,6 +28,7 @@ CHECKPOINT_LIB_SYMBOLS = [
     "restore_checkpoint_MALFORMED_INDIRECT_BR",
 
     "report_gadget_SPECFUZZ_ASAN",
+    "report_gadget_KASPER",
 
     "checkpoint_target_metadata",
     "memory_history_top",
@@ -43,13 +44,13 @@ DIFT_IGNORE_LIST = [
     "fwrite", "fopen", "fclose", "fflush", "ferror",
     "malloc", "free", "realloc", "calloc",
     "strcmp", "strncmp",
-    "abort", "__assert_fail",
+    "abort", "__assert_fail", "exit",
 ]
 
 TAG_ATTACKER = 1
 TAG_SECRET = 2
 
-MODE = "SpecFuzz"
-#MODE = "Kasper"
+#MODE = "SpecFuzz"
+MODE = "Kasper"
 
 assert MODE in ("SpecFuzz", "Kasper")
