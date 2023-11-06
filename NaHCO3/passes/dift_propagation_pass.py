@@ -5,7 +5,7 @@ from gtirb_rewriting.assembly import X86Syntax, Register
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
 from gtirb_live_register_analysis import LiveRegisterManager
-from capstone_gt import CsInsn, CS_OP_MEM, CS_OP_REG, CS_AC_READ, CS_AC_WRITE
+from capstone_gt import CsInsn, CS_OP_MEM, CS_OP_REG, CS_OP_IMM, CS_AC_READ, CS_AC_WRITE
 from capstone_gt.x86 import X86_REG_EFLAGS
 from typing import List, Set, Optional
 
@@ -79,7 +79,7 @@ class DiftPropagationPass(InstVisitorPassMixin):
         if inst.mnemonic == "xor" and regs_read == regs_write and not mem_operand_str:
             # xor rax, rax clears the target register
             clear_dest_tags = True
-        elif (inst.mnemonic in ("mov", "push") or inst.mnemonic.startswith("cmov")) and len(regs_read) == 0:
+        elif (inst.mnemonic in ("mov", "push") or inst.mnemonic.startswith("cmov")) and inst.operands[0].type == CS_OP_IMM:
             # is mov/push from a constant
             clear_dest_tags = True
         else:
