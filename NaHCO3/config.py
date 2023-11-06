@@ -13,6 +13,7 @@ BLACKLIST_FUNCTION_NAMES = [
     "dummy",
     "frame_dummy",
     "__libc_csu_init",
+    "NaHCO3_setup",
 ]
 
 CHECKPOINT_LIB_SYMBOLS = [
@@ -36,12 +37,14 @@ CHECKPOINT_LIB_SYMBOLS = [
     "instruction_cnt",
 
     "dift_reg_tags",
+
+    "__sanitizer_cov_trace_pc_guard",
 ]
 
 # TODO: eventually take an abilist file instead
 DIFT_IGNORE_LIST = [
     "printf", "puts", "putchar", "fprintf",
-    "fwrite", "fopen", "fclose", "fflush", "ferror",
+    "fwrite", "fopen", "fclose", "fflush", "ferror", "fseek", "ftell",
     "malloc", "free", "realloc", "calloc",
     "strcmp", "strncmp",
     "abort", "__assert_fail", "exit",

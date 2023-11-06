@@ -28,7 +28,11 @@ class TextInitializeLibraryPass(VisitorPassMixin):
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
         rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}),
                                       Patch.from_function(patch_constraints(x86_syntax=X86Syntax.INTEL)(
-                                          lambda ctx: "call libcheckpoint_enable"
+                                          lambda ctx: """
+                                          sub rsp, 8
+                                          call libcheckpoint_enable
+                                          add rsp, 8
+                                          """
                                       )))
 
         self.visit_functions(functions, self.text_section)

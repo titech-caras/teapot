@@ -55,7 +55,7 @@ def copy_section(section: gtirb.Section, name: str) \
         symbol_copy_mapping[symbol.uuid] = symbol_copy
 
     section_start_symbol = gtirb.Symbol(
-        name=".__section_start" + SYMBOL_SUFFIX,
+        name=".__transient_start" + SYMBOL_SUFFIX,
         uuid=None,
         payload=gtirb.CodeBlock(
             size=0, offset=0, uuid=None,
@@ -66,7 +66,7 @@ def copy_section(section: gtirb.Section, name: str) \
     )
 
     section_end_symbol = gtirb.Symbol(
-        name=".__section_end" + SYMBOL_SUFFIX,
+        name=".__transient_end" + SYMBOL_SUFFIX,
         uuid=None,
         payload=gtirb.CodeBlock(
             size=0, offset=byte_interval_copy.size, uuid=None,

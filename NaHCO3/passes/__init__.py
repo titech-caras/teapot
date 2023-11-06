@@ -7,6 +7,7 @@ from .dift_ext_call_pass import DiftExtCallPass
 from .text_initialize_library_pass import TextInitializeLibraryPass
 from .text_indirect_branch_transform_pass import TextIndirectBranchTransformPass
 from .text_insert_checkpoints_pass import TextInsertCheckpointsPass
+from .transient_coverage import TransientCoveragePass
 from .transient_gadget_policy_pass import TransientGadgetPolicyPass
 from .transient_memlog_pass import TransientMemlogPass
 from .transient_insert_restore_points_pass import TransientInsertRestorePointsPass
