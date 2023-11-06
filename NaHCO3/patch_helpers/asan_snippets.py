@@ -21,7 +21,7 @@ def asan_check_snippet(addr_reg: Register, access_size: int, check_ok_label: str
 
         detailed_check_snippet += f"""
             cmp {r2:8l}, {r1_shadow_subreg}
-            jb {check_ok_label}
+            jl {check_ok_label}
         """
 
     return f"""
