@@ -44,42 +44,43 @@ class DiftPropagationPass(InstVisitorPassMixin):
             return
 
         if inst.mnemonic in ("push", "pop"):
+            reg_operand_set = {}
+            mem_operand = None
             if inst.operands[0].type == CS_OP_MEM:
-                print(f"Warning: {inst.mnemonic} with memory operand is not supported by DIFT pass")
-                return
+                mem_operand = inst.operands[0]
             elif inst.operands[0].type == CS_OP_REG:
                 reg_operand_set = {self.reg_manager.abi.get_register(inst.reg_name(inst.operands[0].reg))}
-            else:  # either constant or unsupported stuff
-                reg_operand_set = {}
 
             if inst.mnemonic == "push":
                 regs_read = reg_operand_set
                 regs_write = {}
-                mem_operand_str = "[rsp-8]"
-                mem_operand_read, mem_operand_write = False, True
+                mem_operand_read_str = mem_access_to_symbolic_str(block, inst, mem_operand) if mem_operand else None
+                mem_operand_write_str = "[rsp-8]"
             else:  # pop
                 regs_read = {}
                 regs_write = reg_operand_set
-                mem_operand_str = "[rsp]"
-                mem_operand_read, mem_operand_write = True, False
+                mem_operand_read_str = "[rsp]"
+                mem_operand_write_str = mem_access_to_symbolic_str(block, inst, mem_operand) if mem_operand else None
         else:
             regs_read = self.__access_regs_to_register_set(inst, 0)
             regs_write = self.__access_regs_to_register_set(inst, 1)
 
-            mem_operand_str, mem_operand_read, mem_operand_write = None, False, False
+            mem_operand_str, mem_operand_read_str, mem_operand_write_str = None, None, None
 
             mem_operand = next(iter(x for x in inst.operands if x.type == CS_OP_MEM), None) \
                 if inst.mnemonic != "lea" else None
             if mem_operand is not None:
                 mem_operand_str = mem_access_to_symbolic_str(block, inst, mem_operand)
-                mem_operand_read = mem_operand.access & CS_AC_READ
-                mem_operand_write = mem_operand.access & CS_AC_WRITE
+                mem_operand_read_str = mem_operand_str if mem_operand.access & CS_AC_READ else None
+                mem_operand_write_str = mem_operand_str if mem_operand.access & CS_AC_WRITE else None
 
         # Handle special instructions
-        if inst.mnemonic == "xor" and regs_read == regs_write and not mem_operand_str:
+        if (inst.mnemonic == "xor" and inst.operands[0].type == CS_OP_REG and inst.operands[1].type == CS_OP_REG
+                and inst.operands[0].reg == inst.operands[1].reg):
             # xor rax, rax clears the target register
             clear_dest_tags = True
-        elif (inst.mnemonic in ("mov", "push") or inst.mnemonic.startswith("cmov")) and inst.operands[0].type == CS_OP_IMM:
+        elif ((inst.mnemonic in ("mov", "push") or inst.mnemonic.startswith("cmov"))
+              and inst.operands[0].type == CS_OP_IMM):
             # is mov/push from a constant
             clear_dest_tags = True
         else:
@@ -88,19 +89,22 @@ class DiftPropagationPass(InstVisitorPassMixin):
         # Handle conditional moves
         conditional = inst.mnemonic[4:] if inst.mnemonic.startswith("cmov") else None
 
-        if len(regs_write) > 0 or mem_operand_write:
-            if not clear_dest_tags and (len(regs_read) == 0 or regs_read == regs_write) and not mem_operand_str:
-                # Instruction does not involve tag propagation
-                return
+        if len(regs_write) > 0 or mem_operand_write_str:
+            if not clear_dest_tags:
+                if regs_read == regs_write and not mem_operand_read_str and not mem_operand_write_str:
+                    # Reg instruction that does not involve tag propagation
+                    return
+                if mem_operand_read_str == mem_operand_write_str and len(regs_read) == 0 and len(regs_write) == 0:
+                    # Mem instruction that does not involve tag propagation
+                    return
 
             self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                 self.reg_manager.allocate_registers(function, block, inst_idx)(
                     self.__build_dift_patch(regs_read, regs_write,
                                             conditional=conditional,
                                             clear_dest_tags=clear_dest_tags,
-                                            mem_operand_str=mem_operand_str,
-                                            mem_operand_read=mem_operand_read,
-                                            mem_operand_write=mem_operand_write)
+                                            mem_read_operand_str=mem_operand_read_str,
+                                            mem_write_operand_str=mem_operand_write_str)
                 )
             ))
 
@@ -111,24 +115,22 @@ class DiftPropagationPass(InstVisitorPassMixin):
     def __build_dift_patch(self, regs_read: Set[Register], regs_write: Set[Register], *,
                            conditional: Optional[str] = None,
                            clear_dest_tags: bool = False,  # Ignore tag propagation and zero out the tags
-                           mem_operand_str: Optional[str] = None,
-                           mem_operand_read: bool = False,
-                           mem_operand_write: bool = False):
-        if mem_operand_str is not None:
-            assert mem_operand_read or mem_operand_write
-
-        if self.insert_memlog and mem_operand_write:
+                           mem_read_operand_str: Optional[str] = None,
+                           mem_write_operand_str: Optional[str] = None):
+        if self.insert_memlog and mem_write_operand_str:
             scratch_registers = 4
-        elif mem_operand_str:
+        elif mem_read_operand_str or mem_write_operand_str:
             scratch_registers = 2
         else:
             scratch_registers = 1
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
-            if self.insert_memlog and mem_operand_write:
+            # FIXME: refactor please
+
+            if self.insert_memlog and mem_write_operand_str:
                 r1, r2, r3, r4 = ctx.scratch_registers
-            elif mem_operand_str:
+            elif mem_read_operand_str or mem_write_operand_str:
                 r2, r4 = ctx.scratch_registers
                 r1, r3 = None, None
             else:
@@ -137,9 +139,9 @@ class DiftPropagationPass(InstVisitorPassMixin):
 
             asm = ""
 
-            if mem_operand_str:
+            if mem_read_operand_str:
                 asm += f"""
-                    lea {r2}, {mem_operand_str}
+                    lea {r2}, {mem_read_operand_str}
                     btc {r2}, 45
                 """
 
@@ -149,13 +151,19 @@ class DiftPropagationPass(InstVisitorPassMixin):
                 for reg in regs_read:
                     asm += dift_add_reg_tag_snippet(r4, reg_add=reg)
 
-                if mem_operand_read:
+                if mem_read_operand_str:
                     asm += f"or {r4:8l}, [{r2}]\n"
 
             for reg in regs_write:
                 asm += f"mov dift_reg_tags+{reg_to_dift_reg_id(reg)}, {r4:8l}\n"
 
-            if mem_operand_write:
+            if mem_write_operand_str:
+                if mem_write_operand_str != mem_read_operand_str:
+                    asm += f"""
+                        lea {r2}, {mem_write_operand_str}
+                        btc {r2}, 45
+                    """
+
                 if self.insert_memlog:
                     asm += memlog_snippet(r2, 1, r1=r1, r2=r3, no_clobber_addr=True)
                 asm += f"mov [{r2}], {r4:8l}\n"
