@@ -45,13 +45,13 @@ pass_manager = PassManager()
 pass_manager.add(TextInitializeLibraryPass(text_section))
 
 pass_manager.add(AsanStackPass(reg_manager, text_section, decoder, False))
-pass_manager.add(DiftPropagationPass(reg_manager, text_section, decoder, False))  # TODO: Use LLVM-based DIFT here
 pass_manager.add(TextIndirectBranchTransformPass(text_section, text_transient_mapping, decoder))
+pass_manager.add(DiftPropagationPass(reg_manager, text_section, decoder, False))  # TODO: Use LLVM-based DIFT here
 pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section, decoder))
 
 pass_manager.add(AsanStackPass(reg_manager, transient_section, decoder, True))
 pass_manager.add(DiftPropagationPass(reg_manager, transient_section, decoder, True))
-#pass_manager.add(TransientCoveragePass(reg_manager, transient_section, decoder, guard_start_label, guard_end_label))
+pass_manager.add(TransientCoveragePass(reg_manager, transient_section, decoder, guard_start_label, guard_end_label))
 pass_manager.add(TransientGadgetPolicyPass(reg_manager, transient_section, decoder))
 pass_manager.add(TransientMemlogPass(reg_manager, transient_section, decoder))
 pass_manager.add(TransientInsertRestorePointsPass(reg_manager, text_section, transient_section, decoder))
