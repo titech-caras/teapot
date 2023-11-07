@@ -9,6 +9,7 @@ from capstone_gt import CsInsn
 from typing import List, Set
 
 from .reg_inst_aware_pass_mixin import RegInstAwarePassMixin
+from NaHCO3.utils.progress import print_progress_bar
 
 
 class VisitorPassMixin(Pass):
@@ -27,15 +28,27 @@ class VisitorPassMixin(Pass):
         self.rewriting_ctx = rewriting_ctx
 
     def visit_functions(self, functions, section: gtirb.Section = None):
-        for function in functions:
-            if section is not None and next(iter(function.get_entry_blocks())).section.name != section.name:
-                continue
+        if section is None:
+            function_list = list(functions)
+        else:
+            function_list = [fn for fn in functions if next(iter(fn.get_entry_blocks())).section.name == section.name]
 
+        functions_count = len(function_list)
+
+        for idx, function in enumerate(function_list):
+            print_progress_bar(self.__class__.__name__, idx+1, functions_count)
             self.visit_function(function)
 
+        print('')
+
     def visit_code_blocks(self, section: gtirb.Section):
-        for block in section.code_blocks:
+        code_blocks_count = len(list(section.code_blocks))
+
+        for idx, block in enumerate(section.code_blocks):
+            print_progress_bar(self.__class__.__name__, idx+1, code_blocks_count)
             self.visit_code_block(block)
+
+        print('')
 
 
 class InstVisitorPassMixin(VisitorPassMixin, RegInstAwarePassMixin):
