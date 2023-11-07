@@ -40,16 +40,33 @@ class TransientCoveragePass(VisitorPassMixin, RegInstAwarePassMixin):
         self.idx += 1
 
     def __build_coverage_patch(self, idx: int):
+        # TODO: make this a queue and delay coverage update until restore checkpoint
         @patch_constraints(x86_syntax=X86Syntax.INTEL)
         def patch(ctx):
             return f"""
                 mov old_rsp, rsp
                 lea rsp, scratchpad+{SCRATCHPAD_SIZE - 16}
-                mov scratchpad, rdi
+                mov scratchpad, rax
+                mov scratchpad+8, rcx
+                mov scratchpad+16, rdx
+                mov scratchpad+24, rdi
+                mov scratchpad+32, rsi
+                mov scratchpad+40, r8
+                mov scratchpad+48, r9
+                mov scratchpad+56, r10
+                mov scratchpad+64, r11
                 lea rdi, {self.guard_start_symbol.name}
                 add rdi, {idx * 4}
                 call __sanitizer_cov_trace_pc_guard
-                mov rdi, scratchpad
+                mov rax, scratchpad
+                mov rcx, scratchpad+8
+                mov rdx, scratchpad+16
+                mov rdi, scratchpad+24
+                mov rsi, scratchpad+32
+                mov r8, scratchpad+40
+                mov r9, scratchpad+48
+                mov r10, scratchpad+56
+                mov r11, scratchpad+64
                 mov rsp, old_rsp
             """
 
