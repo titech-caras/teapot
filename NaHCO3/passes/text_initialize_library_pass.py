@@ -47,4 +47,8 @@ class TextInitializeLibraryPass(VisitorPassMixin):
                 if non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Return:
                     self.rewriting_ctx.insert_at(
                         block, block.size - 1, Patch.from_function(patch_constraints(x86_syntax=X86Syntax.INTEL)(
-                            lambda ctx: "call libcheckpoint_disable")))
+                            lambda ctx: """
+                            sub rsp, 8
+                            call libcheckpoint_disable
+                            add rsp, 8
+                            """)))
