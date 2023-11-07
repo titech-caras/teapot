@@ -48,7 +48,7 @@ DIFT_IGNORE_LIST = [
     "chown", "chmod", "unlink",
     "open", "fdopen", "fwrite", "fopen", "fclose", "fflush", "ferror", "fseek", "ftell", "feof",
     "malloc", "free", "realloc", "calloc",
-    "strcmp", "strncmp",
+    "strcmp", "strncmp", "strchr", "strrchr", "strerror",
     "abort", "__assert_fail", "exit", "__errno_location", "__xstat"
 ]
 
