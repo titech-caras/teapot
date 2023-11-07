@@ -43,11 +43,13 @@ CHECKPOINT_LIB_SYMBOLS = [
 
 # TODO: eventually take an abilist file instead
 DIFT_IGNORE_LIST = [
-    "printf", "puts", "putchar", "fprintf",
-    "fwrite", "fopen", "fclose", "fflush", "ferror", "fseek", "ftell",
+    "printf", "puts", "putchar", "fprintf", "putc", "fputc",
+    "isatty", "clock", "utimensat",
+    "chown", "chmod", "unlink",
+    "open", "fdopen", "fwrite", "fopen", "fclose", "fflush", "ferror", "fseek", "ftell", "feof",
     "malloc", "free", "realloc", "calloc",
     "strcmp", "strncmp",
-    "abort", "__assert_fail", "exit",
+    "abort", "__assert_fail", "exit", "__errno_location", "__xstat"
 ]
 
 TAG_ATTACKER = 1
