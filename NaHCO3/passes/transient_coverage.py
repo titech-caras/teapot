@@ -7,31 +7,35 @@ from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
 from capstone_gt import CsInsn, CS_OP_MEM
 from gtirb_live_register_analysis import LiveRegisterManager
 
+from NaHCO3.preprocess.create_guards import create_guards
 from NaHCO3.passes.mixins import VisitorPassMixin, RegInstAwarePassMixin
 from NaHCO3.utils.misc import distinguish_edges
-from NaHCO3.config import SYMBOL_SUFFIX, SCRATCHPAD_SIZE
+from NaHCO3.config import SYMBOL_SUFFIX, SCRATCHPAD_SIZE, BLACKLIST_FUNCTION_NAMES
 
 
 class TransientCoveragePass(VisitorPassMixin, RegInstAwarePassMixin):
     transient_section: gtirb.Section
-    guard_start_symbol: gtirb.Symbol
-    guard_end_symbol: gtirb.Symbol
+    guard_section: gtirb.Section
 
     idx: int = 0
 
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
-                 decoder: GtirbInstructionDecoder,
-                 guard_start_symbol: gtirb.Symbol, guard_end_symbol: gtirb.Symbol):
+                 decoder: GtirbInstructionDecoder, guard_section: gtirb.Section):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.transient_section = transient_section
-        self.guard_start_symbol = guard_start_symbol
-        self.guard_end_symbol = guard_end_symbol
+        self.guard_section = guard_section
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
         self.visit_functions(functions, self.transient_section)
 
+    def end_module(self, module: gtirb.Module, functions):
+        create_guards(self.guard_section, self.idx)
+
     def visit_function(self, function: Function):
+        if function.get_name().replace(SYMBOL_SUFFIX, "") in BLACKLIST_FUNCTION_NAMES:
+            return
+
         self.reg_manager.analyze(function)
         VisitorPassMixin.visit_function(self, function)
 
@@ -40,34 +44,14 @@ class TransientCoveragePass(VisitorPassMixin, RegInstAwarePassMixin):
         self.idx += 1
 
     def __build_coverage_patch(self, idx: int):
-        # TODO: make this a queue and delay coverage update until restore checkpoint
-        @patch_constraints(x86_syntax=X86Syntax.INTEL)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=1)
         def patch(ctx):
+            r1, = ctx.scratch_registers
             return f"""
-                mov old_rsp, rsp
-                lea rsp, scratchpad+{SCRATCHPAD_SIZE - 16}
-                mov scratchpad, rax
-                mov scratchpad+8, rcx
-                mov scratchpad+16, rdx
-                mov scratchpad+24, rdi
-                mov scratchpad+32, rsi
-                mov scratchpad+40, r8
-                mov scratchpad+48, r9
-                mov scratchpad+56, r10
-                mov scratchpad+64, r11
-                lea rdi, {self.guard_start_symbol.name}
-                add rdi, {idx * 4}
-                call __sanitizer_cov_trace_pc_guard
-                mov rax, scratchpad
-                mov rcx, scratchpad+8
-                mov rdx, scratchpad+16
-                mov rdi, scratchpad+24
-                mov rsi, scratchpad+32
-                mov r8, scratchpad+40
-                mov r9, scratchpad+48
-                mov r10, scratchpad+56
-                mov r11, scratchpad+64
-                mov rsp, old_rsp
+                mov {r1}, guard_list_top
+                mov dword ptr [{r1}], {idx}
+                lea {r1}, [{r1} + 4]
+                mov guard_list_top, {r1}
             """
 
         return patch

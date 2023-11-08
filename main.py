@@ -33,13 +33,11 @@ trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)
 guard_section = gtirb.Section(name=".NaHCO3_guards", flags={gtirb.Section.Flag.Readable, gtirb.Section.Flag.Writable},
                               module=module)
 guard_byte_interval = gtirb.ByteInterval(section=guard_section)
-guard_start_label, guard_end_label = create_guards(guard_section, len(list(transient_section.code_blocks)))
 
 pass_manager = PassManager()
 pass_manager.add(ImportSymbolsPass())
 pass_manager.add(CreateTrampolinesPass(text_section, trampoline_section, text_transient_mapping, decoder))
 pass_manager.add(DiftExtCallPass(text_section))
-print('Applying Patch...')
 pass_manager.run(ir)
 
 pass_manager = PassManager()
@@ -52,13 +50,12 @@ pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section, decoder))
 
 pass_manager.add(AsanStackPass(reg_manager, transient_section, decoder, True))
 pass_manager.add(DiftPropagationPass(reg_manager, transient_section, decoder, True))
-pass_manager.add(TransientCoveragePass(reg_manager, transient_section, decoder, guard_start_label, guard_end_label))
+pass_manager.add(TransientCoveragePass(reg_manager, transient_section, decoder, guard_section))
 pass_manager.add(TransientGadgetPolicyPass(reg_manager, transient_section, decoder))
 pass_manager.add(TransientMemlogPass(reg_manager, transient_section, decoder))
 pass_manager.add(TransientInsertRestorePointsPass(reg_manager, text_section, transient_section, decoder))
 pass_manager.add(TransientIndirectBranchCheckDestPass(reg_manager, transient_section, decoder,
                                                       transient_section_start_symbol, transient_section_end_symbol))
-print('Applying Patch...')
 pass_manager.run(ir)
 
 ir.save_protobuf(f"test/{gtirb_name}_modified.gtirb")

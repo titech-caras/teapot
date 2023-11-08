@@ -33,6 +33,7 @@ CHECKPOINT_LIB_SYMBOLS = [
 
     "checkpoint_target_metadata",
     "memory_history_top",
+    "guard_list_top",
     "checkpoint_cnt",
     "instruction_cnt",
 
