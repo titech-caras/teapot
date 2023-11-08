@@ -9,7 +9,7 @@ import sys
 from NaHCO3.abi.x86_64 import _X86_64_ELF
 
 from NaHCO3.preprocess.copy_section import copy_section
-from NaHCO3.preprocess.create_guards import create_guards
+from NaHCO3.utils.reg_analysis import LiveRegisterManagerWrapper
 from NaHCO3.passes import *
 
 gtirb_name = sys.argv[-1]
@@ -21,11 +21,12 @@ text_section = [s for s in module.sections if s.name == ".text"][0]
 decoder = CachedGtirbInstructionDecoder(module.isa)
 
 my_x64_elf_abi = _X86_64_ELF()
-reg_manager = LiveRegisterManager(module, my_x64_elf_abi)
 _ABIS[(gtirb.Module.ISA.X64, gtirb.Module.FileFormat.ELF)] = my_x64_elf_abi
 
 transient_section, transient_section_start_symbol, transient_section_end_symbol, text_transient_mapping = (
     copy_section(text_section, ".NaHCO3_transient"))
+
+reg_manager = LiveRegisterManagerWrapper(module, my_x64_elf_abi, decoder, text_transient_mapping=text_transient_mapping)
 
 trampoline_section = gtirb.Section(name=".NaHCO3_trampolines", flags=transient_section.flags, module=module)
 trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)

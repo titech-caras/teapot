@@ -9,3 +9,4 @@ import gtirb
 class CopiedSectionMapping:
     code_blocks_map: Dict[UUID, gtirb.CodeBlock]
     symbols_map: Dict[UUID, gtirb.Symbol]
+    function_uuids_map: Dict[UUID, UUID]

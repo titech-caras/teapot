@@ -67,11 +67,11 @@ class CreateTrampolinesPass(VisitorPassMixin):
                 self.text_transient_mapping.symbols_map[next(branch_edge.target.references).uuid].name
             )))
 
-            edges = [
+            '''edges = [
                 gtirb.Edge(block, trampoline_target_payload, gtirb.EdgeLabel(gtirb.EdgeType.Branch, conditional=True)),
                 gtirb.Edge(block, branch_edge.target, gtirb.EdgeLabel(gtirb.EdgeType.Branch, conditional=True)),
             ]
-            block.ir.cfg.update(edges)
+            block.ir.cfg.update(edges)'''
 
     @staticmethod
     def __build_trampoline_patch(block_uuid: UUID,

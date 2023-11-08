@@ -117,13 +117,15 @@ def copy_section(section: gtirb.Section, name: str) \
                           for b in section.module.aux_data["functionBlocks"].data[fn_uuid]])
         new_name = symbol_copy_mapping[section.module.aux_data["functionNames"].data.get(fn_uuid).uuid]
 
-        new_functions.append((new_entry_blocks, new_blocks, new_name))
+        new_functions.append((fn_uuid, new_entry_blocks, new_blocks, new_name))
 
-    for new_entry_blocks, new_blocks, new_name in new_functions:
+    functions_uuid_mapping = {}
+    for old_fn_uuid, new_entry_blocks, new_blocks, new_name in new_functions:
         fn_uuid = uuid.uuid4()
+        functions_uuid_mapping[old_fn_uuid] = fn_uuid
         section.module.aux_data['functionEntries'].data[fn_uuid] = new_entry_blocks
         section.module.aux_data["functionBlocks"].data[fn_uuid] = new_blocks
         section.module.aux_data["functionNames"].data[fn_uuid] = new_name
 
     return (section_copy, section_start_symbol, section_end_symbol,
-            CopiedSectionMapping(code_block_copy_mapping, symbol_copy_mapping))
+            CopiedSectionMapping(code_block_copy_mapping, symbol_copy_mapping, functions_uuid_mapping))
