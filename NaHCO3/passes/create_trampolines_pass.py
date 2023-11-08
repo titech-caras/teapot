@@ -5,6 +5,7 @@ from gtirb_rewriting.assembly import X86Syntax
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from capstone_gt import CsInsn
 from uuid import UUID
+from typing import Optional
 
 from NaHCO3.passes.mixins import VisitorPassMixin
 from NaHCO3.datacls.copied_section_mapping import CopiedSectionMapping
@@ -54,9 +55,10 @@ class CreateTrampolinesPass(VisitorPassMixin):
             last_instruction: CsInsn
             *_, last_instruction = self.decoder.get_instructions(block)
 
+            trampoline_target_payload = self.text_transient_mapping.code_blocks_map[fallthrough_edge.target.uuid]
             trampoline_target_symbol = gtirb.Symbol(
                 name=generate_distinct_label_name(".L__trampoline_target_", fallthrough_edge.target.uuid),
-                payload=self.text_transient_mapping.code_blocks_map[fallthrough_edge.target.uuid],
+                payload=trampoline_target_payload,
                 module=self.module)
 
             trampoline_block = self.__initialize_empty_code_block()
@@ -64,6 +66,12 @@ class CreateTrampolinesPass(VisitorPassMixin):
                 block.uuid, last_instruction.mnemonic, trampoline_target_symbol.name,
                 self.text_transient_mapping.symbols_map[next(branch_edge.target.references).uuid].name
             )))
+
+            edges = [
+                gtirb.Edge(block, trampoline_target_payload, gtirb.EdgeLabel(gtirb.EdgeType.Branch, conditional=True)),
+                gtirb.Edge(block, branch_edge.target, gtirb.EdgeLabel(gtirb.EdgeType.Branch, conditional=True)),
+            ]
+            block.ir.cfg.update(edges)
 
     @staticmethod
     def __build_trampoline_patch(block_uuid: UUID,
