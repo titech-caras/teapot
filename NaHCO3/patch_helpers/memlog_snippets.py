@@ -19,6 +19,7 @@ def memlog_snippet(addr_reg: Register, access_size: int, *,
                 mov {r2}, [{addr_reg}]
                 mov [{r1}], {addr_reg}
                 mov [{r1} + 8], {r2}
+                lea {r1}, [{r1} + 16]
                 lea {addr_reg}, [{addr_reg} + 8]
             """
 
