@@ -84,7 +84,8 @@ class TransientGadgetPolicyPass(InstVisitorPassMixin):
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3, clobbers_flags=True)
         def patch(ctx: InsertionContext):
             r1, r2, r3 = ctx.scratch_registers
-            base_reg = self.reg_manager.abi.get_register(inst.reg_name(mem_operand.base))
+            base_reg = self.reg_manager.abi.get_register(inst.reg_name(mem_operand.base)) \ 
+                if mem_operand.index != X86_REG_INVALID else None
             index_reg = self.reg_manager.abi.get_register(inst.reg_name(mem_operand.index)) \
                 if mem_operand.index != X86_REG_INVALID else None
 
@@ -95,7 +96,8 @@ class TransientGadgetPolicyPass(InstVisitorPassMixin):
                 xor {r1:8l}, {r1:8l}
             """
 
-            asm += dift_add_reg_tag_snippet(r1, reg_add=base_reg)
+            if base_reg is not None:
+                asm += dift_add_reg_tag_snippet(r1, reg_add=base_reg)
             if index_reg is not None:
                 asm += dift_add_reg_tag_snippet(r1, reg_add=index_reg)
 
