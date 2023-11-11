@@ -26,8 +26,9 @@ _ABIS[(gtirb.Module.ISA.X64, gtirb.Module.FileFormat.ELF)] = my_x64_elf_abi
 transient_section, transient_section_start_symbol, transient_section_end_symbol, text_transient_mapping = (
     copy_section(text_section, ".NaHCO3_transient"))
 
+#from fake_reg_manager import FakeManager
+#reg_manager = FakeManager(module, my_x64_elf_abi, decoder)
 reg_manager = LiveRegisterManagerWrapper(module, my_x64_elf_abi, decoder, text_transient_mapping=text_transient_mapping)
-
 trampoline_section = gtirb.Section(name=".NaHCO3_trampolines", flags=transient_section.flags, module=module)
 trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)
 
@@ -46,7 +47,7 @@ pass_manager.add(TextInitializeLibraryPass(text_section))
 
 pass_manager.add(AsanStackPass(reg_manager, text_section, decoder, False))
 pass_manager.add(TextIndirectBranchTransformPass(text_section, text_transient_mapping, decoder))
-pass_manager.add(DiftPropagationPass(reg_manager, text_section, decoder, False))  # TODO: Use LLVM-based DIFT here
+pass_manager.add(DiftPropagationLLVMPass(reg_manager, text_section, decoder, False))
 pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section, decoder))
 
 pass_manager.add(AsanStackPass(reg_manager, transient_section, decoder, True))

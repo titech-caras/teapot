@@ -70,7 +70,7 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
     ) -> Tuple[Iterable[_AsmSnippet], Iterable[_AsmSnippet], Optional[int]]:
         init_and_switch_to_scratchpad_stack_snippet = _AsmSnippet(f"""
             mov %rsp, old_rsp
-            lea scratchpad+8192, %rsp
+            lea scratchpad+{SCRATCHPAD_SIZE - 16}, %rsp
         """)
         switch_to_scratchpad_stack_snippet = _AsmSnippet(f"""
             mov %rsp, old_rsp
@@ -102,7 +102,7 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
             prologue: List[_AsmSnippet] = []
             epilogue: List[_AsmSnippet] = []
 
-            scratchpad_offset = 1024
+            scratchpad_offset = SCRATCHPAD_SIZE // 2
             for reg in register_use.clobbered_registers:
                 if reg.name == "rflags":
                     continue

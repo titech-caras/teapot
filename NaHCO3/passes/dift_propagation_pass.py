@@ -100,7 +100,7 @@ class DiftPropagationPass(InstVisitorPassMixin):
 
             self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                 self.reg_manager.allocate_registers(function, block, inst_idx)(
-                    self.__build_dift_patch(regs_read, regs_write,
+                    self._build_dift_patch(regs_read, regs_write,
                                             conditional=conditional,
                                             clear_dest_tags=clear_dest_tags,
                                             mem_read_operand_str=mem_operand_read_str,
@@ -112,7 +112,7 @@ class DiftPropagationPass(InstVisitorPassMixin):
         return {self.reg_manager.abi.get_register(inst.reg_name(r)) for r in inst.regs_access()[acc_type]
                 if r != X86_REG_EFLAGS and inst.reg_name(r).lower() in self.reg_manager.abi._register_map}
 
-    def __build_dift_patch(self, regs_read: Set[Register], regs_write: Set[Register], *,
+    def _build_dift_patch(self, regs_read: Set[Register], regs_write: Set[Register], *,
                            conditional: Optional[str] = None,
                            clear_dest_tags: bool = False,  # Ignore tag propagation and zero out the tags
                            mem_read_operand_str: Optional[str] = None,
