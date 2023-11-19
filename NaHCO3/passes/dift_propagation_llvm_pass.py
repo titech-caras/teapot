@@ -35,6 +35,9 @@ define dso_local void @func() local_unnamed_addr #0 {{{{
 
 ret void
 }}}}
+
+declare void @llvm.memset.p0i8.i64(i8* nocapture writeonly, i8, i64, i1 immarg) #2
+attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
     """
 
     scratchpad_offset: int = 0
@@ -68,15 +71,17 @@ ret void
 
         if len(self.llvm_ir) > 0:
             ir = self.LLVM_IR_TEMPLATE.format("\n".join(self.llvm_ir))
-            print(ir)
+            #print(ir)
 
             ir_parsed = llvm.parse_assembly(ir)
             self.pm.run(ir_parsed)
-            print(ir_parsed)
+            #print(ir_parsed)
 
             asm = re.search(r"func:(.+?)retq", self.target_machine.emit_assembly(ir_parsed), re.S)[1].strip()
+            if "memset" in asm:
+                raise NotImplementedError("LLVM DIFT generates memset")
             regs_usage = self.__get_register_usage(asm)
-            print(asm)
+            #print(asm)
 
             instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
             last_inst_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
@@ -86,6 +91,32 @@ ret void
                     self.__build_llvm_optimized_dift_values_patch(asm, regs_usage)
                 )
             ))
+
+    '''def visit_inst(self, inst: CsInsn, inst_idx: int, inst_offset: int,
+                   block: gtirb.CodeBlock, function: Function = None,
+                   live_registers: Set[Register] = None):
+        if inst.mnemonic.startswith("rep stos"):
+            access_size = inst.operands[0].size
+            self.rewriting_ctx.insert_at(
+                block, inst_offset, self.reg_manager.allocate_registers(function, block, inst_idx)(
+                    self.__build_dift_store_values_patch(
+                        None, "[rcx]", "[rdi]")))  # FIXME: this is so hacky!
+
+            rax_tag = self.__load(self.TAG_TYPE, self.__build_gep(
+                self.TAG_TYPE, "dift_reg_tags", 0, ptr_type=self.DIFT_REG_TAGS_TYPE))
+            rcx_val = self.__load(self.SCRATCHPAD_ELEM_TYPE, self.__build_gep(
+                self.SCRATCHPAD_ELEM_TYPE, "scratchpad", 0, ptr_type=self.SCRATCHPAD_ARR_TYPE))
+            memtag_addr = self.__inttoptr(
+                self.SCRATCHPAD_ELEM_TYPE, self.__load(
+                    self.SCRATCHPAD_ELEM_TYPE, self.__build_gep(
+                        self.SCRATCHPAD_ELEM_TYPE, "scratchpad",
+                        self.scratchpad_offset + 1, ptr_type=self.SCRATCHPAD_ARR_TYPE)), self.TAG_TYPE)
+
+            memset_size = self.__mul(self.SCRATCHPAD_ELEM_TYPE, rcx_val, access_size)
+            self.__memset(self.TAG_TYPE, memtag_addr, rax_tag, memset_size)
+
+        else:
+            super().visit_inst(inst, inst_idx, inst_offset, block, function, live_registers)'''
 
     def __get_register_usage(self, asm):
         regs = {self.rewriting_ctx._abi.get_register(r) for r in re.findall("%([0-9a-zA-Z]+)", asm) if r != "rip"}
@@ -128,6 +159,9 @@ ret void
     def __xor(self, type, v1, v2):
         return self.__build_inst(f"xor {type} {v1}, {v2}")
 
+    def __mul(self, type, v1, v2):
+        return self.__build_inst(f"mul {type} {v1}, {v2}")
+
     def __store(self, type, v, ptr):
         self.llvm_ir.append(f"store {type} {v}, {type}* {ptr}")
 
@@ -140,14 +174,18 @@ ret void
     def __label(self, l):
         self.llvm_ir.append(f"{l}:")
 
+    def __memset(self, type, ptr, val, len):
+        self.llvm_ir.append(f"call void @llvm.memset.p0i8.i64({type}* {ptr}, {type} {val}, i64 {len}, i1 false)")
+
     def __ret(self):
         self.llvm_ir.append("ret void")
 
     def _build_dift_patch(self, regs_read: Set[Register], regs_write: Set[Register], *,
-                           conditional: Optional[str] = None,
-                           clear_dest_tags: bool = False,  # Ignore tag propagation and zero out the tags
-                           mem_read_operand_str: Optional[str] = None,
-                           mem_write_operand_str: Optional[str] = None):
+                          conditional: Optional[str] = None,
+                          clear_dest_tags: bool = False,  # Ignore tag propagation and zero out the tags
+                          mem_read_operand_str: Optional[str] = None,
+                          mem_write_operand_str: Optional[str] = None,
+                          mem_write_size: Optional[int] = None):
         # FIXME: inttoptr hinders with store-load optimizations
 
         if conditional:
@@ -198,7 +236,7 @@ ret void
                         self.SCRATCHPAD_ELEM_TYPE, "scratchpad",
                         self.scratchpad_offset + offset, ptr_type=self.SCRATCHPAD_ARR_TYPE)), self.TAG_TYPE)
 
-            self.__store(self.TAG_TYPE, loaded_tag, memtag_addr)
+            self.__memset(self.TAG_TYPE, memtag_addr, loaded_tag, mem_write_size)
 
         if conditional:
             self.__br(f"dift_skip_{self.scratchpad_offset}")
@@ -207,8 +245,8 @@ ret void
         return self.__build_dift_store_values_patch(conditional, mem_read_operand_str, mem_write_operand_str)
 
     def __build_dift_store_values_patch(self, conditional: Optional[str] = None,
-                              mem_read_operand_str: Optional[str] = None,
-                              mem_write_operand_str: Optional[str] = None):
+                                        mem_read_operand_str: Optional[str] = None,
+                                        mem_write_operand_str: Optional[str] = None):
         scratch_registers = 1 if mem_read_operand_str or mem_write_operand_str or conditional else 0
         asm = ""
 

@@ -12,7 +12,7 @@ from typing import List, Set, Optional
 from NaHCO3.config import BLACKLIST_FUNCTION_NAMES, SYMBOL_SUFFIX
 from NaHCO3.patch_helpers import dift_add_reg_tag_snippet
 from NaHCO3.utils.dift import reg_to_dift_reg_id
-from NaHCO3.utils.rewriting import mem_access_to_symbolic_str
+from NaHCO3.utils.rewriting import mem_access_to_symbolic_str, mem_operand_is_write_capstone_workaround
 from NaHCO3.passes.mixins import InstVisitorPassMixin
 from NaHCO3.patch_helpers import conditional_patch_wrapper, memlog_snippet
 
@@ -43,6 +43,11 @@ class DiftPropagationPass(InstVisitorPassMixin):
         if inst.mnemonic in ("nop", "ret", "call") or inst.mnemonic.startswith("j"):
             return
 
+        if inst.mnemonic.startswith("rep"):
+            # FIXME: support rep
+            print(f"Warning: DIFT Propagation does not support ", inst)
+            return
+
         if inst.mnemonic in ("push", "pop"):
             reg_operand_set = {}
             mem_operand = None
@@ -56,23 +61,26 @@ class DiftPropagationPass(InstVisitorPassMixin):
                 regs_write = {}
                 mem_operand_read_str = mem_access_to_symbolic_str(block, inst, mem_operand) if mem_operand else None
                 mem_operand_write_str = "[rsp-8]"
+                mem_operand_write_size = 8
             else:  # pop
                 regs_read = {}
                 regs_write = reg_operand_set
                 mem_operand_read_str = "[rsp]"
                 mem_operand_write_str = mem_access_to_symbolic_str(block, inst, mem_operand) if mem_operand else None
+                mem_operand_write_size = mem_operand.size if mem_operand else None
         else:
             regs_read = self.__access_regs_to_register_set(inst, 0)
             regs_write = self.__access_regs_to_register_set(inst, 1)
 
-            mem_operand_str, mem_operand_read_str, mem_operand_write_str = None, None, None
+            mem_operand_str, mem_operand_read_str, mem_operand_write_str, mem_operand_write_size = None, None, None, None
 
             mem_operand = next(iter(x for x in inst.operands if x.type == CS_OP_MEM), None) \
                 if inst.mnemonic != "lea" else None
             if mem_operand is not None:
                 mem_operand_str = mem_access_to_symbolic_str(block, inst, mem_operand)
                 mem_operand_read_str = mem_operand_str if mem_operand.access & CS_AC_READ else None
-                mem_operand_write_str = mem_operand_str if mem_operand.access & CS_AC_WRITE else None
+                mem_operand_write_str = mem_operand_str if mem_operand_is_write_capstone_workaround(inst, mem_operand) else None
+                mem_operand_write_size = mem_operand.size if mem_operand_is_write_capstone_workaround(inst, mem_operand) else None
 
         # Handle special instructions
         if (inst.mnemonic == "xor" and inst.operands[0].type == CS_OP_REG and inst.operands[1].type == CS_OP_REG
@@ -101,10 +109,11 @@ class DiftPropagationPass(InstVisitorPassMixin):
             self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
                 self.reg_manager.allocate_registers(function, block, inst_idx)(
                     self._build_dift_patch(regs_read, regs_write,
-                                            conditional=conditional,
-                                            clear_dest_tags=clear_dest_tags,
-                                            mem_read_operand_str=mem_operand_read_str,
-                                            mem_write_operand_str=mem_operand_write_str)
+                                           conditional=conditional,
+                                           clear_dest_tags=clear_dest_tags,
+                                           mem_read_operand_str=mem_operand_read_str,
+                                           mem_write_operand_str=mem_operand_write_str,
+                                           mem_write_size=mem_operand_write_size)
                 )
             ))
 
@@ -113,14 +122,15 @@ class DiftPropagationPass(InstVisitorPassMixin):
                 if r != X86_REG_EFLAGS and inst.reg_name(r).lower() in self.reg_manager.abi._register_map}
 
     def _build_dift_patch(self, regs_read: Set[Register], regs_write: Set[Register], *,
-                           conditional: Optional[str] = None,
-                           clear_dest_tags: bool = False,  # Ignore tag propagation and zero out the tags
-                           mem_read_operand_str: Optional[str] = None,
-                           mem_write_operand_str: Optional[str] = None):
+                          conditional: Optional[str] = None,
+                          clear_dest_tags: bool = False,  # Ignore tag propagation and zero out the tags
+                          mem_read_operand_str: Optional[str] = None,
+                          mem_write_operand_str: Optional[str] = None,
+                          mem_write_size: Optional[int] = None):
         if self.insert_memlog and mem_write_operand_str:
             scratch_registers = 4
         elif mem_read_operand_str or mem_write_operand_str:
-            scratch_registers = 2
+            scratch_registers = 3
         else:
             scratch_registers = 1
 
@@ -131,8 +141,8 @@ class DiftPropagationPass(InstVisitorPassMixin):
             if self.insert_memlog and mem_write_operand_str:
                 r1, r2, r3, r4 = ctx.scratch_registers
             elif mem_read_operand_str or mem_write_operand_str:
-                r2, r4 = ctx.scratch_registers
-                r1, r3 = None, None
+                r2, r3, r4 = ctx.scratch_registers
+                r1 = None
             else:
                 r4, = ctx.scratch_registers
                 r1, r2, r3 = None, None, None
@@ -145,7 +155,7 @@ class DiftPropagationPass(InstVisitorPassMixin):
                     btc {r2}, 45
                 """
 
-            asm += f"xor {r4:8l}, {r4:8l}\n"
+            asm += f"xor {r4:32}, {r4:32}\n"
 
             if not clear_dest_tags:
                 for reg in regs_read:
@@ -164,9 +174,21 @@ class DiftPropagationPass(InstVisitorPassMixin):
                         btc {r2}, 45
                     """
 
-                if self.insert_memlog:
-                    asm += memlog_snippet(r2, 1, r1=r1, r2=r3, no_clobber_addr=True)
-                asm += f"mov [{r2}], {r4:8l}\n"
+                extended_size = min(mem_write_size, 8)
+                r4_ext = r4.sizes["8l" if extended_size == 1 else str(extended_size * 8)]
+                if extended_size > 1:
+                    asm += f"""
+                        mov {r3}, 0x{"01" * extended_size}
+                        imul {r4}, {r3}
+                    """
+
+                for i in range(0, mem_write_size, 8):
+                    if self.insert_memlog:
+                        asm += memlog_snippet(r2, 1, r1=r1, r2=r3, no_clobber_addr=True)
+                    asm += f"""
+                        mov [{r2}], {r4_ext}
+                        add {r2}, 8
+                    """
 
             asm = conditional_patch_wrapper(asm, conditional, label_key="dift")
 
