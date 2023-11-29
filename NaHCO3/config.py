@@ -21,6 +21,7 @@ CHECKPOINT_LIB_SYMBOLS = [
     "old_rsp",
     "scratchpad_rsp",
 
+    "checkpoint_cnt",
     "libcheckpoint_enable",
     "libcheckpoint_disable",
     "make_checkpoint",
@@ -39,18 +40,31 @@ CHECKPOINT_LIB_SYMBOLS = [
 
     "dift_reg_tags",
 
+    "__sanitizer_cov_trace_pc",
     "__sanitizer_cov_trace_pc_guard",
 ]
 
 # TODO: eventually take an abilist file instead
 DIFT_IGNORE_LIST = [
-    "printf", "puts", "putchar", "fprintf", "putc", "fputc",
-    "isatty", "clock", "utimensat",
-    "chown", "chmod", "unlink",
-    "open", "fdopen", "fwrite", "fopen", "fclose", "fflush", "ferror", "fseek", "ftell", "feof",
-    "malloc", "free", "realloc", "calloc",
-    "strcmp", "strncmp", "strchr", "strrchr", "strerror",
-    "abort", "__assert_fail", "exit", "__errno_location", "__xstat"
+    "printf", "puts", "putchar", "fprintf", "putc", "fputc", "__fprintf_chk", "__snprintf_chk", "__vsnprintf_chk",
+    "fputs", "vfprintf",
+    "isatty", "clock", "utimensat", "__fxstat", "gettimeofday", "getpid", "secure_getenv", "gmtime", "clock_gettime",
+    "sendmsg", "uname", "getnameinfo", "getaddrinfo", "gethostbyname", "freeaddrinfo", "getsockname", "connect",
+    "chown", "chmod", "unlink", "umask", "mkstemp", "shmdt", "shutdown", "shmget", "sysconf", "syscall", "tcgetattr",
+    "shmat", "bind", "accept", "setsockopt", "tcsetattr", "sigaction", "listen", "getsockopt", "usleep", "socket",
+    "signal", "time",
+    "open", "fdopen", "fwrite", "fopen", "fclose", "fflush", "ferror", "fseek", "ftell", "feof", "close", "write",
+    "fopen64", "dlopen", "dladdr", "dlsym", "dlclose", "dlerror", "perror", "fcntl", "ioctl", "select", "fileno",
+    "readdir", "closedir", "opendir",
+    "malloc", "free", "realloc",
+    "strcmp", "strncmp", "strchr", "strrchr", "strerror", "memchr", "memcmp", "qsort", "strspn", "strcspn",
+    "__ctype_b_loc", "__ctype_tolower_loc", "__ctype_toupper_loc",
+    "abort", "__assert_fail", "exit", "__errno_location", "__xstat", "__stack_chk_fail", "__cxa_atexit", "gai_strerror",
+    "__xpg_strerror_r", "mmap", "mprotect", "mlock", "madvise", "munmap",
+    "inflateInit2_", "inflateEnd",
+    "crc32",
+
+    "sprintf", "__isoc99_sscanf"  # FIXME: these should actually be tainted
 ]
 
 TAG_ATTACKER = 1
