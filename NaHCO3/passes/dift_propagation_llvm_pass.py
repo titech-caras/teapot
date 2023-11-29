@@ -77,10 +77,10 @@ attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
             self.pm.run(ir_parsed)
             #print(ir_parsed)
 
-            asm = re.search(r"func:(.+?)retq", self.target_machine.emit_assembly(ir_parsed), re.S)[1].strip()
+            asm = re.search(r"func:(.+)\.Lfunc_end0:", self.target_machine.emit_assembly(ir_parsed), re.S)[1].strip()
             if "memset" in asm:
-                raise NotImplementedError("LLVM DIFT generates memset")
-            regs_usage = self.__get_register_usage(asm)
+                raise NotImplementedError("LLVM DIFT generates memset call (not supported yet)")
+            regs_usage, has_reg_spill = self.__get_register_usage(asm)
             #print(asm)
 
             instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
@@ -88,7 +88,7 @@ attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
 
             self.rewriting_ctx.insert_at(block, last_inst_offset, Patch.from_function(
                 self.reg_manager.allocate_registers(function, block, len(instructions) - 1)(
-                    self.__build_llvm_optimized_dift_values_patch(asm, regs_usage)
+                    self.__build_llvm_optimized_dift_values_patch(asm, regs_usage, has_reg_spill)
                 )
             ))
 
@@ -119,8 +119,11 @@ attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
             super().visit_inst(inst, inst_idx, inst_offset, block, function, live_registers)'''
 
     def __get_register_usage(self, asm):
-        regs = {self.rewriting_ctx._abi.get_register(r) for r in re.findall("%([0-9a-zA-Z]+)", asm) if r != "rip"}
-        return regs
+        regs = {self.rewriting_ctx._abi.get_register(r) for r in re.findall("%([0-9a-zA-Z]+)", asm)
+                if r not in ("rip", "rsp")}
+
+        has_reg_spill = "%rsp" in asm or "push" in asm
+        return regs, has_reg_spill
 
     def __reset(self):
         self.scratchpad_offset = 0
@@ -194,8 +197,8 @@ attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
                     self.SCRATCHPAD_ELEM_TYPE, "scratchpad", self.scratchpad_offset, ptr_type=self.SCRATCHPAD_ARR_TYPE))
 
             cmp_result = self.__icmp("eq", self.SCRATCHPAD_ELEM_TYPE, conditional_value, "0")
-            self.__br_cond(cmp_result, f"dift_skip_{self.scratchpad_offset}", f"dift_proceed_{self.scratchpad_offset}")
-            self.__label(f"dift_proceed_{self.scratchpad_offset}:")
+            self.__br_cond(cmp_result, f"%dift_skip_{self.scratchpad_offset}", f"%dift_proceed_{self.scratchpad_offset}")
+            self.__label(f"dift_proceed_{self.scratchpad_offset}")
 
         tag = self.__alloca(self.TAG_TYPE)
         self.__store(self.TAG_TYPE, "0", tag)
@@ -209,11 +212,12 @@ attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
                         self.TAG_TYPE, "dift_reg_tags", reg_to_dift_reg_id(reg), ptr_type=self.DIFT_REG_TAGS_TYPE))), tag)
 
             if mem_read_operand_str:
-                memtag_addr = self.__inttoptr(
-                    self.SCRATCHPAD_ELEM_TYPE, self.__load(
-                        self.SCRATCHPAD_ELEM_TYPE, self.__build_gep(
-                            self.SCRATCHPAD_ELEM_TYPE, "scratchpad",
-                            self.scratchpad_offset + (1 if conditional else 0), ptr_type=self.SCRATCHPAD_ARR_TYPE)), self.TAG_TYPE)
+                mem_addr = self.__load(self.SCRATCHPAD_ELEM_TYPE, self.__build_gep(
+                    self.SCRATCHPAD_ELEM_TYPE, "scratchpad",
+                    self.scratchpad_offset + (1 if conditional else 0), ptr_type=self.SCRATCHPAD_ARR_TYPE))
+                memtag_addr = self.__inttoptr(self.SCRATCHPAD_ELEM_TYPE, self.__xor(
+                    self.SCRATCHPAD_ELEM_TYPE, mem_addr, (1 << 45)
+                ), self.TAG_TYPE)
 
                 self.__store(self.TAG_TYPE, self.__or(
                     self.TAG_TYPE,
@@ -227,20 +231,21 @@ attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
                 self.TAG_TYPE, "dift_reg_tags", reg_to_dift_reg_id(reg), ptr_type=self.DIFT_REG_TAGS_TYPE))
 
         if mem_write_operand_str:
-            offset = 1 if mem_write_operand_str == mem_read_operand_str else 0
+            offset = 1 if mem_write_operand_str != mem_read_operand_str and mem_read_operand_str is not None else 0
             offset = offset + 1 if conditional else offset
 
-            memtag_addr = self.__inttoptr(
-                self.SCRATCHPAD_ELEM_TYPE, self.__load(
-                    self.SCRATCHPAD_ELEM_TYPE, self.__build_gep(
-                        self.SCRATCHPAD_ELEM_TYPE, "scratchpad",
-                        self.scratchpad_offset + offset, ptr_type=self.SCRATCHPAD_ARR_TYPE)), self.TAG_TYPE)
+            mem_addr = self.__load(self.SCRATCHPAD_ELEM_TYPE, self.__build_gep(
+                self.SCRATCHPAD_ELEM_TYPE, "scratchpad",
+                self.scratchpad_offset + offset, ptr_type=self.SCRATCHPAD_ARR_TYPE))
+            memtag_addr = self.__inttoptr(self.SCRATCHPAD_ELEM_TYPE, self.__xor(
+                self.SCRATCHPAD_ELEM_TYPE, mem_addr, (1 << 45)
+            ), self.TAG_TYPE)
 
             self.__memset(self.TAG_TYPE, memtag_addr, loaded_tag, mem_write_size)
 
         if conditional:
-            self.__br(f"dift_skip_{self.scratchpad_offset}")
-            self.__label(f"dift_skip_{self.scratchpad_offset}:")
+            self.__br(f"%dift_skip_{self.scratchpad_offset}")
+            self.__label(f"dift_skip_{self.scratchpad_offset}")
 
         return self.__build_dift_store_values_patch(conditional, mem_read_operand_str, mem_write_operand_str)
 
@@ -256,21 +261,15 @@ attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
             return s
 
         if conditional:
-            asm += f"set{conditional} {{1}}"
+            asm += f"set{conditional} {{1}}\n"
             asm += store_r1()
 
         if mem_read_operand_str:
-            asm += f"""
-                lea {{0}}, {mem_read_operand_str}
-                btc {{0}}, 45
-            """
+            asm += f"lea {{0}}, {mem_read_operand_str}\n"
             asm += store_r1()
 
         if mem_write_operand_str and mem_write_operand_str != mem_read_operand_str:
-            asm += f"""
-                lea {{0}}, {mem_write_operand_str}
-                btc {{0}}, 45
-            """
+            asm += f"lea {{0}}, {mem_write_operand_str}\n"
             asm += store_r1()
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers)
@@ -283,10 +282,19 @@ attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
 
         return patch
 
-    def __build_llvm_optimized_dift_values_patch(self, assembly: str, registers: Set[Register]):
+    def __build_llvm_optimized_dift_values_patch(self, assembly: str, registers: Set[Register], has_reg_spill: bool):
         @patch_constraints(scratch_registers=len(registers), clobbers_flags=True)
         def patch(ctx: InsertionContext):
-            asm = assembly
+            asm = assembly.strip()
+            if asm.endswith('retq'):
+                asm = asm[:-4]
+
+            if has_reg_spill:
+                asm = f"""
+                    movq %rsp, old_rsp
+                    leaq scratchpad+{SCRATCHPAD_SIZE - 16}, %rsp
+                """ + asm
+
             for reg_idx, register in enumerate(registers):
                 for size, name in register.sizes.items():
                     asm = asm.replace(f"%{name}", f"%tmpr{reg_idx}:{size}")
@@ -294,6 +302,19 @@ attributes #2 = {{{{ argmemonly nofree nounwind willreturn writeonly }}}}
             for reg_idx, register in enumerate(ctx.scratch_registers):
                 for size, name in register.sizes.items():
                     asm = asm.replace(f"%tmpr{reg_idx}:{size}", f"%{name}")
+
+            if "retq" in asm:
+                # generated assembly may have multiple return points, hack around
+                asm = asm.replace("retq", "jmp .Lfunc_end0")
+                asm += """
+                .Lfunc_end0:
+                    nop
+                """
+
+            if has_reg_spill:
+                asm += f"""
+                    movq old_rsp, %rsp
+                """
 
             return asm
 
