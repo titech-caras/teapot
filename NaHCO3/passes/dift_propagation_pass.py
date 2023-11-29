@@ -83,7 +83,7 @@ class DiftPropagationPass(InstVisitorPassMixin):
                 mem_operand_write_size = mem_operand.size if mem_operand_is_write_capstone_workaround(inst, mem_operand) else None
 
         # Handle special instructions
-        if (inst.mnemonic == "xor" and inst.operands[0].type == CS_OP_REG and inst.operands[1].type == CS_OP_REG
+        if (inst.mnemonic.startswith("xor") and inst.operands[0].type == CS_OP_REG and inst.operands[1].type == CS_OP_REG
                 and inst.operands[0].reg == inst.operands[1].reg):
             # xor rax, rax clears the target register
             clear_dest_tags = True
