@@ -47,12 +47,11 @@ class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
             if len(non_fallthrough_edges) == 0:
                 return
 
-            if non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Return:
-                instructions = list(self.decoder.get_instructions(block))
-                self.rewriting_ctx.insert_at(
-                    block, sum(inst.size for inst in instructions[:-1]), Patch.from_function(
-                        self.reg_manager.allocate_registers(function, block, len(instructions) - 1)(
-                            self.__build_asan_stack_patch(poison=False))))
+            instructions = list(self.decoder.get_instructions(block))
+            self.rewriting_ctx.insert_at(
+                block, sum(inst.size for inst in instructions[:-1]), Patch.from_function(
+                    self.reg_manager.allocate_registers(function, block, len(instructions) - 1)(
+                        self.__build_asan_stack_patch(poison=False))))
 
         super().visit_function(function)
 
