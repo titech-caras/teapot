@@ -13,6 +13,9 @@ class _X86_64_ELF(_X86_64_ELF_BASE):
     def caller_saved_registers(self) -> Set[Register]:
         return {self.get_register("RFLAGS")}
 
+    def _scratch_registers(self) -> List[Register]:
+        return super()._scratch_registers() + [self.get_register("rbp")]
+
     def _allocate_patch_registers(
         self, constraints: Constraints
     ) -> _PatchRegisterAllocation:
