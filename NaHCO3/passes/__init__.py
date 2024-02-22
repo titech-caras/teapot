@@ -2,6 +2,7 @@ from .create_trampolines_pass import CreateTrampolinesPass
 from .import_symbols_pass import ImportSymbolsPass
 
 from .asan_stack_pass import AsanStackPass
+from .debug_symbols_pass import DebugSymbolsPass
 from .dift_propagation_pass import DiftPropagationPass
 from .dift_propagation_llvm_pass import DiftPropagationLLVMPass
 from .dift_ext_call_pass import DiftExtCallPass
