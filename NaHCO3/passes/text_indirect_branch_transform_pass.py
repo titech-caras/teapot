@@ -37,6 +37,7 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         incoming_edges = list(block.incoming_edges)
         non_fallthrough_edges, fallthrough_edges = distinguish_edges(incoming_edges)
+        # FIXME: this thing clobbers flags!
 
         if (len(incoming_edges) == 0 or  # Sometimes GTIRB doesn't detect indirect branches
                 any(e.label.type in (gtirb.cfg.Edge.Type.Call, gtirb.cfg.Edge.Type.Branch) and
