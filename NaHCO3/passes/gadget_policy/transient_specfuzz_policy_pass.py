@@ -22,7 +22,7 @@ from NaHCO3.utils.rewriting import mem_access_to_symbolic_str, get_cmov_conditio
 from NaHCO3.utils.dift import reg_to_dift_reg_id
 
 
-class TransientGadgetPolicyPass(InstVisitorPassMixin):
+class TransientSpecFuzzPolicyPass(InstVisitorPassMixin):
     transient_section: gtirb.Section
 
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
@@ -55,77 +55,15 @@ class TransientGadgetPolicyPass(InstVisitorPassMixin):
         # Handle conditional moves
         conditional = get_cmov_conditional(inst)
 
-        if MODE == "Kasper":
-            write_operand = next(iter(x for x in inst.operands if x.access & CS_AC_WRITE), None)
-            if write_operand == mem_operand or write_operand is None:
-                return
-            assert write_operand.type == CS_OP_REG
+        # Do not instrument if base register is %rsp/%rbp and constant offset
+        if mem_operand.mem.base in (X86_REG_RSP, X86_REG_RBP) and \
+                mem_operand.mem.index == capstone_gt.x86.X86_REG_INVALID:
+            return
 
-            patch = self.__build_asan_kasper_patch(inst, mem_operand_str, access_size,
-                                                   conditional=conditional,
-                                                   mem_operand=mem_operand.mem,
-                                                   write_reg=self.reg_manager.abi.get_register(
-                                                       inst.reg_name(write_operand.reg)))
-        elif MODE == "SpecFuzz":
-            # Do not instrument if base register is %rsp/%rbp and constant offset
-            if mem_operand.mem.base in (X86_REG_RSP, X86_REG_RBP) and \
-                    mem_operand.mem.index == capstone_gt.x86.X86_REG_INVALID:
-                return
-
-            patch = self.__build_asan_patch(inst, mem_operand_str, access_size, conditional=conditional)
-        else:
-            raise NotImplementedError
+        patch = self.__build_asan_patch(inst, mem_operand_str, access_size, conditional=conditional)
 
         self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
             self.reg_manager.allocate_registers(function, block, inst_idx)(patch)))
-
-    def __build_asan_kasper_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
-                                  conditional: Optional[str] = None, mem_operand: X86OpMem, write_reg: Register):
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3, clobbers_flags=True)
-        def patch(ctx: InsertionContext):
-            r1, r2, r3 = ctx.scratch_registers
-            base_reg = self.reg_manager.abi.get_register(inst.reg_name(mem_operand.base)) \
-                if mem_operand.base != X86_REG_INVALID else None
-            index_reg = self.reg_manager.abi.get_register(inst.reg_name(mem_operand.index)) \
-                if mem_operand.index != X86_REG_INVALID else None
-
-            check_ok_label = f".L__kasper_check_ok{SYMBOL_SUFFIX}"
-
-            asm = f"""
-                lea {r2}, {mem_operand_str}
-                xor {r1:8l}, {r1:8l}
-            """
-
-            if base_reg is not None:
-                asm += dift_add_reg_tag_snippet(r1, reg_add=base_reg)
-            if index_reg is not None:
-                asm += dift_add_reg_tag_snippet(r1, reg_add=index_reg)
-
-            asm += f"""
-                test {r1:8l}, {TAG_SECRET}
-                jz .L__kasper_check_tag_attacker{SYMBOL_SUFFIX} 
-            .L__kasper_tag_secret{SYMBOL_SUFFIX}:
-                {report_gadget_snippet(r2, "KASPER")}
-                jmp {check_ok_label}
-            .L__kasper_check_tag_attacker{SYMBOL_SUFFIX}:
-                test {r1:8l}, {TAG_ATTACKER}
-                jz {check_ok_label}
-                {asan_check_snippet(r2, access_size, check_ok_label,
-                                    r1=r1, r2=r3)}
-            .L__kasper_attacker_asan_check_fail{SYMBOL_SUFFIX}:
-                {report_gadget_snippet(r2, "SPECFUZZ_ASAN")}
-                or byte ptr dift_reg_tags+{reg_to_dift_reg_id(write_reg)}, {TAG_SECRET}
-            {check_ok_label}:
-                nop
-            """
-
-            asm = conditional_patch_wrapper(asm, conditional,
-                                            label_key="kasper",
-                                            skip_label_name=check_ok_label,
-                                            insert_skip_label=False)
-            return asm
-
-        return patch
 
     @classmethod
     def __build_asan_patch(cls, inst: CsInsn, mem_operand_str: str, access_size: int, *,
