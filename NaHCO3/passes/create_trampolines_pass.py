@@ -63,7 +63,8 @@ class CreateTrampolinesPass(VisitorPassMixin):
 
             trampoline_block = self.__initialize_empty_code_block()
             self.rewriting_ctx.replace_at(trampoline_block, 0, 1, Patch.from_function(self.__build_trampoline_patch(
-                block.uuid, last_instruction.mnemonic, trampoline_target_symbol.name,
+                block.uuid, self.text_transient_mapping.code_blocks_map[block.uuid].uuid,
+                last_instruction.mnemonic, trampoline_target_symbol.name,
                 self.text_transient_mapping.symbols_map[next(branch_edge.target.references).uuid].name
             )))
 
@@ -74,12 +75,13 @@ class CreateTrampolinesPass(VisitorPassMixin):
             block.ir.cfg.update(edges)'''
 
     @staticmethod
-    def __build_trampoline_patch(block_uuid: UUID,
+    def __build_trampoline_patch(block_uuid: UUID, transient_block_uuid: UUID,
                                  mnemonic: str,
                                  conditional_target_symbol_name: str,
                                  non_conditional_target_symbol_name: str):
         return patch_constraints(x86_syntax=X86Syntax.INTEL)(lambda ctx: f"""
         {generate_distinct_label_name(".__trampoline_", block_uuid)}:
+        {generate_distinct_label_name(".__trampoline_", transient_block_uuid)}:
             {mnemonic} {conditional_target_symbol_name}
             jmp {non_conditional_target_symbol_name}
         """)
