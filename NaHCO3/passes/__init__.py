@@ -1,17 +1,5 @@
-from .create_trampolines_pass import CreateTrampolinesPass
-from .import_symbols_pass import ImportSymbolsPass
+from .preprocessing import *
 
-from .asan_stack_pass import AsanStackPass
-from .debug_symbols_pass import DebugSymbolsPass
-from .dift_propagation_pass import DiftPropagationPass
-from .dift_propagation_llvm_pass import DiftPropagationLLVMPass
-from .dift_ext_call_pass import DiftExtCallPass
-from .text_initialize_library_pass import TextInitializeLibraryPass
-from .text_indirect_branch_transform_pass import TextIndirectBranchTransformPass
-from .text_insert_checkpoints_pass import TextInsertCheckpointsPass
-from .transient_coverage import TransientCoveragePass
-from .transient_memlog_pass import TransientMemlogPass
-from .transient_insert_restore_points_pass import TransientInsertRestorePointsPass
-from .transient_indirect_branch_check_dest_pass import TransientIndirectBranchCheckDestPass
-
-from .gadget_policy import GadgetPolicyFactory
+from .common import *
+from .text import *
+from .transient import *

@@ -54,8 +54,8 @@ pass_manager.add(TextInitializeLibraryPass(text_section))
 
 pass_manager.add(AsanStackPass(reg_manager, text_section, decoder, False))
 pass_manager.add(TextIndirectBranchTransformPass(text_section, text_transient_mapping, decoder))
-if enable_dift: pass_manager.add(DiftPropagationLLVMPass(reg_manager, text_section, decoder, False))
-pass_manager.add(TextInsertCheckpointsPass(reg_manager, text_section, decoder))
+if enable_dift: pass_manager.add(TextDiftPropagationLLVMPass(reg_manager, text_section, decoder, False))
+pass_manager.add(InsertCheckpointsPass(reg_manager, text_section, decoder))
 
 pass_manager.add(AsanStackPass(reg_manager, transient_section, decoder, True))
 pass_manager.add(TransientCoveragePass(reg_manager, transient_section, decoder, guard_section))
@@ -65,7 +65,7 @@ pass_manager.add(TransientMemlogPass(reg_manager, transient_section, decoder))
 pass_manager.add(TransientInsertRestorePointsPass(reg_manager, text_section, transient_section, decoder))
 pass_manager.add(TransientIndirectBranchCheckDestPass(reg_manager, transient_section, decoder,
                                                       transient_section_start_symbol, transient_section_end_symbol))
-pass_manager.add(TextInsertCheckpointsPass(reg_manager, transient_section, decoder))
+pass_manager.add(InsertCheckpointsPass(reg_manager, transient_section, decoder))
 pass_manager.run(ir)
 
 ir.save_protobuf(f"{out_name}.gtirb")

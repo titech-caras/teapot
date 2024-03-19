@@ -20,7 +20,7 @@ from NaHCO3.utils.rewriting import mem_access_to_symbolic_str
 from NaHCO3.passes import DiftPropagationPass
 
 
-class DiftPropagationLLVMPass(DiftPropagationPass):
+class TextDiftPropagationLLVMPass(DiftPropagationPass):
     DIFT_REG_TAGS_TYPE = "[48 x i8]"
     SCRATCHPAD_ARR_TYPE = f"[{SCRATCHPAD_SIZE // 8} x i64]"
     TAG_TYPE = "i8"

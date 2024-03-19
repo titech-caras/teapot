@@ -17,7 +17,7 @@ from NaHCO3.utils.misc import distinguish_edges, generate_distinct_label_name
 from NaHCO3.config import SYMBOL_SUFFIX, BLACKLIST_FUNCTION_NAMES
 
 
-class TextInsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
+class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
     reg_manager: LiveRegisterManager
     text_section: gtirb.Section
 
