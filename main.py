@@ -41,11 +41,15 @@ guard_section = gtirb.Section(name=".NaHCO3_guards", flags={gtirb.Section.Flag.R
                               module=module)
 guard_byte_interval = gtirb.ByteInterval(section=guard_section)
 
+branch_counter_section = gtirb.Section(name=".NaHCO3_branch_counters", flags={gtirb.Section.Flag.Readable, gtirb.Section.Flag.Writable},
+                              module=module)
+branch_counter_byte_interval = gtirb.ByteInterval(section=branch_counter_section)
+
 enable_dift = MODE in ('Kasper')
 
 pass_manager = PassManager()
 pass_manager.add(ImportSymbolsPass())
-pass_manager.add(CreateTrampolinesPass(text_section, trampoline_section, text_transient_mapping, decoder))
+pass_manager.add(CreateTrampolinesPass(text_section, trampoline_section, branch_counter_section, text_transient_mapping, decoder))
 if enable_dift: pass_manager.add(DiftExtCallPass(text_section))
 pass_manager.run(ir)
 

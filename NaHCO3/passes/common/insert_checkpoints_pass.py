@@ -70,6 +70,8 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                 mov checkpoint_target_metadata, {r}
                 lea {r}, [rip+.L__after_checkpoint{SYMBOL_SUFFIX}]
                 mov [checkpoint_target_metadata+8], {r}
+                lea {r}, [rip+{generate_distinct_label_name(".__branch_counter_", block_uuid)}]
+                mov [checkpoint_target_metadata+16], {r}
                 {epilogue}
                 jmp make_checkpoint
             .L__after_checkpoint{SYMBOL_SUFFIX}:
