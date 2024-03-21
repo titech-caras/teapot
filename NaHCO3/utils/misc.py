@@ -14,3 +14,9 @@ def distinguish_edges(edges: Iterable[gtirb.Edge]) -> Tuple[List[gtirb.Edge], Li
 def generate_distinct_label_name(prefix: str, uuid: UUID):
     return prefix + "_" + str(uuid).replace("-", "_") + SYMBOL_SUFFIX
 
+
+def get_or_insert_symbol(insert_name: str, payload: gtirb.CfgNode, module: gtirb.Module) -> gtirb.Symbol:
+    try:
+        return next(payload.references)
+    except StopIteration:
+        return gtirb.Symbol(name=insert_name, payload=payload, module=module)

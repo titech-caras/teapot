@@ -7,18 +7,6 @@ from capstone_gt.x86 import X86Op
 from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
 
 
-def initialize_empty_code_block(byte_interval: gtirb.ByteInterval):
-    byte_interval.contents += bytes([0x90])  # nop
-    byte_interval.size += 1
-
-    block = gtirb.CodeBlock(
-        size=1,
-        offset=byte_interval.size - 1,
-        byte_interval=byte_interval
-    )
-    return block
-
-
 def reconstruct_instruction_str(block: gtirb.CodeBlock, inst: CsInsn):
     operand_strs = []
     for op in inst.operands:
