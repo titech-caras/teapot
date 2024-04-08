@@ -29,8 +29,12 @@ CHECKPOINT_LIB_SYMBOLS = [
     "restore_checkpoint_EXT_LIB",
     "restore_checkpoint_MALFORMED_INDIRECT_BR",
 
-    "report_gadget_SPECFUZZ_ASAN",
-    "report_gadget_KASPER",
+    "report_gadget_SPECFUZZ_ASAN_READ",
+    "report_gadget_SPECFUZZ_ASAN_WRITE",
+    "report_gadget_SPECTAINT_BCB",
+    "report_gadget_KASPER_CACHE",
+    "report_gadget_KASPER_MDS",
+    "report_gadget_KASPER_PORT",
 
     "checkpoint_target_metadata",
     "memory_history_top",
@@ -69,8 +73,4 @@ DIFT_IGNORE_LIST = [
 
 TAG_ATTACKER = 1
 TAG_SECRET = 2
-
-#MODE = "SpecFuzz"
-MODE = "Kasper"
-
-assert MODE in ("SpecFuzz", "Kasper")
+TAG_SECRET_NON_CONTROLLED = 4

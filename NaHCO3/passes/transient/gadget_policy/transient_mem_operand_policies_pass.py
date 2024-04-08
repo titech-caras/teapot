@@ -14,7 +14,7 @@ from capstone_gt.x86 import X86OpMem, X86_REG_INVALID, X86_REG_RSP, X86_REG_RIP,
 from typing import List, Set, Optional
 import itertools
 
-from NaHCO3.config import SYMBOL_SUFFIX, MODE, TAG_ATTACKER, TAG_SECRET
+from NaHCO3.config import SYMBOL_SUFFIX, TAG_ATTACKER, TAG_SECRET, TAG_SECRET_NON_CONTROLLED
 from NaHCO3.passes.mixins import InstVisitorPassMixin
 from NaHCO3.patch_helpers import (asan_check_snippet, dift_add_reg_tag_snippet, conditional_patch_wrapper,
                                   report_gadget_snippet)
@@ -22,7 +22,7 @@ from NaHCO3.utils.rewriting import mem_access_to_symbolic_str, get_cmov_conditio
 from NaHCO3.utils.dift import reg_to_dift_reg_id
 
 
-class TransientKasperPolicyPass(InstVisitorPassMixin):
+class TransientMemOperandPoliciesPass(InstVisitorPassMixin):
     transient_section: gtirb.Section
 
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
@@ -45,6 +45,11 @@ class TransientKasperPolicyPass(InstVisitorPassMixin):
         if mem_operand is None:
             return
 
+        write_operand = next(iter(x for x in inst.operands if x.access & CS_AC_WRITE), None)
+        if write_operand is None:
+            return
+        is_mem_write = write_operand == mem_operand
+
         if mem_operand.mem.base in (X86_REG_INVALID, X86_REG_RIP) and \
                 mem_operand.mem.index == capstone_gt.x86.X86_REG_INVALID:
             return
@@ -55,25 +60,28 @@ class TransientKasperPolicyPass(InstVisitorPassMixin):
         # Handle conditional moves
         conditional = get_cmov_conditional(inst)
 
-        write_operand = next(iter(x for x in inst.operands if x.access & CS_AC_WRITE), None)
-        if write_operand == mem_operand or write_operand is None:
-            return
-        assert write_operand.type == CS_OP_REG
-
-        patch = self.__build_kasper_patch(inst, mem_operand_str, access_size,
-                                               conditional=conditional,
-                                               mem_operand=mem_operand.mem,
-                                               write_reg=self.reg_manager.abi.get_register(
-                                                   inst.reg_name(write_operand.reg)))
+        if not is_mem_write:
+            patch = self.__build_mem_read_policies_patch(
+                inst, mem_operand_str, access_size,
+                conditional=conditional, mem_operand=mem_operand.mem,
+                write_reg=self.reg_manager.abi.get_register(inst.reg_name(write_operand.reg)))
+        else:
+            patch = self.__build_mem_write_policies_patch(inst, mem_operand_str, access_size, conditional=conditional)
 
         self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
             self.reg_manager.allocate_registers(function, block, inst_idx)(patch)))
 
-    def __build_kasper_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
-                                  conditional: Optional[str] = None, mem_operand: X86OpMem, write_reg: Register):
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=3, clobbers_flags=True)
+    def __build_mem_read_policies_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
+                                        conditional: Optional[str] = None, mem_operand: X86OpMem, write_reg: Register):
+        scratch_registers = 4 if access_size < 8 else 3
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
-            r1, r2, r3 = ctx.scratch_registers
+            if access_size < 8:
+                r1, r2, r3, r4 = ctx.scratch_registers
+            else:
+                r1, r2, r3 = ctx.scratch_registers
+                r4 = None
+
             base_reg = self.reg_manager.abi.get_register(inst.reg_name(mem_operand.base)) \
                 if mem_operand.base != X86_REG_INVALID else None
             index_reg = self.reg_manager.abi.get_register(inst.reg_name(mem_operand.index)) \
@@ -92,27 +100,68 @@ class TransientKasperPolicyPass(InstVisitorPassMixin):
                 asm += dift_add_reg_tag_snippet(r1, reg_add=index_reg)
 
             asm += f"""
+                test {r1:8l}, {TAG_SECRET_NON_CONTROLLED}
+                jnz .L__tag_spectaint_secret{SYMBOL_SUFFIX}
                 test {r1:8l}, {TAG_SECRET}
-                jz .L__kasper_check_tag_attacker{SYMBOL_SUFFIX} 
-            .L__kasper_tag_secret{SYMBOL_SUFFIX}:
-                {report_gadget_snippet(r2, "KASPER")}
-                jmp {check_ok_label}
-            .L__kasper_check_tag_attacker{SYMBOL_SUFFIX}:
+                jz .L__asan_check{SYMBOL_SUFFIX}
+            .L__tag_secret{SYMBOL_SUFFIX}:
+                {report_gadget_snippet(r2, "KASPER_CACHE")}
+                jmp .L__asan_check{SYMBOL_SUFFIX}
+            .L__tag_spectaint_secret{SYMBOL_SUFFIX}:
+                {report_gadget_snippet(r2, "SPECTAINT_BCB")}
+            .L__asan_check{SYMBOL_SUFFIX}:
+                {asan_check_snippet(r2, access_size, check_ok_label, r1=r3, r2=r4)}
+            .L__asan_check_fail{SYMBOL_SUFFIX}:
                 test {r1:8l}, {TAG_ATTACKER}
-                jz {check_ok_label}
-                {asan_check_snippet(r2, access_size, check_ok_label,
-                                    r1=r1, r2=r3)}
-            .L__kasper_attacker_asan_check_fail{SYMBOL_SUFFIX}:
-                {report_gadget_snippet(r2, "SPECFUZZ_ASAN")}
+                jnz .L__asan_check_fail_attacker{SYMBOL_SUFFIX}
+            .L__asan_check_fail_non_attacker{SYMBOL_SUFFIX}:
+                {report_gadget_snippet(r2, "SPECFUZZ_ASAN_READ")}
+                or byte ptr dift_reg_tags+{reg_to_dift_reg_id(write_reg)}, {TAG_SECRET_NON_CONTROLLED}
+                jmp {check_ok_label}    
+            .L__asan_check_fail_attacker{SYMBOL_SUFFIX}:
+                {report_gadget_snippet(r2, "KASPER_MDS")}
                 or byte ptr dift_reg_tags+{reg_to_dift_reg_id(write_reg)}, {TAG_SECRET}
             {check_ok_label}:
                 nop
             """
 
             asm = conditional_patch_wrapper(asm, conditional,
-                                            label_key="kasper",
+                                            label_key="mem_read_policies",
                                             skip_label_name=check_ok_label,
                                             insert_skip_label=False)
+            return asm
+
+        return patch
+
+    @classmethod
+    def __build_mem_write_policies_patch(cls, inst: CsInsn, mem_operand_str: str, access_size: int, *,
+                                         conditional: Optional[str] = None):
+        scratch_registers = 3 if access_size < 8 else 2
+
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
+        def patch(ctx: InsertionContext):
+            if access_size < 8:
+                r1, r2, r3 = ctx.scratch_registers
+            else:
+                r1, r2 = ctx.scratch_registers
+                r3 = None
+
+            check_ok_label = f".L__asan_check_ok{SYMBOL_SUFFIX}"
+
+            asm = f"""
+                lea {r2}, {mem_operand_str}
+                {asan_check_snippet(r2, access_size, check_ok_label, r1=r1, r2=r3)}
+            .L__asan_check_fail{SYMBOL_SUFFIX}:
+                {report_gadget_snippet(r2, "SPECFUZZ_ASAN_WRITE")}
+            {check_ok_label}:
+                nop
+            """
+
+            asm = conditional_patch_wrapper(asm, conditional,
+                                            label_key="mem_write_policies",
+                                            skip_label_name=check_ok_label,
+                                            insert_skip_label=False)
+
             return asm
 
         return patch

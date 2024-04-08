@@ -14,7 +14,7 @@ from capstone_gt.x86 import X86OpMem, X86_REG_INVALID
 from typing import List, Set, Optional
 import itertools
 
-from NaHCO3.config import ASAN_SHADOW_OFFSET, SYMBOL_SUFFIX, MODE
+from NaHCO3.config import ASAN_SHADOW_OFFSET, SYMBOL_SUFFIX
 from NaHCO3.passes.mixins import InstVisitorPassMixin
 from NaHCO3.patch_helpers import asan_check_snippet, memlog_snippet, conditional_patch_wrapper
 from NaHCO3.utils.rewriting import (mem_access_to_symbolic_str, get_cmov_conditional,
