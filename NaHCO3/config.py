@@ -32,6 +32,7 @@ CHECKPOINT_LIB_SYMBOLS = [
     "report_gadget_SPECFUZZ_ASAN_READ",
     "report_gadget_SPECFUZZ_ASAN_WRITE",
     "report_gadget_SPECTAINT_BCB",
+    "report_gadget_SPECTAINT_BCBS",
     "report_gadget_KASPER_CACHE",
     "report_gadget_KASPER_MDS",
     "report_gadget_KASPER_PORT",
