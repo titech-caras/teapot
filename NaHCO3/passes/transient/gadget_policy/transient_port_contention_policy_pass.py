@@ -74,7 +74,7 @@ class TransientPortContentionPolicyPass(VisitorPassMixin, RegInstAwarePassMixin)
     def __build_patch(self, mem_read_operand_str: Optional[str], regs_read: List[Register]):
         scratch_registers = 2 if mem_read_operand_str else 1
 
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers)
+        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
             if mem_read_operand_str:
                 r1, r2 = ctx.scratch_registers
