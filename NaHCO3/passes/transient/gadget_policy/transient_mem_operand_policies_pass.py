@@ -1,5 +1,3 @@
-import random
-
 import capstone_gt.x86
 import gtirb
 from gtirb_functions import Function
@@ -87,7 +85,7 @@ class TransientMemOperandPoliciesPass(InstVisitorPassMixin):
             index_reg = self.reg_manager.abi.get_register(inst.reg_name(mem_operand.index)) \
                 if mem_operand.index != X86_REG_INVALID else None
 
-            check_ok_label = f".L__kasper_check_ok{SYMBOL_SUFFIX}"
+            check_ok_label = f".L__check_ok{SYMBOL_SUFFIX}"
 
             asm = f"""
                 lea {r2}, {mem_operand_str}

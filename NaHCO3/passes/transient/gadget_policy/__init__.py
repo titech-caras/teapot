@@ -1,1 +1,2 @@
 from .transient_mem_operand_policies_pass import TransientMemOperandPoliciesPass
+from .transient_port_contention_policy_pass import TransientPortContentionPolicyPass
