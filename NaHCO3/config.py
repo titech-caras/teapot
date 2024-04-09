@@ -69,6 +69,8 @@ DIFT_IGNORE_LIST = [
     "inflateInit2_", "inflateEnd",
     "crc32",
 
+    "getenv", # FIXME: whitelist only for now, needed for some experiments
+
     "sprintf", "__isoc99_sscanf"  # FIXME: these should actually be tainted
 ]
 
