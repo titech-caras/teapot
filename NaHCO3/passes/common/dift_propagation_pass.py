@@ -132,7 +132,7 @@ class DiftPropagationPass(InstVisitorPassMixin):
         elif mem_read_operand_str or mem_write_operand_str:
             scratch_registers = 3
         else:
-            scratch_registers = 1
+            scratch_registers = 2
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
@@ -144,8 +144,10 @@ class DiftPropagationPass(InstVisitorPassMixin):
                 r2, r3, r4 = ctx.scratch_registers
                 r1 = None
             else:
-                r4, = ctx.scratch_registers
-                r1, r2, r3 = None, None, None
+                r3, r4, = ctx.scratch_registers
+                r1, r2 = None, None
+
+            dift_done_label = f".L__dift_done{SYMBOL_SUFFIX}"
 
             asm = ""
 
@@ -190,7 +192,25 @@ class DiftPropagationPass(InstVisitorPassMixin):
                         add {r2}, 8
                     """
 
-            asm = conditional_patch_wrapper(asm, conditional, label_key="dift")
+            # Check if the memory operand policy pass requests a tag update
+            asm += f"""
+                cmp byte ptr dift_reg_queued_tag, 0
+                jz {dift_done_label}
+                
+                mov {r4:8l}, byte ptr dift_reg_queued_tag
+                movzx {r3}, byte ptr dift_reg_queued_id
+                or byte ptr [dift_reg_tags+{r3}], {r4:8l}
+                mov byte ptr dift_reg_queued_tag, 0
+                mov byte ptr dift_reg_queued_id, 0
+            """
+
+            asm += f"""
+            {dift_done_label}:
+                nop
+            """
+
+            asm = conditional_patch_wrapper(asm, conditional, label_key="dift",
+                                            skip_label_name=dift_done_label, insert_skip_label=False)
 
             return asm
 

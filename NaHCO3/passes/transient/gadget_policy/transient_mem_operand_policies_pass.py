@@ -115,11 +115,13 @@ class TransientMemOperandPoliciesPass(InstVisitorPassMixin):
                     jnz .L__asan_check_fail_attacker{SYMBOL_SUFFIX}
                 .L__asan_check_fail_non_attacker{SYMBOL_SUFFIX}:
                     {report_gadget_snippet(r2, "SPECFUZZ_ASAN_READ")}
-                    or byte ptr dift_reg_tags+{reg_to_dift_reg_id(write_reg)}, {TAG_SECRET_NON_CONTROLLED}
-                    jmp {check_ok_label}    
+                    mov byte ptr dift_reg_queued_tag, {TAG_SECRET_NON_CONTROLLED}
+                    mov byte ptr dift_reg_queued_id, {reg_to_dift_reg_id(write_reg)} 
+                    jmp {check_ok_label}
                 .L__asan_check_fail_attacker{SYMBOL_SUFFIX}:
                     {report_gadget_snippet(r2, "KASPER_MDS")}
-                    or byte ptr dift_reg_tags+{reg_to_dift_reg_id(write_reg)}, {TAG_SECRET}
+                    mov byte ptr dift_reg_queued_tag, {TAG_SECRET}
+                    mov byte ptr dift_reg_queued_id, {reg_to_dift_reg_id(write_reg)}
                 {check_ok_label}:
                     nop
                 """

@@ -45,6 +45,8 @@ CHECKPOINT_LIB_SYMBOLS = [
     "instruction_cnt",
 
     "dift_reg_tags",
+    "dift_reg_queued_tag",
+    "dift_reg_queued_id",
 
     "__sanitizer_cov_trace_pc",
     "__sanitizer_cov_trace_pc_guard",

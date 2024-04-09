@@ -21,6 +21,11 @@ from NaHCO3.passes import DiftPropagationPass
 
 
 class TextDiftPropagationLLVMPass(DiftPropagationPass):
+    """
+    LLVM optimized version of DIFT propagation, should only be used in the text section.
+    Does not support `dift_reg_queued_tag`. Though it shouldn't be necessary.
+    """
+
     DIFT_REG_TAGS_TYPE = "[48 x i8]"
     SCRATCHPAD_ARR_TYPE = f"[{SCRATCHPAD_SIZE // 8} x i64]"
     TAG_TYPE = "i8"
