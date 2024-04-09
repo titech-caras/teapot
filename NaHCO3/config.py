@@ -14,6 +14,7 @@ BLACKLIST_FUNCTION_NAMES = [
     "frame_dummy",
     "__libc_csu_init",
     "NaHCO3_setup",
+    "__teapot_specvariant_setup",
 ]
 
 CHECKPOINT_LIB_SYMBOLS = [
