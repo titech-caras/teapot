@@ -12,7 +12,7 @@ from capstone_gt.x86 import X86OpMem, X86_REG_INVALID, X86_REG_RSP, X86_REG_RIP,
 from typing import List, Set, Optional
 import itertools
 
-from NaHCO3.config import SYMBOL_SUFFIX, TAG_ATTACKER, TAG_SECRET, TAG_SECRET_SPECTAINT
+from NaHCO3.config import SYMBOL_SUFFIX, TAG_ATTACKER, TAG_ATTACKER_INDIRECT, TAG_SECRET, TAG_SECRET_INDIRECT
 from NaHCO3.passes.mixins import InstVisitorPassMixin
 from NaHCO3.patch_helpers import (asan_check_snippet, dift_add_reg_tag_snippet, conditional_patch_wrapper,
                                   report_gadget_snippet)
@@ -44,9 +44,8 @@ class TransientMemOperandPoliciesPass(InstVisitorPassMixin):
             return
 
         write_operand = next(iter(x for x in inst.operands if x.access & CS_AC_WRITE), None)
-        if write_operand is None:
+        if write_operand is None or write_operand == mem_operand:
             return
-        is_mem_write = write_operand == mem_operand
 
         if mem_operand.mem.base in (X86_REG_INVALID, X86_REG_RIP) and \
                 mem_operand.mem.index == capstone_gt.x86.X86_REG_INVALID:
@@ -60,16 +59,15 @@ class TransientMemOperandPoliciesPass(InstVisitorPassMixin):
 
         patch = self.__build_mem_policies_patch(
             inst, mem_operand_str, access_size,
-            is_mem_write=is_mem_write, conditional=conditional, mem_operand=mem_operand.mem,
-            write_reg=self.reg_manager.abi.get_register(inst.reg_name(write_operand.reg)) if not is_mem_write else None)
+            conditional=conditional, mem_operand=mem_operand.mem,
+            write_reg=self.reg_manager.abi.get_register(inst.reg_name(write_operand.reg)))
 
         self.rewriting_ctx.insert_at(block, inst_offset, Patch.from_function(
             self.reg_manager.allocate_registers(function, block, inst_idx)(patch)))
 
     def __build_mem_policies_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
-                                        is_mem_write: bool, conditional: Optional[str] = None,
-                                        mem_operand: X86OpMem, write_reg: Optional[Register]):
-        assert is_mem_write or write_reg
+                                   conditional: Optional[str] = None,
+                                   mem_operand: X86OpMem, write_reg: Optional[Register]):
         scratch_registers = 4 if access_size < 8 else 3
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
@@ -95,71 +93,48 @@ class TransientMemOperandPoliciesPass(InstVisitorPassMixin):
             if index_reg is not None:
                 asm += dift_add_reg_tag_snippet(r1, reg_add=index_reg)
 
-
             done_label = f".L__mem_operand_policy_done{SYMBOL_SUFFIX}"
-            if not is_mem_write:
-                # Secret Type          | Gadget Type
-                # TAG_SECRET           | KASPER_CACHE
-                # TAG_SECRET_SPECTAINT | SPECTAINT_BCB
+            # Secret Type          | Gadget Type
+            # TAG_SECRET           | KASPER_CACHE
+            # TAG_SECRET_INDIRECT  | KASPER_CACHE_INDIRECT
 
-                # Tag \ Asan   | No                   | Yes
-                # ---------------------------------------------------------
-                # None         |                      | SPECFUZZ_ASAN_READ
-                #              |                      |
-                # TAG_ATTACKER |                      | KASPER_MDS
-                #              | TAG_SECRET_SPECTAINT | TAG_SECRET
+            # Tag \ Asan            | No                   | Yes
+            # ---------------------------------------------------------------------
+            # None                  |                      |
+            #                       |                      | TAG_ATTACKER_INDIRECT
+            # TAG_ATTACKER          |                      | KASPER_MDS
+            #                       |                      | TAG_SECRET
+            # TAG_ATTACKER_INDIRECT |                KASPER_MDS
+            #                       |            TAG_SECRET_INDIRECT
 
-                asm += f"""
-                    test {r1:8l}, {TAG_SECRET_SPECTAINT}
-                    jnz .L__tag_spectaint_secret{SYMBOL_SUFFIX}
-                    test {r1:8l}, {TAG_SECRET}
-                    jz .L__asan_check{SYMBOL_SUFFIX}
-                .L__tag_secret{SYMBOL_SUFFIX}:
-                    {report_gadget_snippet(r2, "KASPER_CACHE")}
-                    jmp .L__asan_check{SYMBOL_SUFFIX}
-                .L__tag_spectaint_secret{SYMBOL_SUFFIX}:
-                    {report_gadget_snippet(r2, "SPECTAINT_BCB")}
-                .L__asan_check{SYMBOL_SUFFIX}:
-                    {asan_check_snippet(r2, access_size, f".L__asan_check_ok{SYMBOL_SUFFIX}", r1=r3, r2=r4)}
-                .L__asan_check_fail{SYMBOL_SUFFIX}:
-                    test {r1:8l}, {TAG_ATTACKER}
-                    jz .L__asan_check_fail_non_attacker{SYMBOL_SUFFIX}
-                .L__asan_check_fail_attacker{SYMBOL_SUFFIX}:
-                    {report_gadget_snippet(r2, "KASPER_MDS")}
-                    mov byte ptr dift_reg_queued_tag, {TAG_SECRET}
-                    mov byte ptr dift_reg_queued_id, {reg_to_dift_reg_id(write_reg)}
-                    jmp {done_label}
-                .L__asan_check_fail_non_attacker{SYMBOL_SUFFIX}:
-                    {report_gadget_snippet(r2, "SPECFUZZ_ASAN_READ")}
-                    jmp {done_label}
-                .L__asan_check_ok{SYMBOL_SUFFIX}:
-                    test {r1:8l}, {TAG_ATTACKER}
-                    jz {done_label}
-                .L__asan_check_ok_attacker{SYMBOL_SUFFIX}:
-                    mov byte ptr dift_reg_queued_tag, {TAG_SECRET_SPECTAINT}
-                    mov byte ptr dift_reg_queued_id, {reg_to_dift_reg_id(write_reg)}
-                {done_label}:
-                    nop
-                """
-            else:
-                # Tag \ Asan   | No | Yes
-                # ----------------------------------------
-                # None         |    | SPECFUZZ_ASAN_WRITE
-                # TAG_ATTACKER | SPECTAINT_BCBS
-
-                asm += f"""
-                    test {r1:8l}, {TAG_ATTACKER} 
-                    jz .L__asan_check_non_attacker{SYMBOL_SUFFIX}
-                .L__tag_attacker{SYMBOL_SUFFIX}:
-                    {report_gadget_snippet(r2, "SPECTAINT_BCBS")}
-                    jmp {done_label}
-                .L__asan_check_non_attacker{SYMBOL_SUFFIX}:
-                    {asan_check_snippet(r2, access_size, done_label, r1=r3, r2=r4)}
-                .L__asan_check_fail_non_attacker{SYMBOL_SUFFIX}:
-                    {report_gadget_snippet(r2, "SPECFUZZ_ASAN_WRITE")}
-                {done_label}:
-                    nop
-                """
+            asm += f"""
+                test {r1:8l}, {TAG_SECRET | TAG_SECRET_INDIRECT}
+                jz .L__attacker_tags_check{SYMBOL_SUFFIX}
+                {report_gadget_snippet("KASPER_CACHE", addr_reg=r2, tag_reg=r1)}
+                
+            .L__attacker_tags_check{SYMBOL_SUFFIX}:
+                test {r1:8l}, {TAG_ATTACKER_INDIRECT}
+                jz .L__asan_check{SYMBOL_SUFFIX}
+                {report_gadget_snippet("KASPER_MDS", addr_reg=r2, tag_reg=r1)}
+                or byte ptr dift_reg_queued_tag, {TAG_SECRET_INDIRECT}
+                mov byte ptr dift_reg_queued_id, {reg_to_dift_reg_id(write_reg)}
+            
+            .L__asan_check{SYMBOL_SUFFIX}:
+                {asan_check_snippet(r2, access_size, done_label, r1=r3, r2=r4)}
+            .L__asan_check_fail{SYMBOL_SUFFIX}:
+                test {r1:8l}, {TAG_ATTACKER}
+                jz .L__asan_check_fail_non_attacker{SYMBOL_SUFFIX}
+            .L__asan_check_fail_attacker{SYMBOL_SUFFIX}:
+                {report_gadget_snippet("KASPER_MDS", addr_reg=r2, tag_reg=r1)}
+                or byte ptr dift_reg_queued_tag, {TAG_SECRET}
+                mov byte ptr dift_reg_queued_id, {reg_to_dift_reg_id(write_reg)}
+                jmp {done_label}
+            .L__asan_check_fail_non_attacker{SYMBOL_SUFFIX}:
+                or byte ptr dift_reg_queued_tag, {TAG_ATTACKER_INDIRECT}
+                mov byte ptr dift_reg_queued_id, {reg_to_dift_reg_id(write_reg)}
+            {done_label}:
+                nop
+            """
 
             asm = conditional_patch_wrapper(asm, conditional,
                                             label_key="mem_read_policies",

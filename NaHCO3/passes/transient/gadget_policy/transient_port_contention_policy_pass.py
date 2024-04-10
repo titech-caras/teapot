@@ -12,7 +12,7 @@ from capstone_gt.x86 import X86_REG_EFLAGS
 from typing import List, Set, Optional
 import itertools
 
-from NaHCO3.config import SYMBOL_SUFFIX, TAG_ATTACKER, TAG_SECRET, TAG_SECRET_SPECTAINT
+from NaHCO3.config import SYMBOL_SUFFIX, TAG_ATTACKER, TAG_SECRET, TAG_SECRET_INDIRECT
 from NaHCO3.passes.mixins import VisitorPassMixin, RegInstAwarePassMixin
 from NaHCO3.patch_helpers import (asan_check_snippet, dift_add_reg_tag_snippet, conditional_patch_wrapper,
                                   report_gadget_snippet)
@@ -97,9 +97,9 @@ class TransientPortContentionPolicyPass(VisitorPassMixin, RegInstAwarePassMixin)
                 """
 
             asm += f"""
-                test {r1:8l}, {TAG_SECRET}
+                test {r1:8l}, {TAG_SECRET | TAG_SECRET_INDIRECT}
                 jz .L__check_ok{SYMBOL_SUFFIX} 
-                {report_gadget_snippet(None, "KASPER_PORT")}
+                {report_gadget_snippet("KASPER_PORT", tag_reg=r1)}
             .L__check_ok{SYMBOL_SUFFIX}:
                 nop
             """

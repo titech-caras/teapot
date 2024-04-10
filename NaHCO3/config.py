@@ -77,6 +77,8 @@ DIFT_IGNORE_LIST = [
     "sprintf", "__isoc99_sscanf"  # FIXME: these should actually be tainted
 ]
 
-TAG_ATTACKER = 1
-TAG_SECRET = 2
-TAG_SECRET_SPECTAINT = 4
+TAG_ATTACKER = (1 << 0)
+TAG_ATTACKER_INDIRECT = (1 << 1)
+
+TAG_SECRET = (1 << 4)
+TAG_SECRET_INDIRECT = (1 << 5)
