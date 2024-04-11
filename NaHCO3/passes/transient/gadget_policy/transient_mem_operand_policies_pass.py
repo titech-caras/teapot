@@ -94,10 +94,6 @@ class TransientMemOperandPoliciesPass(InstVisitorPassMixin):
                 asm += dift_add_reg_tag_snippet(r1, reg_add=index_reg)
 
             done_label = f".L__mem_operand_policy_done{SYMBOL_SUFFIX}"
-            # Secret Type          | Gadget Type
-            # TAG_SECRET           | KASPER_CACHE
-            # TAG_SECRET_INDIRECT  | KASPER_CACHE_INDIRECT
-
             # Tag \ Asan            | No                   | Yes
             # ---------------------------------------------------------------------
             # None                  |                      |
@@ -137,7 +133,7 @@ class TransientMemOperandPoliciesPass(InstVisitorPassMixin):
             """
 
             asm = conditional_patch_wrapper(asm, conditional,
-                                            label_key="mem_read_policies",
+                                            label_key="mem_operand_policies",
                                             skip_label_name=done_label,
                                             insert_skip_label=False)
             return asm
