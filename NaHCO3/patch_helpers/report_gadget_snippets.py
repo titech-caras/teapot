@@ -10,7 +10,7 @@ def report_gadget_snippet(gadget_type: str, *,
                           tag_reg: Optional[Register] = None):
     return f"""
         mov old_rsp, rsp
-        lea rsp, scratchpad+{SCRATCHPAD_SIZE - 24}
+        lea rsp, scratchpad+{SCRATCHPAD_SIZE - 32}
         mov scratchpad, rsi
         mov scratchpad+8, rdi
         mov scratchpad+16, r8
