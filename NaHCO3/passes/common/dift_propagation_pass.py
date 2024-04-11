@@ -193,16 +193,17 @@ class DiftPropagationPass(InstVisitorPassMixin):
                     """
 
             # Check if the memory operand policy pass requests a tag update
-            asm += f"""
-                cmp byte ptr dift_reg_queued_tag, 0
-                jz {dift_done_label}
-                
-                mov {r4:8l}, byte ptr dift_reg_queued_tag
-                movzx {r3}, byte ptr dift_reg_queued_id
-                or byte ptr [dift_reg_tags+{r3}], {r4:8l}
-                mov byte ptr dift_reg_queued_tag, 0
-                mov byte ptr dift_reg_queued_id, 0
-            """
+            if mem_read_operand_str:
+                asm += f"""
+                    cmp byte ptr dift_reg_queued_tag, 0
+                    jz {dift_done_label}
+                    
+                    mov {r4:8l}, byte ptr dift_reg_queued_tag
+                    movzx {r3}, byte ptr dift_reg_queued_id
+                    or byte ptr [dift_reg_tags+{r3}], {r4:8l}
+                    mov byte ptr dift_reg_queued_tag, 0
+                    mov byte ptr dift_reg_queued_id, 0
+                """
 
             asm += f"""
             {dift_done_label}:
