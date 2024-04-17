@@ -13,7 +13,7 @@ def report_gadget_snippet(gadget_type: str, *,
         lea rsp, scratchpad+{SCRATCHPAD_SIZE - 32}
         mov scratchpad, rsi
         mov scratchpad+8, rdi
-        mov scratchpad+16, r8
+        mov scratchpad+16, rdx
         mov rsi, {addr_reg if addr_reg else "0"}
         mov rdx, {tag_reg if tag_reg else "0"}
         lea rdi, [rip]
