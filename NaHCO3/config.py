@@ -66,6 +66,7 @@ DIFT_IGNORE_LIST = [
     "readdir", "closedir", "opendir",
     "malloc", "free", "realloc",
     "strcmp", "strncmp", "strchr", "strrchr", "strerror", "memchr", "memcmp", "qsort", "strspn", "strcspn",
+    "strcasecmp", "strncasecmp",
     "__ctype_b_loc", "__ctype_tolower_loc", "__ctype_toupper_loc",
     "abort", "__assert_fail", "exit", "__errno_location", "__xstat", "__stack_chk_fail", "__cxa_atexit", "gai_strerror",
     "__xpg_strerror_r", "mmap", "mprotect", "mlock", "madvise", "munmap",
