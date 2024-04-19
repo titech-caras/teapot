@@ -85,7 +85,7 @@ class TransientMemOperandPoliciesPass(InstVisitorPassMixin):
 
             asm = f"""
                 lea {r2}, {mem_operand_str}
-                xor {r1:8l}, {r1:8l}
+                xor {r1}, {r1}
             """
 
             if base_reg is not None:
