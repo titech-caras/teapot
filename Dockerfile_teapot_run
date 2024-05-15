@@ -1,0 +1,23 @@
+FROM ubuntu:22.04
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Tokyo \
+    apt-get -y -qq install \
+    build-essential gcc llvm clang vim git nano sudo libasan8 \
+    tmux htop make cmake \
+    libz-dev binutils-dev libunwind-dev libblocksruntime-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG UNAME
+ARG GNAME
+ARG UID
+ARG GID
+RUN groupadd -g $GID -o $GNAME
+RUN useradd -m -u $UID -g $GID -o -s /bin/bash $UNAME && echo "$UNAME:U6aMy0wojraho" | chpasswd -e && usermod -aG sudo $UNAME
+
+USER $UNAME
+
+WORKDIR /home/$UNAME
+
+CMD /bin/bash
