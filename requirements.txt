@@ -1,0 +1,7 @@
+gtirb
+gtirb-rewriting
+gtirb-functions
+git+https://github.com/GrammaTech/gtirb-capstone.git@master
+gtirb-live-register-analysis
+llvmlite
+pyelftools
