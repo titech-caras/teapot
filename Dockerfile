@@ -1,20 +1,26 @@
-FROM grammatech/ddisasm:latest
+FROM ddisasm:latest
 
-RUN apt-get update && apt-get install -y python3 python3-pip git vim nano sudo
+ENV DEBIAN_FRONTEND noninteractive
+ENV ASAN_OPTIONS detect_leaks=0:verify_asan_link_order=false
 
-RUN pip3 install llvmlite
+ADD ./* /tmp/teapot-src
+ADD ./scripts /teapot-scripts
 
-RUN pip3 install gtirb gtirb-rewriting gtirb-functions
+RUN apt-get update && \
+    apt-get -y install \
+    python3 python3-pip \
+    build-essential make cmake gcc llvm clang libasan8 \
+    binutils-dev libunwind-dev libblocksruntime-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install latest gtirb-capstone from GitHub
-RUN pip3 install git+https://github.com/GrammaTech/gtirb-capstone.git@master
+RUN python3 -m pip install -e /tmp/teapot-src
 
-RUN pip3 install gtirb-live-register-analysis
+RUN mkdir /tmp/libcheckpoint_build && \
+    cmake --build /tmp/teapot-src/libcheckpoint_x64 -B/tmp/libcheckpoint_build --config Release --target install
 
-RUN pip3 install pyelftools
+RUN make -C /tmp/teapot-src/honggfuzz install
 
-RUN useradd --uid 1000 lin
+RUN rm -rf /tmp/teapot-src
 
-USER lin
-WORKDIR /workspace
-
+RUN mkdir /workdir
+WORKDIR /workdir

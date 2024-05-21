@@ -1,0 +1,7 @@
+gtirb>=2.0.0
+gtirb-rewriting>=0.2.0
+gtirb-functions>=1.0.9
+gtirb-capstone @ git+https://github.com/GrammaTech/gtirb-capstone.git@master
+gtirb-live-register-analysis
+llvmlite>=0.41.0
+pyelftools>=0.31
