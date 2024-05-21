@@ -1,8 +1,10 @@
 FROM ddisasm:latest
 
 ENV DEBIAN_FRONTEND noninteractive
+ENV ASAN_OPTIONS detect_leaks=0:verify_asan_link_order=false
 
 ADD ./* /tmp/teapot-src
+ADD ./scripts /teapot-scripts
 
 RUN apt-get update && \
     apt-get -y install \
