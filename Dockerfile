@@ -1,26 +1,28 @@
-FROM ddisasm:latest
+FROM grammatech/ddisasm:latest
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV ASAN_OPTIONS detect_leaks=0:verify_asan_link_order=false
 
-ADD ./* /tmp/teapot-src
-ADD ./scripts /teapot-scripts
-
 RUN apt-get update && \
     apt-get -y install \
     python3 python3-pip \
-    build-essential make cmake gcc llvm clang libasan8 \
+    build-essential make cmake gcc llvm clang git \
     binutils-dev libunwind-dev libblocksruntime-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install -e /tmp/teapot-src
+ADD ./ /tmp/teapot
+ADD ./scripts /teapot-scripts
 
-RUN mkdir /tmp/libcheckpoint_build && \
-    cmake --build /tmp/teapot-src/libcheckpoint_x64 -B/tmp/libcheckpoint_build --config Release --target install
+RUN python3 -m pip install /tmp/teapot
 
-RUN make -C /tmp/teapot-src/honggfuzz install
+RUN cd /tmp/teapot/libcheckpoint_x64 && \
+    cmake -DCMAKE_BUILD_TYPE=Release . && \
+    make && make install
 
-RUN rm -rf /tmp/teapot-src
+RUN cd /tmp/teapot/honggfuzz && make && make install && \
+    cp /tmp/teapot/honggfuzz/libhfuzz/libhfuzz.so /usr/local/lib
+
+RUN rm -rf /tmp/teapot
 
 RUN mkdir /workdir
 WORKDIR /workdir
