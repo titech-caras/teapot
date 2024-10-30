@@ -9,7 +9,6 @@ The submodule `libcheckpoint_x64` contains the runtime library.
 ## Notes on Anonymous Repository
 
 As this repository was anonymized, the `libcheckpoint_x64` submodule can be accessed [here](https://anonymous.4open.science/r/libcheckpoint_x64-C810).
-(The link inside the paper is broken for various reasons :( so please use this one.)
 
 ## Notes on naming
 
@@ -39,7 +38,8 @@ Note that newer `libasan` versions cause failures in DIFT initialization
 This is because the heap start address with ASan enabled was changed in 
 [this commit](https://github.com/llvm/llvm-project/commit/fb77ca05ffb4f8e666878f2f6718a9fb4d686839).
 
-Using the provided Dockerfile is an easy way to quickly test Teapot.
+Using the provided Dockerfile is an easy way to quickly test Teapot,
+which contains all the necessary dependencies.
 
 ## Usage
 
@@ -55,6 +55,7 @@ teapot a.out.gtirb a.inst.gtirb
 
 3. Dump the assembly of the instrumented GTIRB file. 
 Then, apply a sedscript to the assembly file due to limitations of `gtirb-pprinter`.
+If using the provided Dockerfile, the script is available at `/teapot-scripts/fix_asm.sed`.
 ```shell
 gtirb-pprinter --ir a.inst.gtirb --asm a.inst.S
 sed -i -f scripts/fix_asm.sed a.inst.S 
@@ -62,15 +63,26 @@ sed -i -f scripts/fix_asm.sed a.inst.S
 
 4. Recompile the instrumented assembly file.
 ```shell
-gcc -no-pie -nostartfiles -lcheckpoint_x64 -lhfuzz -lasan -o a.inst a.inst.S
+gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint_x64 -lhfuzz -lasan
 ```
+Note: the builtin DIFT support library currently also requires `-lm` and `-lz` 
+due to dependencies in tested applications, even if it is not used in the instrumented program.
+We intend to eventually decouple this so that linking to these libraries even unused is not necessary.
 
 5. The usage of ASan in the instrumented binary makes it unhappy, 
 so set some environment variables to silence it.
+This is preset in the provided Dockerfile.
 ```shell
 export ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=false
 ```
 
-6. The program can be executed, and it provides information the Spectre gadgets found to `stderr`.
+6. The program can be executed, and it provides information the Spectre gadgets found to `stderr` in CSV format.
 Alternatively, the program can be tested with a fuzzer.
-
+```shell
+$ ./a.inst input.txt
+[NaHCO3], Gadget Type, Gadget Address, Mem Access Address, Tag, Instruction Counter, Checkpoint Addresses
+[NaHCO3], 41 KASPER_MDS, 0x413a43, 0x603000000068, 0x207bc601, 149, 0x41381c, 0x409c56, 0x40b093, 0x409e54, 0x412c48, 0x401566,
+[NaHCO3], 42 KASPER_CACHE, 0x413b2b, 0x1f81b610, 0x11, 149, 0x41381c, 0x409c56, 0x40b093, 0x409e54, 0x412c48, 0x401566,
+[NaHCO3], 41 KASPER_MDS, 0x41416f, 0x603000000068, 0x207bc601, 153, 0x413f4d, 0x409c56, 0x40b093, 0x409e54, 0x412c48, 0x401566,
+[NaHCO3], 42 KASPER_CACHE, 0x414257, 0x1f81b610, 0x11, 153, 0x413f4d, 0x409c56, 0x40b093, 0x409e54, 0x412c48, 0x401566,
+```
