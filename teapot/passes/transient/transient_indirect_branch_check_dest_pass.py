@@ -45,7 +45,7 @@ class TransientIndirectBranchCheckDestPass(VisitorPassMixin, RegInstAwarePassMix
             instructions = list(self.decoder.get_instructions(block))
             last_inst = instructions[-1]
 
-            if last_inst.mnemonic == "ret":
+            if non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Return:
                 operand_str = "[rsp]"
             else:
                 dest_operand = last_inst.operands[0]
