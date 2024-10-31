@@ -24,5 +24,5 @@ RUN cd /tmp/teapot/honggfuzz && make && make install && \
 
 RUN rm -rf /tmp/teapot
 
-RUN mkdir /workdir
-WORKDIR /workdir
+RUN mkdir /workspace
+WORKDIR /workspace

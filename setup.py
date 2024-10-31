@@ -11,6 +11,6 @@ setup(
     platforms='any',
     install_requires=REQUIREMENTS,
     entry_points={
-        'console_scripts': ['teapot=NaHCO3.cmdline:main'],
+        'console_scripts': ['teapot=teapot.cmdline:main'],
     }
 )
