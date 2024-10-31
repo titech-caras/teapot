@@ -10,11 +10,6 @@ The submodule `libcheckpoint_x64` contains the runtime library.
 
 As this repository was anonymized, the `libcheckpoint_x64` submodule can be accessed [here](https://anonymous.4open.science/r/libcheckpoint_x64-C810).
 
-## Notes on naming
-
-Teapot was codenamed teapot in its development.
-We are currently in the process of migrating the code to match the names described in the paper.
-
 ## Requirements
 
 Teapot static rewriter requires a Python version between 3.8 and 3.10.
