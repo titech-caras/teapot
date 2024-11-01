@@ -45,6 +45,6 @@ This instruction is merely a workaround of `ret`, and is supposed to modify exac
 
 Please open an issue if these warnings do lead to binaries crashing or major gadgets going undetected.
 
-**Warning during recompilation of instrumented binary: `Warning: segment override on `lea' is ineffectual`**
+**Warning during recompilation of instrumented binary: `Warning: segment override on 'lea' is ineffectual`**
 
 This warning is safe to ignore.
