@@ -13,7 +13,7 @@ We could not display a progress bar since it is difficult to track the GTIRB int
 Check AddressSanitizer (ASan) version in the system; it may be too new for Teapot to function (see [README.md](https://github.com/lin-toto/teapot/blob/main/README.md)).
 Alternatively, download an old version of `libasan.so` and `LD_PRELOAD` it into the instrumented binary.
 
-**Linker error "undefined reference to 'xxxyyy__dift_wrapper__'"**
+**Linker error `undefined reference to 'xxxyyy__dift_wrapper__'`**
 
 Teapot DIFT does not yet support this external library function.
 Teapot currently only provides DIFT support for the external library functions used by the programs in [teapot-testcases](https://github.com/lin-toto/teapot-testcases/).
