@@ -10,16 +10,16 @@ We could not display a progress bar since it is difficult to track the GTIRB int
 
 **Execution of instrumented binary fails with `Map address 0x400000000000 failed: Address already in use`**
 
-Solution: check AddressSanitizer (ASan) version in the system; it may be too new for Teapot to function (see [README.md](https://github.com/lin-toto/teapot/blob/main/README.md)).
+Check AddressSanitizer (ASan) version in the system; it may be too new for Teapot to function (see [README.md](https://github.com/lin-toto/teapot/blob/main/README.md)).
 Alternatively, download an old version of `libasan.so` and `LD_PRELOAD` it into the instrumented binary.
 
 **Linker error "undefined reference to 'xxxyyy__dift_wrapper__'"**
 
-Solution: Teapot DIFT does not yet support this external library function.
-Teapot currently only provides DIFT support for the external library functions used by the programs in [https://github.com/lin-toto/teapot-testcases/](teapot-testcases).
+Teapot DIFT does not yet support this external library function.
+Teapot currently only provides DIFT support for the external library functions used by the programs in [teapot-testcases](https://github.com/lin-toto/teapot-testcases/).
 If this error occurs, create a DIFT wrapper for the missing function in `libcheckpoint_x64/dift_wrappers.c`, and recompile `libcheckpoint_x64`.
 
-Note that even for the programs in [https://github.com/lin-toto/teapot-testcases/](teapot-testcases), the compiler may sometimes optimize the library calls into DIFT unsupported functions.
+Note that even for the programs in [teapot-testcases](https://github.com/lin-toto/teapot-testcases/), the compiler may sometimes optimize the library calls into DIFT unsupported functions.
 Similarly, in this case, a DIFT wrapper also needs to be implemented.
 
 **Warnings during instrumentation**
