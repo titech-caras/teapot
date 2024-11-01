@@ -2,6 +2,12 @@
 
 Common issues when executing Teapot and instrumented binaries are collected here.
 
+**Instrumentation stuck at InsertCheckpointsPass 100%**
+
+`InsertCheckpointsPass` is the last Teapot instrumentation pass, and from here we hand the control to GTIRB to apply the calculated instrumentations on the binary.
+This may look like Teapot is frozen, but GTIRB is in fact still working to apply the instrumentation, and this can sometimes take a very long time.
+We could not display a progress bar since it is difficult to track the GTIRB internals.
+
 **Execution of instrumented binary fails with `Map address 0x400000000000 failed: Address already in use`**
 
 Solution: check AddressSanitizer (ASan) version in the system; it may be too new for Teapot to function (see [README.md](https://github.com/lin-toto/teapot/blob/main/README.md)).
