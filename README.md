@@ -6,10 +6,6 @@ described in the paper "Efficiently Uncovering Spectre Gadgets in COTS Binaries 
 This repository contains the Teapot binary rewriter. 
 The submodule `libcheckpoint_x64` contains the runtime library.
 
-## Notes on Anonymous Repository
-
-As this repository was anonymized, the `libcheckpoint_x64` submodule can be accessed [here](https://anonymous.4open.science/r/libcheckpoint_x64-C810).
-
 ## Requirements
 
 Teapot static rewriter requires a Python version between 3.8 and 3.10.
@@ -81,3 +77,7 @@ $ ./a.inst input.txt
 [teapot], 41 KASPER_MDS, 0x41416f, 0x603000000068, 0x207bc601, 153, 0x413f4d, 0x409c56, 0x40b093, 0x409e54, 0x412c48, 0x401566,
 [teapot], 42 KASPER_CACHE, 0x414257, 0x1f81b610, 0x11, 153, 0x413f4d, 0x409c56, 0x40b093, 0x409e54, 0x412c48, 0x401566,
 ```
+
+## Troubleshooting
+
+See [TROUBLESHOOTING.md](https://github.com/lin-toto/teapot/blob/main/TROUBLESHOOTING.md) for common issues.
