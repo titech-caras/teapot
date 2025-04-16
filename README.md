@@ -3,6 +3,8 @@
 Teapot is a static binary rewriting & dynamic fuzzing based Spectre gadget detector, 
 described in the paper "Teapot: Efficiently Uncovering Spectre Gadgets in COTS Binaries" in [CGO 2025](https://dl.acm.org/doi/10.1145/3696443.3708936).
 
+[Listen to Teapot on suno.ai!](https://suno.com/song/907f1bb5-ad72-4a9f-9e08-053d121c696c)
+
 This repository contains the Teapot binary rewriter. 
 The submodule `libcheckpoint_x64` contains the runtime library.
 
