@@ -1,0 +1,257 @@
+import re
+from typing import Optional
+from uuid import UUID
+
+import gtirb
+from gtirb_live_register_analysis.manager import NotEnoughFreeRegistersException
+
+from teapot.configs.runtime import SYMBOL_SUFFIX
+from teapot.utils.misc import generate_distinct_label_name
+
+
+class RISCV64ControlFlowPatchesMixin:
+    def adjust_insertion_offset(self, block: gtirb.CodeBlock, offset: int, decoder) -> int:
+        if offset != 0 or block.byte_interval is None:
+            return offset
+
+        instructions = list(decoder.get_instructions(block))
+        if not instructions or instructions[0].mnemonic != "auipc":
+            return offset
+
+        symbolic = block.byte_interval.symbolic_expressions.get(block.offset)
+        if not isinstance(symbolic, gtirb.SymAddrConst):
+            return offset
+
+        attrs = symbolic.attributes
+        if (
+            gtirb.SymbolicExpression.Attribute.PCREL in attrs and
+            gtirb.SymbolicExpression.Attribute.HI in attrs
+        ):
+            return instructions[0].size
+        return offset
+
+    @staticmethod
+    def retarget_last_operand(mnemonic: str, op_str: str, target_symbol_name: str) -> str:
+        if mnemonic.startswith("c."):
+            mnemonic = mnemonic[2:]
+
+        operands = [operand.strip() for operand in op_str.split(",") if operand.strip()]
+        if not operands:
+            return f"{mnemonic} {target_symbol_name}"
+
+        operands[-1] = target_symbol_name
+        return f"{mnemonic} {', '.join(operands)}"
+
+    @classmethod
+    def materialize_target(cls, target_reg: str, operand_str: str) -> str:
+        operand = operand_str.strip()
+        mem = re.match(r"^(-?(?:0x[0-9a-fA-F]+|\d+))\(([^()]+)\)$", operand)
+        if mem:
+            offset = int(mem.group(1), 0)
+            base = mem.group(2).strip()
+            return cls.add_constant_from_base(target_reg, base, target_reg, offset)
+
+        return f"mv {target_reg}, {operand}"
+
+    def trampoline_patch(self, block_uuid: UUID, transient_block_uuid: UUID, mnemonic: str, op_str: str,
+                         conditional_target_symbol_name: str, non_conditional_target_symbol_name: str,
+                         use_long_jumps: bool = False, jump_register: str = None,
+                         conditional_jump_register: str = None, non_conditional_jump_register: str = None,
+                         conditional_use_long_jump: bool = None, non_conditional_use_long_jump: bool = None,
+                         preserve_jump_registers_with_landing: bool = False):
+        conditional_taken = generate_distinct_label_name(".__trampoline_taken_", block_uuid)
+        conditional_branch = self.retarget_last_operand(mnemonic, op_str, conditional_taken)
+        conditional_use_long_jump = use_long_jumps if conditional_use_long_jump is None else conditional_use_long_jump
+        non_conditional_use_long_jump = (
+            use_long_jumps if non_conditional_use_long_jump is None else non_conditional_use_long_jump)
+        conditional_needs_allocated_register = conditional_use_long_jump and conditional_jump_register is None
+        non_conditional_needs_allocated_register = (
+            non_conditional_use_long_jump and non_conditional_jump_register is None)
+        needs_allocated_jump_register = (
+            jump_register is None and
+            (conditional_needs_allocated_register or non_conditional_needs_allocated_register)
+        )
+
+        @self.constraints(scratch_registers=1 if needs_allocated_jump_register else 0)
+        def patch(ctx):
+            allocated_jump_reg = jump_register
+            if needs_allocated_jump_register:
+                allocated_jump_reg = self.register_name(ctx.scratch_registers[0])
+            conditional_reg = conditional_jump_register or allocated_jump_reg
+            non_conditional_reg = non_conditional_jump_register or allocated_jump_reg
+            non_conditional_jump = (
+                self.jump_symbol_with_first_spill_restore(non_conditional_target_symbol_name, non_conditional_reg)
+                if non_conditional_use_long_jump and preserve_jump_registers_with_landing else
+                self.jump_symbol(non_conditional_target_symbol_name, non_conditional_reg)
+                if non_conditional_use_long_jump else f"j {non_conditional_target_symbol_name}"
+            )
+            conditional_jump = (
+                self.jump_symbol_with_first_spill_restore(conditional_target_symbol_name, conditional_reg)
+                if conditional_use_long_jump and preserve_jump_registers_with_landing else
+                self.jump_symbol(conditional_target_symbol_name, conditional_reg)
+                if conditional_use_long_jump else f"j {conditional_target_symbol_name}"
+            )
+            return f"""
+        {generate_distinct_label_name(".__trampoline_landing_", block_uuid)}:
+            {self.load_address("t0", "checkpoint_target_metadata")}
+            ld t0, {self.CHECKPOINT_TARGET_SCRATCH_REG_ADDR}(t0)
+        {generate_distinct_label_name(".__trampoline_", block_uuid)}:
+        {generate_distinct_label_name(".__trampoline_", transient_block_uuid)}:
+            {conditional_branch}
+            {non_conditional_jump}
+        {conditional_taken}:
+            {conditional_jump}
+        """
+
+        return patch
+
+    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, use_long_jump: bool = False,
+                                     jump_register: str = None, restore_before_jump: bool = True):
+        @self.constraints(scratch_registers=1 if use_long_jump and jump_register is None else 0)
+        def patch(ctx):
+            jump_reg = jump_register
+            if use_long_jump and jump_reg is None:
+                jump_reg = self.register_name(ctx.scratch_registers[0])
+            target_name = target_symbol.name if hasattr(target_symbol, "name") else str(target_symbol)
+            target_jump = self.jump_symbol(target_name, jump_reg) if use_long_jump else f"j {target_name}"
+            checkpoint_taken = f"""
+                {self.restore_regs_from_first_spill(self.FIRST_SPILL_T0_T1)}
+                {target_jump}
+            """ if restore_before_jump else self.jump_symbol_with_first_spill_restore(
+                target_name, jump_reg, already_saved=True)
+            return f"""
+                .word 0x{self.MAGIC_WORDS[0]:08x}
+                .word 0x{self.MAGIC_WORDS[1]:08x}
+                {self.save_regs_to_first_spill(self.FIRST_SPILL_T0_T1)}
+                {self.load_address("t0", "checkpoint_cnt")}
+                ld t0, 0(t0)
+                beqz t0, .L__indbr_transform_done{SYMBOL_SUFFIX}
+                {checkpoint_taken}
+            .L__indbr_transform_done{SYMBOL_SUFFIX}:
+                {self.restore_regs_from_first_spill(self.FIRST_SPILL_T0_T1)}
+            """
+
+        return patch
+
+    def indirect_transform_uses_live_registers(self) -> bool:
+        return True
+
+    def indirect_transform_landing_pad_label(self, block_uuid: UUID):
+        return self.landing_pad_entry_label(block_uuid)
+
+    def indirect_transform_target_patch(self, target_symbol: gtirb.Symbol, *,
+                                       reg_manager=None, function=None, block=None, instruction_idx: int = 0,
+                                       landing_target_uuid=None, landing_pad_targets=None,
+                                       ensure_landing_pad_symbol=None):
+        if reg_manager is None:
+            return self.indirect_branch_target_patch(target_symbol)
+
+        patch = self.indirect_branch_target_patch(target_symbol, True)
+        try:
+            return reg_manager.allocate_registers(function, block, instruction_idx, False)(patch)
+        except NotEnoughFreeRegistersException:
+            target_uuid = landing_target_uuid or block.uuid
+            if landing_pad_targets is not None:
+                landing_pad_targets.add(target_uuid)
+            if ensure_landing_pad_symbol is not None:
+                ensure_landing_pad_symbol(target_uuid)
+            target_symbol_name = self.landing_pad_entry_label(target_uuid)
+            return self.indirect_branch_target_patch(
+                target_symbol_name, True, "t0", restore_before_jump=False)
+
+    def trampoline_target_names(self, fallthrough_target_symbol_name: str, branch_target_symbol_name: str, *,
+                                fallthrough_target_uuid: UUID, branch_target_uuid: UUID,
+                                landing_pad_targets=None):
+        if landing_pad_targets is not None:
+            landing_pad_targets.add(fallthrough_target_uuid)
+            landing_pad_targets.add(branch_target_uuid)
+        return (
+            self.landing_pad_entry_label(fallthrough_target_uuid),
+            self.landing_pad_entry_label(branch_target_uuid),
+            {
+                "use_long_jumps": True,
+                "jump_register": "t0",
+                "preserve_jump_registers_with_landing": True,
+            },
+        )
+
+    def indirect_branch_operand(self, edge_type, last_inst, block: gtirb.CodeBlock = None) -> Optional[str]:
+        if edge_type == gtirb.cfg.Edge.Type.Return or last_inst.mnemonic == "ret":
+            return "ra"
+
+        operands = [operand.strip() for operand in last_inst.op_str.split(",") if operand.strip()]
+        if last_inst.mnemonic in ("jr", "jalr"):
+            if len(operands) == 1:
+                return operands[0]
+            if len(operands) == 2:
+                return operands[1]
+            if len(operands) >= 3:
+                base, offset = operands[1], operands[2]
+                if offset in ("0", "0x0"):
+                    return base
+                return f"{offset}({base})"
+
+        if operands:
+            return operands[-1]
+        return None
+
+    def instruction_must_rollback(self, instruction) -> bool:
+        return instruction.mnemonic in {
+            "ecall", "ebreak", "fence", "fence.i", "sfence.vma",
+            "wfi", "sret", "mret", "uret",
+        }
+
+    def is_control_transfer_instruction(self, instruction) -> bool:
+        mnemonic = instruction.mnemonic
+        return (
+            mnemonic in {"call", "j", "jal", "jalr", "jr", "ret", "tail"} or
+            mnemonic.startswith("b") or
+            mnemonic in {"c.j", "c.jal", "c.jalr", "c.jr"} or
+            mnemonic.startswith("c.b")
+        )
+
+    def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
+                                    transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
+                                    text_end_symbol: gtirb.Symbol, use_scratch_registers: bool = True,
+                                    reads_registers=None):
+        @self.constraints(scratch_registers=3 if use_scratch_registers else 0,
+                          reads_registers=reads_registers or set())
+        def patch(ctx):
+            target_reg, temp_reg, magic_reg = ctx.scratch_registers[:3] if use_scratch_registers else (
+                "t0", "t1", "t2")
+            prologue = "" if use_scratch_registers else self.save_regs_to_first_spill(
+                self.FIRST_SPILL_T0_T1_T2)
+            success_epilogue = "" if use_scratch_registers else self.restore_regs_from_first_spill(
+                self.FIRST_SPILL_T0_T1_T2)
+            rollback_epilogue = "" if use_scratch_registers else self.restore_regs_from_first_spill(
+                self.FIRST_SPILL_T0_T1_T2)
+            rollback_reg = target_reg if use_scratch_registers else "t0"
+            return f"""
+                {prologue}
+                {self.materialize_target(target_reg, operand_str)}
+                {self.load_address(temp_reg, transient_start_symbol.name)}
+                bltu {target_reg}, {temp_reg}, 4f
+                {self.load_address(temp_reg, transient_end_symbol.name)}
+                bltu {target_reg}, {temp_reg}, 1f
+            4:
+                {self.load_address(temp_reg, text_start_symbol.name)}
+                bltu {target_reg}, {temp_reg}, 2f
+                {self.load_address(temp_reg, text_end_symbol.name)}
+                bgeu {target_reg}, {temp_reg}, 2f
+                lw {temp_reg}, 0({target_reg})
+                li {magic_reg}, 0x{self.MAGIC_WORDS[0]:08x}
+                bne {temp_reg}, {magic_reg}, 2f
+                lw {temp_reg}, 4({target_reg})
+                li {magic_reg}, 0x{self.MAGIC_WORDS[1]:08x}
+                bne {temp_reg}, {magic_reg}, 2f
+            1:
+                {success_epilogue}
+                j 3f
+            2:
+                {rollback_epilogue}
+                {self.jump_symbol("restore_checkpoint_MALFORMED_INDIRECT_BR", rollback_reg)}
+            3:
+                nop
+            """
+
+        return patch

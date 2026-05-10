@@ -5,7 +5,70 @@ import copy
 from typing import Tuple
 
 from teapot.datacls.copied_section_mapping import CopiedSectionMapping
-from teapot.config import SYMBOL_SUFFIX
+from teapot.configs.runtime import SYMBOL_SUFFIX
+
+
+SECTION_PROPERTIES_AUX_TYPE = "mapping<UUID,tuple<uint64_t,uint64_t>>"
+SHT_PROGBITS = 1
+SHF_WRITE = 0x1
+SHF_ALLOC = 0x2
+SHF_EXECINSTR = 0x4
+
+
+def set_elf_section_properties(section: gtirb.Section, sh_type: int, sh_flags: int):
+    if section.module is None:
+        return
+
+    if "sectionProperties" not in section.module.aux_data:
+        section.module.aux_data["sectionProperties"] = gtirb.AuxData({}, SECTION_PROPERTIES_AUX_TYPE)
+
+    section.module.aux_data["sectionProperties"].data[section] = (sh_type, sh_flags)
+
+
+def copy_elf_section_properties(source: gtirb.Section, target: gtirb.Section):
+    if source.module is None or "sectionProperties" not in source.module.aux_data:
+        return
+
+    source_properties = source.module.aux_data["sectionProperties"].data.get(source)
+    if source_properties is not None:
+        set_elf_section_properties(target, *source_properties)
+
+
+def create_section_bounds(section: gtirb.Section, name: str) -> Tuple[gtirb.Symbol, gtirb.Symbol]:
+    byte_interval = next(iter(section.byte_intervals))
+    start_symbol = gtirb.Symbol(
+        name=f".__{name}_start" + SYMBOL_SUFFIX,
+        uuid=None,
+        payload=gtirb.CodeBlock(
+            size=0, offset=0, uuid=None,
+            byte_interval=byte_interval
+        ),
+        at_end=False,
+        module=section.module
+    )
+    end_symbol = gtirb.Symbol(
+        name=f".__{name}_end" + SYMBOL_SUFFIX,
+        uuid=None,
+        payload=gtirb.CodeBlock(
+            size=0, offset=byte_interval.size, uuid=None,
+            byte_interval=byte_interval
+        ),
+        at_end=False,
+        module=section.module
+    )
+    return start_symbol, end_symbol
+
+
+def _external_relative_table_base_symbol_uuids(module: gtirb.Module, copied_section: gtirb.Section):
+    base_symbol_uuids = set()
+    for section in module.sections:
+        if section is copied_section:
+            continue
+        for byte_interval in section.byte_intervals:
+            for symbolic_expression in byte_interval.symbolic_expressions.values():
+                if isinstance(symbolic_expression, gtirb.SymAddrAddr):
+                    base_symbol_uuids.add(symbolic_expression.symbol2.uuid)
+    return base_symbol_uuids
 
 
 def copy_section(section: gtirb.Section, name: str) \
@@ -17,6 +80,7 @@ def copy_section(section: gtirb.Section, name: str) \
         uuid=None,
         module=section.module
     )
+    copy_elf_section_properties(section, section_copy)
 
     byte_interval = next(iter(section.byte_intervals))
 
@@ -76,19 +140,33 @@ def copy_section(section: gtirb.Section, name: str) \
         module=section.module
     )
 
+    external_relative_table_base_symbol_uuids = _external_relative_table_base_symbol_uuids(section.module, section)
+
+    def copied_symbol(symbol):
+        return symbol_copy_mapping.get(symbol.uuid, symbol)
+
+    def copied_addr_const_symbol(symbol):
+        # Keep non-copied relative jump-table bases anchored in the original
+        # section.  The computed address then reaches the text marker/bouncer
+        # instead of becoming a stale transient-relative offset after inserted
+        # instrumentation shifts the copied code.
+        if symbol.uuid in external_relative_table_base_symbol_uuids:
+            return symbol
+        return copied_symbol(symbol)
+
     for pos, symbolic_expression in byte_interval.symbolic_expressions.items():
         if isinstance(symbolic_expression, gtirb.SymAddrAddr):
             symbolic_expression_copy = gtirb.SymAddrAddr(
                 scale=symbolic_expression.scale,
                 offset=symbolic_expression.offset,
-                symbol1=symbol_copy_mapping.get(symbolic_expression.symbol1.uuid, symbolic_expression.symbol1),
-                symbol2=symbol_copy_mapping.get(symbolic_expression.symbol1.uuid, symbolic_expression.symbol2),
+                symbol1=copied_symbol(symbolic_expression.symbol1),
+                symbol2=copied_symbol(symbolic_expression.symbol2),
                 attributes=symbolic_expression.attributes
             )
         elif isinstance(symbolic_expression, gtirb.SymAddrConst):
             symbolic_expression_copy = gtirb.SymAddrConst(
                 offset=symbolic_expression.offset,
-                symbol=symbol_copy_mapping.get(symbolic_expression.symbol.uuid, symbolic_expression.symbol),
+                symbol=copied_addr_const_symbol(symbolic_expression.symbol),
                 attributes=symbolic_expression.attributes
             )
         else:

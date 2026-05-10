@@ -2,7 +2,7 @@ import gtirb
 from uuid import UUID
 from typing import List, Tuple, Iterable, Optional
 
-from teapot.config import SYMBOL_SUFFIX
+from teapot.configs.runtime import SYMBOL_SUFFIX
 
 
 def distinguish_edges(edges: Iterable[gtirb.Edge]) -> Tuple[List[gtirb.Edge], List[gtirb.Edge]]:

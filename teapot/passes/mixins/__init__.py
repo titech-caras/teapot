@@ -1,2 +1,3 @@
+from .arch_specific_pass_mixin import ArchSpecificPassMixin
 from .reg_inst_aware_pass_mixin import RegInstAwarePassMixin
 from .visitor_pass_mixin import VisitorPassMixin, InstVisitorPassMixin

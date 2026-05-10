@@ -1,7 +1,7 @@
 import gtirb
 from typing import Tuple
 
-from teapot.config import SYMBOL_SUFFIX
+from teapot.configs.runtime import SYMBOL_SUFFIX
 
 
 def create_guards(guard_section: gtirb.Section, count: int) -> Tuple[gtirb.Symbol, gtirb.Symbol]:
@@ -31,5 +31,12 @@ def create_guards(guard_section: gtirb.Section, count: int) -> Tuple[gtirb.Symbo
         at_end=True,
         module=guard_section.module
     )
+
+    elf_symbol_info = guard_section.module.aux_data.get("elfSymbolInfo")
+    if elf_symbol_info is not None:
+        elf_symbol_info.data[guard_start_symbol] = (
+            guard_size * count, "OBJECT", "GLOBAL", "DEFAULT", 0)
+        elf_symbol_info.data[guard_end_symbol] = (
+            0, "OBJECT", "GLOBAL", "DEFAULT", 0)
 
     return guard_start_symbol, guard_end_symbol

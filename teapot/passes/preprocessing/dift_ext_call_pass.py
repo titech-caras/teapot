@@ -1,18 +1,10 @@
+from typing import Set
+
 import gtirb
 from gtirb_functions import Function
-from gtirb_rewriting import (Pass, RewritingContext, Patch, patch_constraints,
-                             AllFunctionsScope, FunctionPosition, BlockPosition, InsertionContext)
-from gtirb_rewriting.patches import CallPatch
-from gtirb_rewriting.assembly import X86Syntax, Register
-from gtirb_capstone.instructions import GtirbInstructionDecoder
-from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
-from gtirb_live_register_analysis import LiveRegisterManager
-from capstone_gt import CsInsn, CS_OP_MEM, CS_AC_READ, CS_AC_WRITE
-from capstone_gt.x86 import X86_REG_EFLAGS
-from typing import List, Set, Optional
-from dataclasses import dataclass
+from gtirb_rewriting import RewritingContext
 
-from teapot.config import BLACKLIST_FUNCTION_NAMES, DIFT_IGNORE_LIST
+from teapot.configs.blacklist import DIFT_IGNORE_LIST, DIFT_WRAPPER_FUNCTIONS, is_blacklisted_function
 from teapot.passes.mixins import VisitorPassMixin
 from teapot.utils.misc import distinguish_edges
 
@@ -21,9 +13,14 @@ class DiftExtCallPass(VisitorPassMixin):
     section: gtirb.Section
     symbols_to_rename: Set[gtirb.Symbol]
 
-    def __init__(self, section: gtirb.Section):
+    def __init__(self, section: gtirb.Section, wrap_dift_calls: bool = True):
         self.section = section
+        self.wrap_dift_calls = wrap_dift_calls
         self.symbols_to_rename = set()
+
+    @staticmethod
+    def should_ignore_dift_wrapper(name: str) -> bool:
+        return name in DIFT_IGNORE_LIST or name.startswith("__asan_") or name not in DIFT_WRAPPER_FUNCTIONS
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         super().begin_module(module, functions, rewriting_ctx)
@@ -31,13 +28,18 @@ class DiftExtCallPass(VisitorPassMixin):
         self.visit_functions(functions, self.section)
 
     def end_module(self, module: gtirb.Module, functions) -> None:
+        symbol_forwarding = module.aux_data.get('symbolForwarding')
+        forwarding = symbol_forwarding.data if symbol_forwarding is not None else {}
+        symbol_versions = module.aux_data.get('elfSymbolVersions')
+        version_entries = symbol_versions.data[2] if symbol_versions is not None else {}
         for sym in self.symbols_to_rename:
-            forwarded_sym: gtirb.Symbol = module.aux_data['symbolForwarding'].data[sym]
-            if forwarded_sym.name not in DIFT_IGNORE_LIST:
+            forwarded_sym: gtirb.Symbol = forwarding.get(sym, sym)
+            version_entries.pop(forwarded_sym, None)
+            if self.wrap_dift_calls and not self.should_ignore_dift_wrapper(forwarded_sym.name):
                 forwarded_sym.name += "__dift_wrapper__"
 
     def visit_function(self, function: Function):
-        if function.get_name() in BLACKLIST_FUNCTION_NAMES:
+        if is_blacklisted_function(function):
             return
 
         super().visit_function(function)

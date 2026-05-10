@@ -8,16 +8,48 @@ Common issues when executing Teapot and instrumented binaries are collected here
 This may look like Teapot is frozen, but GTIRB is in fact still working to apply the instrumentation, and this can sometimes take a very long time.
 We could not display a progress bar since it is difficult to track the GTIRB internals.
 
+**Conservative call liveness**
+
+Teapot must keep conservative call liveness enabled for all ISAs: instrumentation should not treat ABI caller-saved GPRs as dead after calls.
+Do not disable this to make register allocation easier; add a principled cross-call analysis or an architecture-specific safe scratch strategy instead.
+
 **Execution of instrumented binary fails with `Map address 0x400000000000 failed: Address already in use`**
 
 Check AddressSanitizer (ASan) version in the system; it may be too new for Teapot to function (see [README.md](https://github.com/lin-toto/teapot/blob/main/README.md)).
+On x86-64, use the newer-ASan DIFT profile instead: instrument with `teapot --dift-layout x64-la48-asan-new ...` and build `libcheckpoint` with `-DTEAPOT_DIFT_LAYOUT=x64-la48-asan-new`.
 Alternatively, download an old version of `libasan.so` and `LD_PRELOAD` it into the instrumented binary.
+
+**RISC-V instrumented binary fails under qemu with DIFT mapping errors**
+
+For Sv39, run qemu with the low user VA space reserved: `qemu-riscv64 -R 0x4000000000 -L /usr/riscv64-linux-gnu ...`.
+The binary must also be linked with ASan; libcheckpoint does not provide a fallback ASan shadow.
+The RV64 smoke path also depends on a RISC-V-capable `gtirb-pprinter` runtime.
+If `ddisasm --asm` or `gtirb-pprinter` fails with missing RISC-V support, check
+that the local pprinter build is the one being used. Some GNU assembler builds
+reject `%got_pcrel_hi(...)` forms that LLVM accepts; use the LLVM assembler path
+or a known-good cross toolchain for RV64 ASan links.
+
+**AArch64 instrumented binary faults in DIFT shadow memory under qemu**
+
+Use matching AArch64 DIFT profiles for instrumentation and libcheckpoint.
+For qemu user-mode smoke tests, prefer `aarch64-vma39` with `qemu-aarch64 -R 0x8000000000 -L /usr/aarch64-linux-gnu ...`.
+Wider profiles such as `aarch64-vma42` pre-map much larger DIFT ranges and can spend a long time in startup or consume high host RSS.
+If the fault is reported as a stack overflow immediately after startup, increase qemu's target stack as well, for example `qemu-aarch64 -R 0x8000000000 -s 33554432 -L /usr/aarch64-linux-gnu ...`.
+When adding AArch64 instrumentation, do not reuse a shadow-stack frame offset or fixed scratchpad save window across passes or subpatches that may be nested. DIFT, memlog, ASan, gadget, coverage, control-flow, text-DIFT, and generic ABI first-spill frames must stay disjoint.
+
+**AArch64/RV64 libhtp compressed-response smoke differs from baseline**
+
+The libhtp compressed-response tests include compression-bomb timing behavior.
+Full Teapot instrumentation can make those paths cross libhtp's time budget, so
+the smoke output may differ even when rewriting, linking, and ordinary execution
+are working. Treat this as a harness/runtime-budget issue and confirm other
+inputs still execute and report gadgets before debugging the instrumentation.
 
 **Linker error `undefined reference to 'xxxyyy__dift_wrapper__'`**
 
 Teapot DIFT does not yet support this external library function.
 Teapot currently only provides DIFT support for the external library functions used by the programs in [teapot-testcases](https://github.com/lin-toto/teapot-testcases/).
-If this error occurs, create a DIFT wrapper for the missing function in `libcheckpoint_x64/dift_wrappers.c`, and recompile `libcheckpoint_x64`.
+If this error occurs, create a DIFT wrapper for the missing function under `libcheckpoint/src/dift_wrappers/`, and recompile `libcheckpoint`.
 
 Note that even for the programs in [teapot-testcases](https://github.com/lin-toto/teapot-testcases/), the compiler may sometimes optimize the library calls into DIFT unsupported functions.
 Similarly, in this case, a DIFT wrapper also needs to be implemented.

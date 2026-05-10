@@ -1,90 +1,115 @@
+import argparse
+
 import gtirb
-from gtirb_rewriting import PassManager
-from gtirb_rewriting.abi import _ABIS
-from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
-import pprint
-import sys
 
-from teapot.abi.x86_64 import _X86_64_ELF
-
-from teapot.preprocess.copy_section import copy_section
-from teapot.utils.reg_analysis import LiveRegisterManagerWrapper
-from teapot.passes import *
-from teapot.config import *
-
-
-def run_teapot(ir: gtirb.IR):
-    module = ir.modules[0]
-    text_section = [s for s in module.sections if s.name == ".text"][0]
-
-    # pass_manager = PassManager()
-    # pass_manager.add(DebugSymbolsPass(in_name))
-    # pass_manager.run(ir)
-
-    decoder = CachedGtirbInstructionDecoder(module.isa)
-
-    my_x64_elf_abi = _X86_64_ELF()
-    _ABIS[(gtirb.Module.ISA.X64, gtirb.Module.FileFormat.ELF)] = my_x64_elf_abi
-
-    transient_section, transient_section_start_symbol, transient_section_end_symbol, text_transient_mapping = (
-        copy_section(text_section, ".teapot_transient"))
-
-    reg_manager = LiveRegisterManagerWrapper(module, my_x64_elf_abi, decoder,
-                                             text_transient_mapping=text_transient_mapping)
-    trampoline_section = gtirb.Section(name=".teapot_trampolines", flags=transient_section.flags, module=module)
-    trampoline_byte_interval = gtirb.ByteInterval(section=trampoline_section)
-
-    guard_section = gtirb.Section(name=".teapot_guards",
-                                  flags={gtirb.Section.Flag.Readable, gtirb.Section.Flag.Writable},
-                                  module=module)
-    guard_byte_interval = gtirb.ByteInterval(section=guard_section)
-
-    branch_counter_section = gtirb.Section(name=".teapot_branch_counters",
-                                           flags={gtirb.Section.Flag.Readable, gtirb.Section.Flag.Writable},
-                                           module=module)
-    branch_counter_byte_interval = gtirb.ByteInterval(section=branch_counter_section)
-
-    pass_manager = PassManager()
-    pass_manager.add(ImportSymbolsPass())
-    pass_manager.add(
-        CreateTrampolinesPass(text_section, trampoline_section, branch_counter_section, text_transient_mapping,
-                              decoder))
-    pass_manager.add(DiftExtCallPass(text_section))
-    pass_manager.run(ir)
-
-    pass_manager = PassManager()
-    pass_manager.add(TextInitializeLibraryPass(text_section))
-
-    pass_manager.add(AsanStackPass(reg_manager, text_section, decoder, False))
-    pass_manager.add(TextIndirectBranchTransformPass(text_section, text_transient_mapping, decoder))
-    pass_manager.add(TextDiftPropagationLLVMPass(reg_manager, text_section, decoder, False))
-    pass_manager.add(InsertCheckpointsPass(reg_manager, text_section, decoder))
-
-    pass_manager.add(AsanStackPass(reg_manager, transient_section, decoder, True))
-    pass_manager.add(TransientCoveragePass(reg_manager, transient_section, decoder, guard_section))
-    pass_manager.add(TransientMemOperandPoliciesPass(reg_manager, transient_section, decoder))
-    pass_manager.add(TransientPortContentionPolicyPass(reg_manager, transient_section, decoder))
-    pass_manager.add(DiftPropagationPass(reg_manager, transient_section, decoder, True))
-    pass_manager.add(TransientMemlogPass(reg_manager, transient_section, decoder))
-    pass_manager.add(TransientInsertRestorePointsPass(reg_manager, text_section, transient_section, decoder))
-    pass_manager.add(TransientIndirectBranchCheckDestPass(reg_manager, transient_section, decoder,
-                                                          transient_section_start_symbol, transient_section_end_symbol))
-    pass_manager.add(InsertCheckpointsPass(reg_manager, transient_section, decoder))
-    pass_manager.run(ir)
+from teapot.datacls.dift_layout import LAYOUTS, layout_names_for_arch
+from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 
 
 def main():
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} input.gtirb output.gtirb")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", nargs="?")
+    parser.add_argument("output", nargs="?")
+    parser.add_argument(
+        "--dift-layout",
+        choices=sorted(LAYOUTS),
+        help="Compile-time DIFT address-space layout profile. The runtime library must be built with the same profile.",
+    )
+    parser.add_argument(
+        "--list-dift-layouts",
+        action="store_true",
+        help="Print DIFT layout profiles and exit.",
+    )
+    parser.add_argument(
+        "--disable-dift",
+        action="store_true",
+        help="Skip DIFT propagation and DIFT external-call handling.",
+    )
+    parser.add_argument(
+        "--disable-asan",
+        action="store_true",
+        help="Skip ASan stack poisoning instrumentation.",
+    )
+    parser.add_argument(
+        "--disable-gadgets",
+        action="store_true",
+        help="Skip transient gadget detection policies and coverage guards.",
+    )
+    parser.add_argument(
+        "--disable-mem-operand-gadgets",
+        action="store_true",
+        help="Skip transient memory-operand gadget policies.",
+    )
+    parser.add_argument(
+        "--disable-port-gadgets",
+        action="store_true",
+        help="Skip transient port-contention gadget policies.",
+    )
+    parser.add_argument(
+        "--disable-gadget-asan-check",
+        action="store_true",
+        help="Skip the transient memory-operand gadget policy ASan subcheck.",
+    )
+    parser.add_argument(
+        "--disable-memlog",
+        action="store_true",
+        help="Skip transient memory logging.",
+    )
+    parser.add_argument(
+        "--disable-checkpoints",
+        action="store_true",
+        help="Skip text checkpoint insertion and transient restore points.",
+    )
+    parser.add_argument(
+        "--enable-nested-speculation",
+        action="store_true",
+        help=(
+            "Insert checkpoints inside the transient copy as well. "
+            "The instrumented binary must link libcheckpoint target checkpoint_nested."
+        ),
+    )
+    parser.add_argument(
+        "--disable-indirect-transform",
+        action="store_true",
+        help="Skip text indirect-branch target markers.",
+    )
+    parser.add_argument(
+        "--disable-indirect-check",
+        action="store_true",
+        help="Skip transient indirect-branch destination checks.",
+    )
+    parser.add_argument(
+        "--disable-aarch64-relax",
+        action="store_true",
+        help="Skip the AArch64 conditional-branch relaxation pass.",
+    )
+    args = parser.parse_args()
+
+    if args.list_dift_layouts:
+        for arch_name in ("x64", "aarch64", "riscv64"):
+            print(f"{arch_name}: {', '.join(sorted(layout_names_for_arch(arch_name)))}")
         return
+    if args.input is None or args.output is None:
+        parser.error("input and output are required")
 
-    in_name = sys.argv[1]
-    out_name = sys.argv[2]
+    ir = gtirb.IR.load_protobuf(args.input)
+    options = InstrumentationOptions(
+        enable_dift=not args.disable_dift,
+        enable_asan=not args.disable_asan,
+        enable_gadgets=not args.disable_gadgets,
+        enable_memlog=not args.disable_memlog,
+        enable_checkpoints=not args.disable_checkpoints,
+        enable_indirect_transform=not args.disable_indirect_transform,
+        enable_indirect_check=not args.disable_indirect_check,
+        enable_conditional_branch_relax=not args.disable_aarch64_relax,
+        enable_mem_operand_gadgets=not args.disable_mem_operand_gadgets,
+        enable_port_gadgets=not args.disable_port_gadgets,
+        enable_gadget_asan_check=not args.disable_gadget_asan_check,
+        enable_nested_speculation=args.enable_nested_speculation,
+    )
+    TeapotPipeline(ir, args.dift_layout, options).run()
+    ir.save_protobuf(args.output)
 
-    ir = gtirb.IR.load_protobuf(in_name)
-    run_teapot(ir)
-    ir.save_protobuf(out_name)
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
