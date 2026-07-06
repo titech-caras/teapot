@@ -76,7 +76,7 @@ class RISCV64ControlFlowPatchesMixin:
         def patch(ctx):
             allocated_jump_reg = jump_register
             if needs_allocated_jump_register:
-                allocated_jump_reg = self.register_name(ctx.scratch_registers[0])
+                allocated_jump_reg = ctx.scratch_registers[0]
             conditional_reg = conditional_jump_register or allocated_jump_reg
             non_conditional_reg = non_conditional_jump_register or allocated_jump_reg
             non_conditional_jump = (
@@ -106,29 +106,52 @@ class RISCV64ControlFlowPatchesMixin:
         return patch
 
     def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, use_long_jump: bool = False,
-                                     jump_register: str = None, restore_before_jump: bool = True):
-        @self.constraints(scratch_registers=1 if use_long_jump and jump_register is None else 0)
+                                     jump_register: str = None, restore_before_jump: bool = True,
+                                     use_scratch_registers: bool = False):
+        scratch_count = 0
+        if use_scratch_registers:
+            scratch_count = 1 + (1 if use_long_jump and jump_register is None else 0)
+
+        @self.constraints(scratch_registers=scratch_count)
         def patch(ctx):
+            counter_reg = "t0"
             jump_reg = jump_register
+            prologue = self.save_regs_to_first_spill(self.FIRST_SPILL_T0_T1)
+            done_epilogue = self.restore_regs_from_first_spill(self.FIRST_SPILL_T0_T1)
+            checkpoint_epilogue = self.restore_regs_from_first_spill(self.FIRST_SPILL_T0_T1) \
+                if restore_before_jump else ""
+
+            if use_scratch_registers:
+                counter_reg = ctx.scratch_registers[0]
+                if use_long_jump and jump_reg is None:
+                    jump_reg = ctx.scratch_registers[1]
+                prologue = ""
+                done_epilogue = ""
+                checkpoint_epilogue = ""
+
             if use_long_jump and jump_reg is None:
-                jump_reg = self.register_name(ctx.scratch_registers[0])
+                jump_reg = "t0"
+
             target_name = target_symbol.name if hasattr(target_symbol, "name") else str(target_symbol)
             target_jump = self.jump_symbol(target_name, jump_reg) if use_long_jump else f"j {target_name}"
-            checkpoint_taken = f"""
-                {self.restore_regs_from_first_spill(self.FIRST_SPILL_T0_T1)}
-                {target_jump}
-            """ if restore_before_jump else self.jump_symbol_with_first_spill_restore(
-                target_name, jump_reg, already_saved=True)
+            if not use_scratch_registers and not restore_before_jump:
+                checkpoint_taken = self.jump_symbol_with_first_spill_restore(
+                    target_name, jump_reg, already_saved=True)
+            else:
+                checkpoint_taken = f"""
+                    {checkpoint_epilogue}
+                    {target_jump}
+                """
             return f"""
                 .word 0x{self.MAGIC_WORDS[0]:08x}
                 .word 0x{self.MAGIC_WORDS[1]:08x}
-                {self.save_regs_to_first_spill(self.FIRST_SPILL_T0_T1)}
-                {self.load_address("t0", "checkpoint_cnt")}
-                ld t0, 0(t0)
-                beqz t0, .L__indbr_transform_done{SYMBOL_SUFFIX}
+                {prologue}
+                {self.load_address(counter_reg, "checkpoint_cnt")}
+                ld {counter_reg}, 0({counter_reg})
+                beqz {counter_reg}, .L__indbr_transform_done{SYMBOL_SUFFIX}
                 {checkpoint_taken}
             .L__indbr_transform_done{SYMBOL_SUFFIX}:
-                {self.restore_regs_from_first_spill(self.FIRST_SPILL_T0_T1)}
+                {done_epilogue}
             """
 
         return patch
@@ -146,7 +169,7 @@ class RISCV64ControlFlowPatchesMixin:
         if reg_manager is None:
             return self.indirect_branch_target_patch(target_symbol)
 
-        patch = self.indirect_branch_target_patch(target_symbol, True)
+        patch = self.indirect_branch_target_patch(target_symbol, True, use_scratch_registers=True)
         try:
             return reg_manager.allocate_registers(function, block, instruction_idx, False)(patch)
         except NotEnoughFreeRegistersException:
@@ -194,6 +217,9 @@ class RISCV64ControlFlowPatchesMixin:
         if operands:
             return operands[-1]
         return None
+
+    def indirect_branch_check_allows_allocator_scratch(self) -> bool:
+        return True
 
     def instruction_must_rollback(self, instruction) -> bool:
         return instruction.mnemonic in {

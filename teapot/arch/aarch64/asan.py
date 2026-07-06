@@ -1,6 +1,3 @@
-from teapot.configs.slots import AARCH64_SHADOW_STACK_ASAN_OFFSET
-
-
 class AArch64AsanPatchesMixin:
     def asan_check_snippet(self, addr_reg, access_size: int, check_ok_label: str, *,
                            shadow_offset: int, shadow_reg, scratch_reg) -> str:
@@ -36,23 +33,16 @@ class AArch64AsanPatchesMixin:
         """
 
     def asan_stack_patch(self, abi, *, poison: bool, insert_memlog: bool, shadow_offset: int):
-        @self.constraints()
+        scratch_count = 3 if insert_memlog else 2
+
+        @self.constraints(scratch_registers=scratch_count)
         def patch(ctx):
-            fixed_regs = self.fixed_spill_registers(abi, 3 if insert_memlog else 2)
-            addr_reg, value_reg = fixed_regs[:2]
-            top_reg = fixed_regs[2] if insert_memlog else None
+            addr_reg, value_reg = ctx.scratch_registers[:2]
+            top_reg = ctx.scratch_registers[2] if insert_memlog else None
             return f"""
-                {self.save_regs_to_shadow_stack(
-                    fixed_regs, save_flags=False,
-                    frame_offset=AARCH64_SHADOW_STACK_ASAN_OFFSET,
-                    preserve_sp=True)}
                 {self.asan_stack_poison_snippet(
                     addr_reg, value_reg, top_reg, poison=poison,
                     shadow_offset=shadow_offset, insert_memlog=insert_memlog)}
-                {self.restore_regs_from_shadow_stack(
-                    fixed_regs, save_flags=False,
-                    frame_offset=AARCH64_SHADOW_STACK_ASAN_OFFSET,
-                    preserve_sp=True)}
             """
 
         return patch

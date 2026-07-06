@@ -5,7 +5,6 @@ from gtirb_rewriting import InsertionContext
 from gtirb_rewriting.assembly import Register
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
-from teapot.configs.slots import SCRATCHPAD_FIRST_SPILL_OFFSET
 from teapot.configs.tags import (
     TAG_ATTACKER,
     TAG_ATTACKER_INDIRECT,
@@ -53,30 +52,26 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
         regs_read = self.arch.access_registers(self.reg_manager.abi, inst, 0)
         regs_read.update(self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand))
 
-        patch = self._build_patch(inst, mem_operand, access_size, write_regs, address_regs)
+        patch = self._build_patch(
+            inst, mem_operand, access_size, write_regs, address_regs,
+            reads_registers={reg.name for reg in regs_read.union(regs_write)})
         return MemOperandPolicyPatch(patch, regs_read.union(regs_write))
 
     def _build_patch(self, inst: CsInsn, mem_operand, access_size: int, write_regs,
-                     address_regs):
-        fixed_regs = self.arch.fixed_spill_registers(self.reg_manager.abi, 4)
-        saved_reg_offsets = {
-            reg.name: SCRATCHPAD_FIRST_SPILL_OFFSET + idx * 8
-            for idx, reg in enumerate(fixed_regs)
-        }
+                     address_regs, *, reads_registers=None):
 
-        @self.arch.constraints()
+        @self.arch.constraints(scratch_registers=4, reads_registers=reads_registers or set())
         def patch(ctx: InsertionContext):
-            tag_reg, addr_reg, tmp_reg, shadow_reg = fixed_regs
+            tag_reg, addr_reg, tmp_reg, shadow_reg = ctx.scratch_registers[:4]
             done_label = f".L__mem_operand_policy_done{SYMBOL_SUFFIX}"
 
-            asm = self.arch.save_regs_to_first_spill(fixed_regs)
+            asm = ""
             asm += "\n" + self.arch.clear_register_snippet(tag_reg)
             for reg in address_regs:
                 asm += self.arch.dift_or_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
             asm += self.arch.mem_operand_address_snippet(
-                self.reg_manager.abi, inst, addr_reg, tmp_reg, mem_operand, ctx.stack_adjustment,
-                saved_reg_offsets=saved_reg_offsets)
+                self.reg_manager.abi, inst, addr_reg, tmp_reg, mem_operand, ctx.stack_adjustment)
             asm += f"""
                 andi {tmp_reg}, {tag_reg}, {TAG_SECRET | TAG_SECRET_INDIRECT}
                 beqz {tmp_reg}, .L__attacker_tags_check{SYMBOL_SUFFIX}
@@ -109,7 +104,6 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
             {done_label}:
                 nop
             """
-            asm += self.arch.restore_regs_from_first_spill(fixed_regs)
             return asm
 
         return patch

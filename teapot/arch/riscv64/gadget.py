@@ -14,11 +14,10 @@ _REPORT_CALLER_SAVED_GPRS = (
 
 class RISCV64GadgetPatchesMixin:
     def coverage_patch(self, idx: int):
-        @self.constraints()
+        @self.constraints(scratch_registers=2)
         def patch(ctx):
-            top_addr_reg, top_reg = ("t0", "t1")
+            top_addr_reg, top_reg = ctx.scratch_registers[:2]
             return f"""
-                {self.save_regs_to_first_spill(self.FIRST_SPILL_T0_T1)}
                 {self.load_address(top_addr_reg, "guard_list_top")}
                 ld {top_reg}, 0({top_addr_reg})
                 li {top_addr_reg}, {idx}
@@ -26,7 +25,6 @@ class RISCV64GadgetPatchesMixin:
                 addi {top_reg}, {top_reg}, 4
                 {self.load_address(top_addr_reg, "guard_list_top")}
                 sd {top_reg}, 0({top_addr_reg})
-                {self.restore_regs_from_first_spill(self.FIRST_SPILL_T0_T1)}
             """
 
         return patch

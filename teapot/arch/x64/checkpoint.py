@@ -59,7 +59,7 @@ class X64CheckpointPatchesMixin:
             pop rax
         """)
 
-    def conditional_restore_point_patch(self, instruction_count: int, use_scratch_registers: bool = True):
+    def conditional_restore_point_patch(self, instruction_count: int):
         @self.constraints(scratch_registers=1, clobbers_flags=True)
         def patch(ctx: InsertionContext):
             r = ctx.scratch_registers[0]

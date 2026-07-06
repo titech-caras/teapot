@@ -7,7 +7,6 @@ from gtirb_rewriting import InsertionContext
 from gtirb_rewriting.assembly import Register
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
-from teapot.configs.slots import AARCH64_SHADOW_STACK_GADGET_MEM_OFFSET
 from teapot.configs.tags import (
     TAG_ATTACKER,
     TAG_ATTACKER_INDIRECT,
@@ -47,30 +46,31 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
         regs_read = self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand)
 
         mem_symexpr = self.arch.operand_symbolic_expression(block, inst, mem_operand, inst_offset)
-        patch = self._build_patch(inst, mem_operand, access_size, write_regs, mem_symexpr)
+        patch = self._build_patch(
+            inst, mem_operand, access_size, write_regs, mem_symexpr,
+            reads_registers={reg.name for reg in regs_read})
         return MemOperandPolicyPatch(patch, regs_read)
 
     def _build_patch(self, inst: CsInsn, mem_operand, access_size: int, write_regs,
-                     mem_symexpr: Optional[gtirb.SymbolicExpression]):
-        fixed_regs = self.arch.fixed_spill_registers(self.reg_manager.abi, 4)
-        frame_offset = AARCH64_SHADOW_STACK_GADGET_MEM_OFFSET
-        saved_reg_offsets = self.arch.fixed_scratch_offsets(fixed_regs, frame_offset)
+                     mem_symexpr: Optional[gtirb.SymbolicExpression], *,
+                     reads_registers=None):
 
-        @self.arch.constraints()
+        @self.arch.constraints(
+            scratch_registers=4,
+            clobbers_flags=True,
+            reads_registers=reads_registers or set())
         def patch(ctx: InsertionContext):
-            tag_reg, addr_reg, tmp_reg, shadow_reg = fixed_regs
+            tag_reg, addr_reg, tmp_reg, shadow_reg = ctx.scratch_registers[:4]
             done_label = f".L__mem_operand_policy_done{SYMBOL_SUFFIX}"
 
-            asm = self.arch.save_regs_to_shadow_stack(
-                fixed_regs, save_flags=True, frame_offset=frame_offset, preserve_sp=True)
+            asm = ""
             asm += self.arch.clear_register_snippet(tag_reg)
             for reg in self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand):
                 asm += self.arch.dift_or_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
             asm += self.arch.mem_operand_address_snippet(
                 self.reg_manager.abi, inst, addr_reg, tmp_reg, mem_operand,
-                ctx.stack_adjustment, mem_symexpr=mem_symexpr,
-                saved_reg_offsets=saved_reg_offsets, saved_reg_base="shadow_sp")
+                ctx.stack_adjustment, mem_symexpr=mem_symexpr)
             asm += f"""
                 and {tmp_reg:32}, {tag_reg:32}, #{TAG_SECRET | TAG_SECRET_INDIRECT}
                 cbz {tmp_reg:32}, .L__attacker_tags_check{SYMBOL_SUFFIX}
@@ -100,8 +100,6 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
             {done_label}:
                 nop
             """
-            asm += self.arch.restore_regs_from_shadow_stack(
-                fixed_regs, save_flags=True, frame_offset=frame_offset, preserve_sp=True)
             return asm
 
         return patch

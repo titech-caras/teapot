@@ -2,6 +2,7 @@ from typing import Optional
 from uuid import UUID
 
 import gtirb
+from gtirb_live_register_analysis.manager import NotEnoughFreeRegistersException
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.slots import (
@@ -108,34 +109,61 @@ class AArch64ControlFlowPatchesMixin:
             {trampoline_body}
         """)
 
-    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol):
-        @self.constraints()
+    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, use_scratch_registers: bool = False):
+        @self.constraints(scratch_registers=1 if use_scratch_registers else 0)
         def patch(ctx):
+            if use_scratch_registers:
+                counter_reg = ctx.scratch_registers[0]
+                prologue = ""
+                checkpoint_epilogue = ""
+                done_epilogue = ""
+            else:
+                counter_reg = "x16"
+                prologue = self.save_regs_to_shadow_stack(
+                    ("x16", "x17"), save_flags=True,
+                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_TARGET_OFFSET, preserve_sp=True)
+                checkpoint_epilogue = self.restore_regs_from_shadow_stack(
+                    ("x16", "x17"), save_flags=True,
+                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_TARGET_OFFSET, preserve_sp=True)
+                done_epilogue = checkpoint_epilogue
             return f"""
                 .word 0x{self.MAGIC_WORDS[0]:08x}
                 .word 0x{self.MAGIC_WORDS[1]:08x}
-                {self.save_regs_to_shadow_stack(
-                    ("x16", "x17"), save_flags=True,
-                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_TARGET_OFFSET, preserve_sp=True)}
-                {self.load_address("x16", "checkpoint_cnt")}
-                ldr x16, [x16]
-                cbz x16, .L__indbr_transform_done{SYMBOL_SUFFIX}
-                {self.restore_regs_from_shadow_stack(
-                    ("x16", "x17"), save_flags=True,
-                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_TARGET_OFFSET, preserve_sp=True)}
+                {prologue}
+                {self.load_address(counter_reg, "checkpoint_cnt")}
+                ldr {counter_reg}, [{counter_reg}]
+                cbz {counter_reg}, .L__indbr_transform_done{SYMBOL_SUFFIX}
+                {checkpoint_epilogue}
                 b {target_symbol.name}
             .L__indbr_transform_done{SYMBOL_SUFFIX}:
-                {self.restore_regs_from_shadow_stack(
-                    ("x16", "x17"), save_flags=True,
-                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_TARGET_OFFSET, preserve_sp=True)}
+                {done_epilogue}
             """
 
         return patch
+
+    def indirect_transform_uses_live_registers(self) -> bool:
+        return True
+
+    def indirect_transform_target_patch(self, target_symbol: gtirb.Symbol, *,
+                                       reg_manager=None, function=None, block=None, instruction_idx: int = 0,
+                                       landing_target_uuid=None, landing_pad_targets=None,
+                                       ensure_landing_pad_symbol=None):
+        if reg_manager is None:
+            return self.indirect_branch_target_patch(target_symbol)
+
+        patch = self.indirect_branch_target_patch(target_symbol, True)
+        try:
+            return reg_manager.allocate_registers(function, block, instruction_idx, False)(patch)
+        except NotEnoughFreeRegistersException:
+            return self.indirect_branch_target_patch(target_symbol, False)
 
     def indirect_branch_operand(self, edge_type, last_inst, block: gtirb.CodeBlock = None) -> Optional[str]:
         if edge_type == gtirb.cfg.Edge.Type.Return:
             return last_inst.op_str.strip() or "x30"
         return last_inst.op_str.strip() or None
+
+    def indirect_branch_check_allows_allocator_scratch(self) -> bool:
+        return True
 
     def instruction_must_rollback(self, instruction) -> bool:
         return instruction.mnemonic in {"dmb", "dsb", "isb", "svc", "hvc", "smc"}
@@ -148,55 +176,30 @@ class AArch64ControlFlowPatchesMixin:
                                     text_end_symbol: gtirb.Symbol, use_scratch_registers: bool = True,
                                     reads_registers=None):
         @self.constraints(scratch_registers=3 if use_scratch_registers else 0,
+                          clobbers_flags=use_scratch_registers,
                           reads_registers=reads_registers or set())
         def patch(ctx):
-            if not use_scratch_registers:
-                return f"""
-                    {self.save_regs_to_shadow_stack(
-                        ("x15", "x16", "x17"), save_flags=True,
-                        frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET, preserve_sp=True)}
-                    {self._materialize_saved_indirect_target(
-                        "x15", operand_str, preserve_sp=True,
-                        frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET)}
-                    {self.load_address("x16", transient_start_symbol.name)}
-                    cmp x15, x16
-                    b.lo 4f
-                    {self.load_address("x16", transient_end_symbol.name)}
-                    cmp x15, x16
-                    b.lo 1f
-                4:
-                    {self.load_address("x16", text_start_symbol.name)}
-                    cmp x15, x16
-                    b.lo 2f
-                    {self.load_address("x16", text_end_symbol.name)}
-                    cmp x15, x16
-                    b.hs 2f
-                    ldr w16, [x15]
-                    {self.mov_w_imm32("w17", self.MAGIC_WORDS[0])}
-                    cmp w16, w17
-                    b.ne 2f
-                    ldr w16, [x15, #4]
-                    {self.mov_w_imm32("w17", self.MAGIC_WORDS[1])}
-                    cmp w16, w17
-                    b.ne 2f
-                1:
-                    {self.restore_regs_from_shadow_stack(
-                        ("x15", "x16", "x17"), save_flags=True,
-                        frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET, preserve_sp=True)}
-                    b 3f
-                2:
-                    {self.restore_regs_from_shadow_stack(
-                        ("x15", "x16", "x17"), save_flags=True,
-                        frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET, preserve_sp=True)}
-                    b restore_checkpoint_MALFORMED_INDIRECT_BR
-                3:
-                    nop
-                """
-
-            target_reg, temp_reg, saved_nzcv_reg = ctx.scratch_registers[:3]
+            if use_scratch_registers:
+                target_reg, temp_reg, magic_reg = ctx.scratch_registers[:3]
+                prologue = ""
+                success_epilogue = ""
+                rollback_epilogue = ""
+                materialize_target = f"mov {target_reg}, {operand_str}"
+            else:
+                target_reg, temp_reg, magic_reg = "x15", "x16", "x17"
+                prologue = self.save_regs_to_shadow_stack(
+                    (target_reg, temp_reg, magic_reg), save_flags=True,
+                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET, preserve_sp=True)
+                success_epilogue = self.restore_regs_from_shadow_stack(
+                    (target_reg, temp_reg, magic_reg), save_flags=True,
+                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET, preserve_sp=True)
+                rollback_epilogue = success_epilogue
+                materialize_target = self._materialize_saved_indirect_target(
+                    target_reg, operand_str, preserve_sp=True,
+                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET)
             return f"""
-                mrs {saved_nzcv_reg}, nzcv
-                mov {target_reg}, {operand_str}
+                {prologue}
+                {materialize_target}
                 {self.load_address(temp_reg, transient_start_symbol.name)}
                 cmp {target_reg}, {temp_reg}
                 b.lo 4f
@@ -211,17 +214,18 @@ class AArch64ControlFlowPatchesMixin:
                 cmp {target_reg}, {temp_reg}
                 b.hs 2f
                 ldr {self.w_reg(temp_reg)}, [{target_reg}]
-                {self.mov_w_imm32(self.w_reg(target_reg), self.MAGIC_WORDS[0])}
-                cmp {self.w_reg(temp_reg)}, {self.w_reg(target_reg)}
+                {self.mov_w_imm32(self.w_reg(magic_reg), self.MAGIC_WORDS[0])}
+                cmp {self.w_reg(temp_reg)}, {self.w_reg(magic_reg)}
                 b.ne 2f
                 ldr {self.w_reg(temp_reg)}, [{target_reg}, #4]
-                {self.mov_w_imm32(self.w_reg(target_reg), self.MAGIC_WORDS[1])}
-                cmp {self.w_reg(temp_reg)}, {self.w_reg(target_reg)}
+                {self.mov_w_imm32(self.w_reg(magic_reg), self.MAGIC_WORDS[1])}
+                cmp {self.w_reg(temp_reg)}, {self.w_reg(magic_reg)}
                 b.ne 2f
             1:
-                msr nzcv, {saved_nzcv_reg}
+                {success_epilogue}
                 b 3f
             2:
+                {rollback_epilogue}
                 b restore_checkpoint_MALFORMED_INDIRECT_BR
             3:
                 nop

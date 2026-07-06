@@ -8,7 +8,7 @@ from teapot.utils.misc import generate_distinct_label_name
 
 class RISCV64CheckpointPatchesMixin:
     CHECKPOINT_PATCH_USES_LIVE_REGISTERS = False
-    RESTORE_POINT_PATCH_USES_LIVE_REGISTERS = False
+    RESTORE_POINT_PATCH_USES_LIVE_REGISTERS = True
 
     def checkpoint_patch(self, block_uuid: UUID, use_scratch_registers: bool = True):
         @self.constraints(scratch_registers=0)
@@ -60,19 +60,11 @@ class RISCV64CheckpointPatchesMixin:
             addi sp, sp, 16
         """)
 
-    def conditional_restore_point_patch(self, instruction_count: int, use_scratch_registers: bool = True):
-        @self.constraints(scratch_registers=2 if use_scratch_registers else 0)
+    def conditional_restore_point_patch(self, instruction_count: int):
+        @self.constraints(scratch_registers=2)
         def patch(ctx: InsertionContext):
-            counter_reg, limit_reg = ctx.scratch_registers[:2] if use_scratch_registers else ("t0", "t1")
-            prologue = "" if use_scratch_registers else self.save_regs_to_first_spill(
-                self.FIRST_SPILL_T0_T1)
-            success_epilogue = "" if use_scratch_registers else self.restore_regs_from_first_spill(
-                self.FIRST_SPILL_T0_T1)
-            rollback_epilogue = "" if use_scratch_registers else self.restore_regs_from_first_spill(
-                self.FIRST_SPILL_T0_T1)
-            rollback_reg = counter_reg if use_scratch_registers else "t0"
+            counter_reg, limit_reg = ctx.scratch_registers[:2]
             return f"""
-                {prologue}
                 {self.load_address(limit_reg, "instruction_cnt")}
                 ld {counter_reg}, 0({limit_reg})
                 li {limit_reg}, {instruction_count}
@@ -81,11 +73,9 @@ class RISCV64CheckpointPatchesMixin:
                 bgeu {counter_reg}, {limit_reg}, 1f
                 {self.load_address(limit_reg, "instruction_cnt")}
                 sd {counter_reg}, 0({limit_reg})
-                {success_epilogue}
                 j 2f
             1:
-                {rollback_epilogue}
-                {self.jump_symbol("restore_checkpoint_ROB_LEN", rollback_reg)}
+                {self.jump_symbol("restore_checkpoint_ROB_LEN", counter_reg)}
             2:
                 nop
             """

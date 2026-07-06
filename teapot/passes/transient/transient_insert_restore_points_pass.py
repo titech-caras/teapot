@@ -3,7 +3,6 @@ from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext, Patch, AllFunctionsScope, FunctionPosition, BlockPosition
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_live_register_analysis import LiveRegisterManager
-from gtirb_live_register_analysis.manager import NotEnoughFreeRegistersException
 from capstone_gt import CsInsn
 from typing import List
 import itertools
@@ -85,16 +84,13 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                                            instruction_count):
         if not self.arch.restore_point_patch_uses_live_registers():
             self.insert_at(block, instruction_offset, Patch.from_function(
-                self.arch.conditional_restore_point_patch(instruction_count, False)))
+                self.arch.conditional_restore_point_patch(instruction_count)))
             return
 
         patch = self.arch.conditional_restore_point_patch(instruction_count)
         if self.reg_manager is not None:
-            try:
-                patch = self.reg_manager.allocate_registers(
-                    function, block, instruction_idx)(patch)
-            except NotEnoughFreeRegistersException:
-                patch = self.arch.conditional_restore_point_patch(instruction_count, False)
+            patch = self.reg_manager.allocate_registers(
+                function, block, instruction_idx)(patch)
         self.insert_at(block, instruction_offset, Patch.from_function(patch))
 
     def __unconditional_rollback_at(self, block: gtirb.CodeBlock, instructions: List[CsInsn]):

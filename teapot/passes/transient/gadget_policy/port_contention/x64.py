@@ -25,17 +25,15 @@ class X64TransientPortContentionPolicyPass(TransientPortContentionPolicyPassBase
     def build_patch(self, block: gtirb.CodeBlock, inst, inst_offset: int):
         mem_read_operand_str = None
         regs_read = []
-        arch = self.arch
-        abi = self.reg_manager.abi
 
         for operand in inst.operands:
             if not operand.access & CS_AC_READ:
                 continue
 
             if operand.type == CS_OP_MEM:
-                mem_read_operand_str = arch.mem_operand_to_str(block, inst, operand)
+                mem_read_operand_str = self.arch.mem_operand_to_str(block, inst, operand)
             elif operand.type == CS_OP_REG:
-                regs_read.append(abi.get_register(inst.reg_name(operand.reg)))
+                regs_read.append(self.reg_manager.abi.get_register(inst.reg_name(operand.reg)))
 
         scratch_registers = 2 if mem_read_operand_str else 1
 
@@ -47,22 +45,22 @@ class X64TransientPortContentionPolicyPass(TransientPortContentionPolicyPassBase
                 r1, = ctx.scratch_registers
                 r2 = None
 
-            asm = arch.clear_register_snippet(r1)
+            asm = self.arch.clear_register_snippet(r1)
 
             for reg in regs_read:
-                asm += arch.dift_or_reg_tag_snippet(r1, None, reg)
+                asm += self.arch.dift_or_reg_tag_snippet(r1, None, reg)
 
             if mem_read_operand_str:
                 asm += f"""
                     lea {r2}, {mem_read_operand_str}
-                    {arch.dift_shadow_addr_snippet(r2, None, self.dift_layout.xor_mask)}
+                    {self.arch.dift_shadow_addr_snippet(r2, None, self.dift_layout.xor_mask)}
                     or {r1:8l}, [{r2}]
                 """
 
             asm += f"""
                 test {r1:8l}, {TAG_SECRET | TAG_SECRET_INDIRECT}
                 jz .L__check_ok{SYMBOL_SUFFIX}
-                {arch.report_gadget_snippet("KASPER_PORT", tag_reg=r1)}
+                {self.arch.report_gadget_snippet("KASPER_PORT", tag_reg=r1)}
             .L__check_ok{SYMBOL_SUFFIX}:
                 nop
             """

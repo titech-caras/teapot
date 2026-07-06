@@ -30,7 +30,7 @@ class ArchitectureCheckpointMixin(ABC):
         pass
 
     @abstractmethod
-    def conditional_restore_point_patch(self, instruction_count: int, use_scratch_registers: bool = True):
+    def conditional_restore_point_patch(self, instruction_count: int):
         pass
 
     @abstractmethod
