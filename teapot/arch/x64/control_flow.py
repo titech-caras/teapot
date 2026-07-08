@@ -41,7 +41,7 @@ class X64ControlFlowPatchesMixin:
     def conditional_move_suffix(instruction) -> Optional[str]:
         return instruction.mnemonic[4:] if instruction.mnemonic.startswith("cmov") else None
 
-    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol):
+    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, *, use_scratch_registers: bool = False):
         return self.constraints()(lambda ctx: f"""
             .long 0x{self.MAGIC_WORDS[0]:08x} # xchg rbx, rbx; nop
             .long 0x{self.MAGIC_WORDS[1]:08x} # xchg rdx, rdx; nop
@@ -70,13 +70,9 @@ class X64ControlFlowPatchesMixin:
 
         return self.mem_operand_to_str(block, last_inst, dest_operand)
 
-    def indirect_branch_check_allows_allocator_scratch(self) -> bool:
-        return True
-
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
-                                    text_end_symbol: gtirb.Symbol, use_scratch_registers: bool = True,
-                                    reads_registers=None):
+                                    text_end_symbol: gtirb.Symbol, reads_registers=None):
         @self.constraints(scratch_registers=2, reads_registers=reads_registers or set())
         def patch(ctx):
             r1, r2 = ctx.scratch_registers

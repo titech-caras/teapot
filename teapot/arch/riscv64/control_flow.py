@@ -3,18 +3,16 @@ from typing import Optional
 from uuid import UUID
 
 import gtirb
-from gtirb_live_register_analysis.manager import NotEnoughFreeRegistersException
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.utils.misc import generate_distinct_label_name
 
 
 class RISCV64ControlFlowPatchesMixin:
-    def adjust_insertion_offset(self, block: gtirb.CodeBlock, offset: int, decoder) -> int:
+    def adjust_insertion_offset(self, block: gtirb.CodeBlock, offset: int, instructions) -> int:
         if offset != 0 or block.byte_interval is None:
             return offset
 
-        instructions = list(decoder.get_instructions(block))
         if not instructions or instructions[0].mnemonic != "auipc":
             return offset
 
@@ -105,9 +103,9 @@ class RISCV64ControlFlowPatchesMixin:
 
         return patch
 
-    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, use_long_jump: bool = False,
-                                     jump_register: str = None, restore_before_jump: bool = True,
-                                     use_scratch_registers: bool = False):
+    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, *, use_scratch_registers: bool = False,
+                                     use_long_jump: bool = True, jump_register: str = None,
+                                     restore_before_jump: bool = True):
         scratch_count = 0
         if use_scratch_registers:
             scratch_count = 1 + (1 if use_long_jump and jump_register is None else 0)
@@ -162,25 +160,10 @@ class RISCV64ControlFlowPatchesMixin:
     def indirect_transform_landing_pad_label(self, block_uuid: UUID):
         return self.landing_pad_entry_label(block_uuid)
 
-    def indirect_transform_target_patch(self, target_symbol: gtirb.Symbol, *,
-                                       reg_manager=None, function=None, block=None, instruction_idx: int = 0,
-                                       landing_target_uuid=None, landing_pad_targets=None,
-                                       ensure_landing_pad_symbol=None):
-        if reg_manager is None:
-            return self.indirect_branch_target_patch(target_symbol)
-
-        patch = self.indirect_branch_target_patch(target_symbol, True, use_scratch_registers=True)
-        try:
-            return reg_manager.allocate_registers(function, block, instruction_idx, False)(patch)
-        except NotEnoughFreeRegistersException:
-            target_uuid = landing_target_uuid or block.uuid
-            if landing_pad_targets is not None:
-                landing_pad_targets.add(target_uuid)
-            if ensure_landing_pad_symbol is not None:
-                ensure_landing_pad_symbol(target_uuid)
-            target_symbol_name = self.landing_pad_entry_label(target_uuid)
-            return self.indirect_branch_target_patch(
-                target_symbol_name, True, "t0", restore_before_jump=False)
+    def indirect_transform_fallback_patch(self, target_symbol: gtirb.Symbol, *, landing_target_uuid=None):
+        target_symbol_name = self.landing_pad_entry_label(landing_target_uuid)
+        return self.indirect_branch_target_patch(
+            target_symbol_name, use_long_jump=True, jump_register="t0", restore_before_jump=False)
 
     def trampoline_target_names(self, fallthrough_target_symbol_name: str, branch_target_symbol_name: str, *,
                                 fallthrough_target_uuid: UUID, branch_target_uuid: UUID,
@@ -218,9 +201,6 @@ class RISCV64ControlFlowPatchesMixin:
             return operands[-1]
         return None
 
-    def indirect_branch_check_allows_allocator_scratch(self) -> bool:
-        return True
-
     def instruction_must_rollback(self, instruction) -> bool:
         return instruction.mnemonic in {
             "ecall", "ebreak", "fence", "fence.i", "sfence.vma",
@@ -238,22 +218,12 @@ class RISCV64ControlFlowPatchesMixin:
 
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
-                                    text_end_symbol: gtirb.Symbol, use_scratch_registers: bool = True,
-                                    reads_registers=None):
-        @self.constraints(scratch_registers=3 if use_scratch_registers else 0,
+                                    text_end_symbol: gtirb.Symbol, reads_registers=None):
+        @self.constraints(scratch_registers=3,
                           reads_registers=reads_registers or set())
         def patch(ctx):
-            target_reg, temp_reg, magic_reg = ctx.scratch_registers[:3] if use_scratch_registers else (
-                "t0", "t1", "t2")
-            prologue = "" if use_scratch_registers else self.save_regs_to_first_spill(
-                self.FIRST_SPILL_T0_T1_T2)
-            success_epilogue = "" if use_scratch_registers else self.restore_regs_from_first_spill(
-                self.FIRST_SPILL_T0_T1_T2)
-            rollback_epilogue = "" if use_scratch_registers else self.restore_regs_from_first_spill(
-                self.FIRST_SPILL_T0_T1_T2)
-            rollback_reg = target_reg if use_scratch_registers else "t0"
+            target_reg, temp_reg, magic_reg = ctx.scratch_registers[:3]
             return f"""
-                {prologue}
                 {self.materialize_target(target_reg, operand_str)}
                 {self.load_address(temp_reg, transient_start_symbol.name)}
                 bltu {target_reg}, {temp_reg}, 4f
@@ -271,11 +241,9 @@ class RISCV64ControlFlowPatchesMixin:
                 li {magic_reg}, 0x{self.MAGIC_WORDS[1]:08x}
                 bne {temp_reg}, {magic_reg}, 2f
             1:
-                {success_epilogue}
                 j 3f
             2:
-                {rollback_epilogue}
-                {self.jump_symbol("restore_checkpoint_MALFORMED_INDIRECT_BR", rollback_reg)}
+                {self.jump_symbol("restore_checkpoint_MALFORMED_INDIRECT_BR", target_reg)}
             3:
                 nop
             """

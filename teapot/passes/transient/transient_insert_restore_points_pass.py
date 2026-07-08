@@ -56,7 +56,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
             try:
                 final_conditional_rollback_idx = (
                     next(i for i in range(len(instructions) - 1, -1, -1)
-                         if self.arch.can_insert_restore_point(self.reg_manager, function, block, i)))
+                         if self.__can_insert_restore_point(function, block, i)))
             except StopIteration:
                 # Nowhere to insert this without clobbering flags, so just let it be and save the flags
                 final_conditional_rollback_idx = len(instructions) - 1
@@ -67,7 +67,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         while insert_until_idx - last_insertion_idx > self.INSERTION_SPACING * 4 // 3:
             # In the last sub-block, allow a bit more than 50 instructions to be handled by the final rollback
             current_insertion_idx = last_insertion_idx + self.INSERTION_SPACING
-            while not self.arch.can_insert_restore_point(self.reg_manager, function, block, current_insertion_idx):
+            while not self.__can_insert_restore_point(function, block, current_insertion_idx):
                 current_insertion_idx += 1
 
             self.__insert_conditional_restore_point(
@@ -93,11 +93,16 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                 function, block, instruction_idx)(patch)
         self.insert_at(block, instruction_offset, Patch.from_function(patch))
 
+    def __can_insert_restore_point(self, function, block, instruction_idx) -> bool:
+        live_registers = self.reg_manager.live_registers(function, block, instruction_idx) \
+            if self.reg_manager is not None and self.arch.restore_point_patch_uses_live_registers() else None
+        return self.arch.can_insert_restore_point(live_registers)
+
     def __unconditional_rollback_at(self, block: gtirb.CodeBlock, instructions: List[CsInsn]):
         unconditional_rollback_idx = next((i for i, instruction in enumerate(instructions)
                                            if self.arch.instruction_must_rollback(instruction)), None)
         if unconditional_rollback_idx is None:
-            non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
+            non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
             if len(non_fallthrough_edges) == 0:
                 return None
 

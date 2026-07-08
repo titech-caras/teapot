@@ -35,7 +35,7 @@ class VisitorPassMixin(Pass):
         arch = getattr(self, "arch", None)
         decoder = getattr(self, "decoder", None)
         if arch is not None and decoder is not None:
-            offset = arch.adjust_insertion_offset(block, offset, decoder)
+            offset = arch.adjust_insertion_offset(block, offset, list(decoder.get_instructions(block)))
         self.rewriting_ctx.insert_at(block, offset, patch)
 
     def visit_functions(self, functions, section: gtirb.Section = None):

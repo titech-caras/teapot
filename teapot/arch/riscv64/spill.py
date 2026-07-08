@@ -7,7 +7,6 @@ from teapot.configs.slots import (
 
 class RISCV64FirstSpillMixin:
     FIRST_SPILL_T0_T1 = ("t0", "t1")
-    FIRST_SPILL_T0_T1_T2 = ("t0", "t1", "t2")
 
     @classmethod
     def set_first_spill_restore_flag(cls) -> str:

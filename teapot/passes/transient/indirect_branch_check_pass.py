@@ -2,7 +2,6 @@ import gtirb
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_functions import Function
 from gtirb_live_register_analysis import LiveRegisterManager
-from gtirb_live_register_analysis.manager import NotEnoughFreeRegistersException
 from gtirb_rewriting import Patch, RewritingContext
 
 from teapot.arch.architecture import Architecture
@@ -58,19 +57,10 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
         patch = self.arch.indirect_branch_check_patch(
             operand_str, self.transient_section_start_symbol, self.transient_section_end_symbol,
             self.text_section_start_symbol, self.text_section_end_symbol,
-            True,
             reads_registers={reg.name for reg in operand_registers})
         if self.reg_manager is not None and self.arch.uses_live_registers:
-            try:
-                patch = self.reg_manager.allocate_registers(
-                    function, block, len(instructions) - 1,
-                    self.arch.indirect_branch_check_allows_allocator_scratch())(patch)
-            except NotEnoughFreeRegistersException:
-                patch = self.arch.indirect_branch_check_patch(
-                    operand_str, self.transient_section_start_symbol, self.transient_section_end_symbol,
-                    self.text_section_start_symbol, self.text_section_end_symbol,
-                    False,
-                    reads_registers={reg.name for reg in operand_registers})
+            patch = self.reg_manager.allocate_registers(
+                function, block, len(instructions) - 1)(patch)
         self.insert_at(block, sum(inst.size for inst in instructions[:-1]), Patch.from_function(patch))
 
     @staticmethod

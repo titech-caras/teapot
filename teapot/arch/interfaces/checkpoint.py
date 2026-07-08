@@ -3,7 +3,7 @@ from uuid import UUID
 
 
 class ArchitectureCheckpointMixin(ABC):
-    def can_insert_restore_point(self, reg_manager, function, block, instruction_idx) -> bool:
+    def can_insert_restore_point(self, live_registers) -> bool:
         return True
 
     def checkpoint_patch_uses_live_registers(self) -> bool:

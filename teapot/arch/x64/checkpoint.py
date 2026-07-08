@@ -7,8 +7,8 @@ from teapot.utils.misc import generate_distinct_label_name
 
 
 class X64CheckpointPatchesMixin:
-    def can_insert_restore_point(self, reg_manager, function, block, instruction_idx) -> bool:
-        return "rflags" not in (r.name for r in reg_manager.live_registers(function, block, instruction_idx))
+    def can_insert_restore_point(self, live_registers) -> bool:
+        return live_registers is None or "rflags" not in (r.name for r in live_registers)
 
     def checkpoint_patch(self, block_uuid: UUID, use_scratch_registers: bool = True):
         @self.constraints(scratch_registers=1 if use_scratch_registers else 0)

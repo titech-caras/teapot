@@ -43,7 +43,7 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         if self.eligible_block_uuids is not None and block.uuid not in self.eligible_block_uuids:
             return
 
-        non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
+        non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
         if len(non_fallthrough_edges) == 0:
             return
 

@@ -2,14 +2,9 @@ from typing import Optional
 from uuid import UUID
 
 import gtirb
-from gtirb_live_register_analysis.manager import NotEnoughFreeRegistersException
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
-from teapot.configs.slots import (
-    AARCH64_SHADOW_STACK_CONTROL_OFFSET,
-    AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET,
-    AARCH64_SHADOW_STACK_INDIRECT_TARGET_OFFSET,
-)
+from teapot.configs.slots import AARCH64_SHADOW_STACK_INDIRECT_TARGET_OFFSET
 from teapot.utils.misc import generate_distinct_label_name
 
 
@@ -46,31 +41,6 @@ class AArch64ControlFlowPatchesMixin:
             {cls.load_address(jump_register, target_symbol_name)}
             br {jump_register}
         """
-
-    @classmethod
-    def _materialize_saved_indirect_target(cls, target_reg: str, operand_str: str, *,
-                                           preserve_sp: bool = False,
-                                           frame_offset: int = AARCH64_SHADOW_STACK_CONTROL_OFFSET) -> str:
-        operand = operand_str.strip().lower()
-        saved_offsets = {
-            "x15": frame_offset,
-            "w15": frame_offset,
-            "x16": frame_offset + 8,
-            "w16": frame_offset + 8,
-            "x17": frame_offset + 16,
-            "w17": frame_offset + 16,
-        }
-        if operand in saved_offsets:
-            offset = saved_offsets[operand]
-            suffix = "" if offset == 0 else f", #{offset}"
-            if preserve_sp:
-                return f"""
-                    mov {target_reg}, sp
-                    {cls.shadow_stack_adjust_reg("sub", target_reg)}
-                    ldr {target_reg}, [{target_reg}{suffix}]
-                """
-            return f"ldr {target_reg}, [sp{suffix}]"
-        return f"mov {target_reg}, {operand_str}"
 
     def trampoline_patch(self, block_uuid: UUID, transient_block_uuid: UUID, mnemonic: str, op_str: str,
                          conditional_target_symbol_name: str, non_conditional_target_symbol_name: str,
@@ -109,7 +79,7 @@ class AArch64ControlFlowPatchesMixin:
             {trampoline_body}
         """)
 
-    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, use_scratch_registers: bool = False):
+    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, *, use_scratch_registers: bool = False):
         @self.constraints(scratch_registers=1 if use_scratch_registers else 0)
         def patch(ctx):
             if use_scratch_registers:
@@ -144,26 +114,10 @@ class AArch64ControlFlowPatchesMixin:
     def indirect_transform_uses_live_registers(self) -> bool:
         return True
 
-    def indirect_transform_target_patch(self, target_symbol: gtirb.Symbol, *,
-                                       reg_manager=None, function=None, block=None, instruction_idx: int = 0,
-                                       landing_target_uuid=None, landing_pad_targets=None,
-                                       ensure_landing_pad_symbol=None):
-        if reg_manager is None:
-            return self.indirect_branch_target_patch(target_symbol)
-
-        patch = self.indirect_branch_target_patch(target_symbol, True)
-        try:
-            return reg_manager.allocate_registers(function, block, instruction_idx, False)(patch)
-        except NotEnoughFreeRegistersException:
-            return self.indirect_branch_target_patch(target_symbol, False)
-
     def indirect_branch_operand(self, edge_type, last_inst, block: gtirb.CodeBlock = None) -> Optional[str]:
         if edge_type == gtirb.cfg.Edge.Type.Return:
             return last_inst.op_str.strip() or "x30"
         return last_inst.op_str.strip() or None
-
-    def indirect_branch_check_allows_allocator_scratch(self) -> bool:
-        return True
 
     def instruction_must_rollback(self, instruction) -> bool:
         return instruction.mnemonic in {"dmb", "dsb", "isb", "svc", "hvc", "smc"}
@@ -173,33 +127,14 @@ class AArch64ControlFlowPatchesMixin:
 
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
-                                    text_end_symbol: gtirb.Symbol, use_scratch_registers: bool = True,
-                                    reads_registers=None):
-        @self.constraints(scratch_registers=3 if use_scratch_registers else 0,
-                          clobbers_flags=use_scratch_registers,
+                                    text_end_symbol: gtirb.Symbol, reads_registers=None):
+        @self.constraints(scratch_registers=3,
+                          clobbers_flags=True,
                           reads_registers=reads_registers or set())
         def patch(ctx):
-            if use_scratch_registers:
-                target_reg, temp_reg, magic_reg = ctx.scratch_registers[:3]
-                prologue = ""
-                success_epilogue = ""
-                rollback_epilogue = ""
-                materialize_target = f"mov {target_reg}, {operand_str}"
-            else:
-                target_reg, temp_reg, magic_reg = "x15", "x16", "x17"
-                prologue = self.save_regs_to_shadow_stack(
-                    (target_reg, temp_reg, magic_reg), save_flags=True,
-                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET, preserve_sp=True)
-                success_epilogue = self.restore_regs_from_shadow_stack(
-                    (target_reg, temp_reg, magic_reg), save_flags=True,
-                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET, preserve_sp=True)
-                rollback_epilogue = success_epilogue
-                materialize_target = self._materialize_saved_indirect_target(
-                    target_reg, operand_str, preserve_sp=True,
-                    frame_offset=AARCH64_SHADOW_STACK_INDIRECT_CHECK_OFFSET)
+            target_reg, temp_reg, magic_reg = ctx.scratch_registers[:3]
             return f"""
-                {prologue}
-                {materialize_target}
+                mov {target_reg}, {operand_str}
                 {self.load_address(temp_reg, transient_start_symbol.name)}
                 cmp {target_reg}, {temp_reg}
                 b.lo 4f
@@ -222,10 +157,8 @@ class AArch64ControlFlowPatchesMixin:
                 cmp {self.w_reg(temp_reg)}, {self.w_reg(magic_reg)}
                 b.ne 2f
             1:
-                {success_epilogue}
                 b 3f
             2:
-                {rollback_epilogue}
                 b restore_checkpoint_MALFORMED_INDIRECT_BR
             3:
                 nop

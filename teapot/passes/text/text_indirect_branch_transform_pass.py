@@ -2,6 +2,7 @@ import gtirb
 from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext, Patch
 from gtirb_live_register_analysis import LiveRegisterManager
+from gtirb_live_register_analysis.manager import NotEnoughFreeRegistersException
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 
 from teapot.arch.architecture import Architecture
@@ -69,6 +70,42 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
             module=self.module)
         self.symbol_names.add(landing_name)
 
+    def _indirect_transform_target_patch(self, target_symbol: gtirb.Symbol, function: Function,
+                                         block: gtirb.CodeBlock, instruction_idx: int,
+                                         fallback_target_uuid):
+        # The fallback target is not part of live-register allocation.  It is
+        # only needed if allocation fails and the arch fallback must redirect
+        # through a restore/landing pad.
+        patch = self._allocated_indirect_transform_target_patch(
+            target_symbol, function, block, instruction_idx)
+        if patch is not None:
+            return patch
+
+        return self._indirect_transform_fallback_patch(
+            target_symbol, fallback_target_uuid or block.uuid)
+
+    def _allocated_indirect_transform_target_patch(self, target_symbol: gtirb.Symbol, function: Function,
+                                                   block: gtirb.CodeBlock, instruction_idx: int):
+        if self.reg_manager is None or not self.arch.indirect_transform_uses_live_registers():
+            return None
+
+        patch = self.arch.indirect_branch_target_patch(target_symbol, use_scratch_registers=True)
+        try:
+            return self.reg_manager.allocate_registers(function, block, instruction_idx, False)(patch)
+        except NotEnoughFreeRegistersException:
+            return None
+
+    def _indirect_transform_fallback_patch(self, target_symbol: gtirb.Symbol,
+                                           target_uuid):
+        # RISC-V fallback jumps through per-block landing pads so fixed first
+        # spills are restored before entering the transient copy.  Architectures
+        # without landing-pad fallback keep the original target symbol.
+        if self.arch.indirect_transform_landing_pad_label(target_uuid) is not None:
+            self.landing_pad_targets.add(target_uuid)
+            self._ensure_landing_pad_symbol(target_uuid)
+        return self.arch.indirect_transform_fallback_patch(
+            target_symbol, landing_target_uuid=target_uuid)
+
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         incoming_edges = list(block.incoming_edges)
         non_fallthrough_edges, fallthrough_edges = distinguish_edges(incoming_edges)
@@ -84,15 +121,9 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                 block,
                 transient_target)
             self.insert_at(block, 0, Patch.from_function(
-                self.arch.indirect_transform_target_patch(
+                self._indirect_transform_target_patch(
                     indbr_transform_target_symbol,
-                    reg_manager=self.reg_manager,
-                    function=function,
-                    block=block,
-                    instruction_idx=0,
-                    landing_target_uuid=block.uuid,
-                    landing_pad_targets=self.landing_pad_targets,
-                    ensure_landing_pad_symbol=self._ensure_landing_pad_symbol)))
+                    function, block, 0, block.uuid)))
 
         if (len(fallthrough_edges) > 0 and
                 any(e.label.type == gtirb.cfg.Edge.Type.Call for e in fallthrough_edges[0].source.outgoing_edges)):
@@ -101,19 +132,18 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                 ".L__ret_transform_target_" + function.get_name() + "_",
                 block,
                 transient_target)
-            source_block = fallthrough_edges[0].source
-            source_instructions = list(self.decoder.get_instructions(source_block))
-            source_instruction_idx = max(len(source_instructions) - 1, 0)
-            self.insert_at(source_block, source_block.size, Patch.from_function(
-                self.arch.indirect_transform_target_patch(
-                    ret_transform_target_symbol,
-                    reg_manager=self.reg_manager,
-                    function=function,
-                    block=source_block,
-                    instruction_idx=source_instruction_idx,
-                    landing_target_uuid=block.uuid,
-                    landing_pad_targets=self.landing_pad_targets,
-                    ensure_landing_pad_symbol=self._ensure_landing_pad_symbol)))
+            self.insert_at(
+                fallthrough_edges[0].source,
+                fallthrough_edges[0].source.size,
+                Patch.from_function(
+                    self._indirect_transform_target_patch(
+                        ret_transform_target_symbol,
+                        function,
+                        fallthrough_edges[0].source,
+                        max(
+                            len(list(self.decoder.get_instructions(fallthrough_edges[0].source))) - 1,
+                            0),
+                        block.uuid)))
 
     def _transform_target_symbol(self, prefix: str, block: gtirb.CodeBlock, transient_target: gtirb.CodeBlock):
         target_symbol = gtirb.Symbol(

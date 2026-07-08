@@ -26,7 +26,7 @@ class TextInitializeLibraryPass(VisitorPassMixin):
     def visit_function(self, function: Function):
         if function.get_name() == "main":
             for block in function.get_exit_blocks():
-                non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
+                non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
                 if len(non_fallthrough_edges) == 0:
                     continue
 

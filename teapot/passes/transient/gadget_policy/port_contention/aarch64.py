@@ -27,31 +27,30 @@ class AArch64TransientPortContentionPolicyPass(TransientPortContentionPolicyPass
                 return idx
         return None
 
-    def _predicate_regs(self, arch, abi, inst: CsInsn) -> set:
+    def _predicate_regs(self, inst: CsInsn) -> set:
         mnemonic = inst.mnemonic.lower()
         if mnemonic.startswith(("cb", "tb")):
-            return self._operand_regs(arch, abi, inst, inst.operands[:1])
-        if not self._is_flag_writer(abi, inst):
+            return self._operand_regs(inst, inst.operands[:1])
+        if not self._is_flag_writer(self.reg_manager.abi, inst):
             return set()
 
-        regs = arch.access_registers(abi, inst, 0)
+        regs = self.arch.access_registers(self.reg_manager.abi, inst, 0)
         if regs:
             return regs
 
         if mnemonic in {"cmp", "cmn", "tst", "ccmp", "ccmn"}:
-            return self._operand_regs(arch, abi, inst, inst.operands)
+            return self._operand_regs(inst, inst.operands)
 
-        return self._operand_regs(arch, abi, inst, inst.operands[1:])
+        return self._operand_regs(inst, inst.operands[1:])
 
-    @staticmethod
-    def _operand_regs(arch, abi, inst: CsInsn, operands) -> set:
-        flag_register = abi.flag_register()
+    def _operand_regs(self, inst: CsInsn, operands) -> set:
+        flag_register = self.reg_manager.abi.flag_register()
         flag_name = flag_register.name if flag_register is not None else None
         result = set()
         for operand in operands:
             if operand.type != CS_OP_REG:
                 continue
-            reg = arch.register_from_name(abi, inst.reg_name(operand.reg), flag_name)
+            reg = self.arch.register_from_name(self.reg_manager.abi, inst.reg_name(operand.reg), flag_name)
             if reg is not None:
                 result.add(reg)
         return result
@@ -76,7 +75,7 @@ class AArch64TransientPortContentionPolicyPass(TransientPortContentionPolicyPass
     def build_patch(self, block: gtirb.CodeBlock, inst: CsInsn, inst_offset: int):
         mem_operand = next(iter(op for op in inst.operands if op.type == CS_OP_MEM), None)
         regs_read = self.arch.access_registers(self.reg_manager.abi, inst, 0)
-        regs_read |= self._predicate_regs(self.arch, self.reg_manager.abi, inst)
+        regs_read |= self._predicate_regs(inst)
         if mem_operand is not None:
             regs_read.update(self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand))
 
