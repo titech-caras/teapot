@@ -10,6 +10,7 @@ from gtirb_rewriting import Patch, RewritingContext
 from gtirb_rewriting.assembly import Register
 
 from teapot.arch.architecture import Architecture
+from teapot.configs.runtime import ASAN_TAG_STORAGE_SHADOW
 from teapot.datacls.dift_layout import get_dift_layout
 from teapot.passes.mixins import ArchSpecificPassMixin, InstVisitorPassMixin
 
@@ -23,13 +24,14 @@ class MemOperandPolicyPatch:
 class TransientMemOperandPoliciesPassBase(ArchSpecificPassMixin, InstVisitorPassMixin):
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder, arch: Architecture, *, dift_layout=None,
-                 enable_asan_check: bool = True):
+                 enable_asan_check: bool = True, asan_tag_storage: str = ASAN_TAG_STORAGE_SHADOW):
         self.check_expected_arch(arch)
         super().__init__(reg_manager, decoder)
         self.transient_section = transient_section
         self.arch = arch
         self.dift_layout = dift_layout or get_dift_layout(arch.name)
         self.enable_asan_check = enable_asan_check
+        self.asan_tag_storage = asan_tag_storage
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         super().begin_module(module, functions, rewriting_ctx)

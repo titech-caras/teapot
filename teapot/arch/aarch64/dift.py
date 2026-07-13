@@ -78,6 +78,7 @@ class AArch64DiftPatchesMixin:
 
     def dift_shadow_addr_snippet(self, addr_reg, tmp_reg, xor_mask: int) -> str:
         return f"""
+            ubfx {addr_reg}, {addr_reg}, #0, #56
             {self.mov_u64(tmp_reg, xor_mask)}
             eor {addr_reg}, {addr_reg}, {tmp_reg}
         """

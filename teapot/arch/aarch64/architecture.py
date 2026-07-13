@@ -95,13 +95,15 @@ class AArch64Architecture(
         return AArch64TransientMemlogPass(reg_manager, section, decoder, self)
 
     def create_transient_mem_operand_policy_pass(self, reg_manager, section, decoder, *,
-                                                 dift_layout, enable_asan_check: bool):
+                                                 dift_layout, enable_asan_check: bool,
+                                                 asan_tag_storage: str = "shadow"):
         from teapot.passes.transient.gadget_policy.mem_operand.aarch64 import (
             AArch64TransientMemOperandPoliciesPass,
         )
         return AArch64TransientMemOperandPoliciesPass(
             reg_manager, section, decoder, self,
-            dift_layout=dift_layout, enable_asan_check=enable_asan_check)
+            dift_layout=dift_layout, enable_asan_check=enable_asan_check,
+            asan_tag_storage=asan_tag_storage)
 
     def create_transient_port_contention_policy_pass(self, reg_manager, section, decoder, *,
                                                      dift_layout):

@@ -6,6 +6,7 @@ from gtirb_rewriting import PassManager
 from gtirb_rewriting.abi import _ABIS
 
 from teapot.arch import get_arch
+from teapot.configs.runtime import ASAN_TAG_STORAGE_MTE, ASAN_TAG_STORAGE_SHADOW
 from teapot.datacls.dift_layout import get_dift_layout
 from teapot.passes.common.asan_stack_pass import AsanStackPass
 from teapot.passes.common.insert_checkpoints_pass import InsertCheckpointsPass
@@ -30,6 +31,9 @@ from teapot.preprocess.create_guards import create_guards
 from teapot.utils.misc import distinguish_edges
 from teapot.utils.reg_analysis import LiveRegisterManagerWrapper
 
+ARCH_INFO_AUX_TYPE = "mapping<string,string>"
+AARCH64_MTE_ARCH_FEATURE = "mte"
+
 
 def _run_pass_manager(pass_manager: PassManager, ir: gtirb.IR, label: str):
     print(f"[teapot] begin {label}", flush=True)
@@ -49,6 +53,17 @@ def _conditional_branch_block_uuids(section: gtirb.Section):
     return block_uuids
 
 
+def _add_arch_feature(module: gtirb.Module, feature: str):
+    aux_data = module.aux_data.get("archInfo")
+    if aux_data is None:
+        aux_data = gtirb.AuxData({}, ARCH_INFO_AUX_TYPE)
+        module.aux_data["archInfo"] = aux_data
+
+    features = set(aux_data.data.get("features", "").replace(",", " ").split())
+    features.add(feature)
+    aux_data.data["features"] = " ".join(sorted(features))
+
+
 @dataclass(frozen=True)
 class InstrumentationOptions:
     enable_dift: bool = True
@@ -63,6 +78,7 @@ class InstrumentationOptions:
     enable_mem_operand_gadgets: bool = True
     enable_port_gadgets: bool = True
     enable_gadget_asan_check: bool = True
+    aarch64_tag_storage: str = ASAN_TAG_STORAGE_SHADOW
 
 
 class TeapotPipeline:
@@ -75,6 +91,10 @@ class TeapotPipeline:
     def run(self):
         self.module = self.ir.modules[0]
         self.arch = get_arch(self.module)
+        if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE and self.arch.name != "aarch64":
+            raise ValueError("--aarch64-tag-storage=mte is only valid for AArch64 modules")
+        if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE:
+            _add_arch_feature(self.module, AARCH64_MTE_ARCH_FEATURE)
         self.arch.install_decoder_compat()
         self.dift_layout = get_dift_layout(self.arch.name, self.dift_layout_name)
         self.arch.install_rewriting_compat()
@@ -173,7 +193,8 @@ class TeapotPipeline:
         pass_manager.add(TextInitializeLibraryPass(self.text_section, self.decoder, self.arch))
         if self.options.enable_asan:
             pass_manager.add(AsanStackPass(
-                self.reg_manager, self.text_section, self.decoder, self.arch, False, dift_layout=self.dift_layout))
+                self.reg_manager, self.text_section, self.decoder, self.arch, False,
+                dift_layout=self.dift_layout, tag_storage=self.options.aarch64_tag_storage))
         if self.options.enable_indirect_transform:
             pass_manager.add(TextIndirectBranchTransformPass(
                 self.text_section,
@@ -196,7 +217,8 @@ class TeapotPipeline:
         pass_manager = PassManager()
         if self.options.enable_asan:
             pass_manager.add(AsanStackPass(
-                self.reg_manager, self.transient_section, self.decoder, self.arch, True, dift_layout=self.dift_layout))
+                self.reg_manager, self.transient_section, self.decoder, self.arch, True,
+                dift_layout=self.dift_layout, tag_storage=self.options.aarch64_tag_storage))
         if self.options.enable_gadgets:
             pass_manager.add(TransientCoveragePass(
                 self.reg_manager, self.transient_section, self.decoder, self.guard_section, self.arch))
@@ -206,7 +228,8 @@ class TeapotPipeline:
                     self.transient_section,
                     self.decoder,
                     dift_layout=self.dift_layout,
-                    enable_asan_check=self.options.enable_gadget_asan_check))
+                    enable_asan_check=self.options.enable_gadget_asan_check,
+                    asan_tag_storage=self.options.aarch64_tag_storage))
             if self.options.enable_port_gadgets:
                 pass_manager.add(self.arch.create_transient_port_contention_policy_pass(
                     self.reg_manager,

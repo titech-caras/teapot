@@ -60,9 +60,12 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
     def _build_patch(self, inst: CsInsn, mem_operand, access_size: int, write_regs,
                      address_regs, *, reads_registers=None):
 
-        @self.arch.constraints(scratch_registers=4, reads_registers=reads_registers or set())
+        scratch_registers = 5 if self.enable_asan_check and access_size > 8 else 4
+
+        @self.arch.constraints(scratch_registers=scratch_registers, reads_registers=reads_registers or set())
         def patch(ctx: InsertionContext):
             tag_reg, addr_reg, tmp_reg, shadow_reg = ctx.scratch_registers[:4]
+            end_reg = ctx.scratch_registers[4] if scratch_registers > 4 else None
             done_label = f".L__mem_operand_policy_done{SYMBOL_SUFFIX}"
 
             asm = ""
@@ -89,7 +92,7 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
                 {self.arch.asan_check_snippet(
                     addr_reg, access_size, done_label,
                     shadow_offset=self.dift_layout.asan_shadow_offset,
-                    scratch_reg=tmp_reg, shadow_reg=shadow_reg)
+                    scratch_reg=tmp_reg, shadow_reg=shadow_reg, end_reg=end_reg)
                  if self.enable_asan_check else f"j {done_label}"}
             .L__asan_check_fail{SYMBOL_SUFFIX}:
                 andi {tmp_reg}, {tag_reg}, {TAG_ATTACKER}

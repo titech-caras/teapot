@@ -2,6 +2,7 @@ import argparse
 
 import gtirb
 
+from teapot.configs.runtime import ASAN_TAG_STORAGES, ASAN_TAG_STORAGE_SHADOW
 from teapot.datacls.dift_layout import LAYOUTS, layout_names_for_arch
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 
@@ -29,6 +30,15 @@ def main():
         "--disable-asan",
         action="store_true",
         help="Skip ASan stack poisoning instrumentation.",
+    )
+    parser.add_argument(
+        "--aarch64-tag-storage",
+        choices=ASAN_TAG_STORAGES,
+        default=ASAN_TAG_STORAGE_SHADOW,
+        help=(
+            "AArch64 storage backend for Teapot ASan-style tags. "
+            "The mte backend uses MTE allocation tags as software-read metadata."
+        ),
     )
     parser.add_argument(
         "--disable-gadgets",
@@ -106,6 +116,7 @@ def main():
         enable_port_gadgets=not args.disable_port_gadgets,
         enable_gadget_asan_check=not args.disable_gadget_asan_check,
         enable_nested_speculation=args.enable_nested_speculation,
+        aarch64_tag_storage=args.aarch64_tag_storage,
     )
     TeapotPipeline(ir, args.dift_layout, options).run()
     ir.save_protobuf(args.output)

@@ -47,16 +47,25 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
 
     def _build_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
                      conditional: Optional[str], mem_operand, write_reg: Register):
-        scratch_registers = 4 if access_size < 8 else 3
+        if access_size > 8:
+            scratch_registers = 5
+        elif access_size < 8:
+            scratch_registers = 4
+        else:
+            scratch_registers = 3
         addr_regs = self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand)
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
-            if access_size < 8:
+            if access_size > 8:
+                r1, r2, r3, r4, r5 = ctx.scratch_registers
+            elif access_size < 8:
                 r1, r2, r3, r4 = ctx.scratch_registers
+                r5 = None
             else:
                 r1, r2, r3 = ctx.scratch_registers
                 r4 = None
+                r5 = None
 
             asm = f"""
                 lea {r2}, {mem_operand_str}
@@ -82,7 +91,7 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
                 {self.arch.asan_check_snippet(
                     r2, access_size, done_label,
                     shadow_offset=self.dift_layout.asan_shadow_offset,
-                    shadow_reg=r3, scratch_reg=r4)
+                    shadow_reg=r3, scratch_reg=r4, end_reg=r5)
                  if self.enable_asan_check else f"jmp {done_label}"}
             .L__asan_check_fail{SYMBOL_SUFFIX}:
                 test {r1:8l}, {TAG_ATTACKER}

@@ -64,7 +64,8 @@ class Architecture(
         raise NotImplementedError(f"{self.name} does not define transient memlog pass")
 
     def create_transient_mem_operand_policy_pass(self, reg_manager, section, decoder, *,
-                                                 dift_layout, enable_asan_check: bool):
+                                                 dift_layout, enable_asan_check: bool,
+                                                 asan_tag_storage: str = "shadow"):
         raise NotImplementedError(f"{self.name} does not define transient memory-operand policy pass")
 
     def create_transient_port_contention_policy_pass(self, reg_manager, section, decoder, *,

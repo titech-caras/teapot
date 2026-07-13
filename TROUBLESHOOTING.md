@@ -32,9 +32,12 @@ or a known-good cross toolchain for RV64 ASan links.
 **AArch64 instrumented binary faults in DIFT shadow memory under qemu**
 
 Use matching AArch64 DIFT profiles for instrumentation and libcheckpoint.
-For qemu user-mode smoke tests, prefer `aarch64-vma39` with `qemu-aarch64 -R 0x8000000000 -L /usr/aarch64-linux-gnu ...`.
-Wider profiles such as `aarch64-vma42` pre-map much larger DIFT ranges and can spend a long time in startup or consume high host RSS.
-If the fault is reported as a stack overflow immediately after startup, increase qemu's target stack as well, for example `qemu-aarch64 -R 0x8000000000 -s 33554432 -L /usr/aarch64-linux-gnu ...`.
+For shadow-tag qemu user-mode smoke tests, `aarch64-vma39` with `qemu-aarch64 -R 0x8000000000 -L /usr/aarch64-linux-gnu ...` may be sufficient.
+For AArch64 MTE tag-storage smoke tests, use `aarch64-vma42` with `qemu-aarch64-mte -cpu max -R 0x40000000000 -s 33554432 -L /opt/aarch64-mte-sysroot ...`; under qemu, `aarch64-vma39` can place DIFT shadow memory where the dynamic loader or stack lives.
+The provided Docker image keeps the old Focal cross sysroot in `/usr/aarch64-linux-gnu`, and adds a newer MTE-capable arm64 glibc sysroot in `/opt/aarch64-mte-sysroot`.
+`GLIBC_TUNABLES=glibc.mem.tagging=1` enables glibc malloc MTE tagging in that sysroot; Teapot's MTE software check accepts matching logical/allocation tags and reports mismatches as poisoned.
+Wider profiles pre-map larger DIFT ranges and can spend longer in startup or consume high host RSS.
+If the fault is reported as a stack overflow immediately after startup, increase qemu's target stack with `-s 33554432`.
 When adding AArch64 instrumentation, do not reuse a shadow-stack frame offset or fixed scratchpad save window across passes or subpatches that may be nested. DIFT, memlog, ASan, gadget, coverage, control-flow, text-DIFT, and generic ABI first-spill frames must stay disjoint.
 
 **AArch64/RV64 libhtp compressed-response smoke differs from baseline**

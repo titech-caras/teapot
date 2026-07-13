@@ -27,11 +27,15 @@ calls do not make ABI caller-saved GPRs available for instrumentation.
 Keep this behavior until Teapot has a more precise cross-call analysis.
 
 See [`libcheckpoint/README.md`](libcheckpoint/README.md) for runtime
-build options, ASan requirements, DIFT layout profiles, optional wrapper
-libraries, and architecture-specific qemu notes.
+build options, ASan/MTE tag-storage requirements, DIFT layout profiles,
+optional wrapper libraries, and architecture-specific qemu notes.
 
 Using the provided Dockerfile is an easy way to quickly test Teapot,
 which contains all the necessary dependencies.
+It also includes an isolated Ubuntu arm64 sysroot with MTE-capable glibc at
+`/opt/aarch64-mte-sysroot` and a newer static qemu runner at
+`/usr/local/bin/qemu-aarch64-mte`; the normal `/usr/aarch64-linux-gnu` cross
+sysroot is left unchanged.
 
 ## Usage
 
@@ -52,6 +56,19 @@ The DIFT address-space profile is selected at instrumentation time with
 `libcheckpoint/cmake/DiftLayoutData.cmake` and are shared by Teapot and the
 runtime build.
 
+On AArch64, Teapot ASan-style tag storage defaults to ASan shadow bytes.  The
+experimental `--aarch64-tag-storage=mte` mode stores those tags in MTE
+allocation tags instead; build libcheckpoint with
+`-DTEAPOT_AARCH64_TAG_STORAGE=mte` and assemble Teapot output with an MTE-capable
+target such as `armv8.5-a+memtag`.  Teapot still reads and checks tags in
+software by comparing the pointer logical tag with the memory allocation tag.
+MTE tag faults are disabled because recovering from tag-check signals is too
+expensive for speculative simulation.  MTE mode does not need ASan for tag
+storage; avoid linking ASan unless another experiment explicitly needs it.
+The Docker sysroot's glibc supports `GLIBC_TUNABLES=glibc.mem.tagging=1` for
+malloc MTE tagging, which uses the same pointer/allocation-tag matching
+semantics.
+
 Nested speculation is disabled by default.  Use
 `--enable-nested-speculation` to also insert checkpoints in the transient copy,
 and link the instrumented binary with the nested-capable `checkpoint_nested`
@@ -71,11 +88,19 @@ For RV64, use a RISC-V-capable `gtirb-pprinter` build and assembler path; see
 ```shell
 gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint -lhfuzz -lasan
 ```
+For AArch64 MTE tag storage, compile with an MTE-capable target and omit
+`-lasan`:
+```shell
+aarch64-linux-gnu-gcc -march=armv8.5-a+memtag -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint
+```
+In the provided Docker image, run MTE smoke tests with:
+```shell
+qemu-aarch64-mte -cpu max -R 0x40000000000 -s 33554432 -L /opt/aarch64-mte-sysroot ./a.inst
+```
 Build and link optional DIFT wrapper libraries only when Teapot rewrites calls
 to those wrapper symbols.
 
-5. The usage of ASan in the instrumented binary makes it unhappy, 
-so set some environment variables to silence it.
+5. For ASan-linked shadow-tag binaries, set some environment variables to silence it.
 This is preset in the provided Dockerfile.
 ```shell
 export ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=false

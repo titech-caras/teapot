@@ -6,7 +6,7 @@ from gtirb_functions import Function
 from gtirb_rewriting import InsertionContext
 from gtirb_rewriting.assembly import Register
 
-from teapot.configs.runtime import SYMBOL_SUFFIX
+from teapot.configs.runtime import ASAN_TAG_STORAGE_MTE, SYMBOL_SUFFIX
 from teapot.configs.tags import (
     TAG_ATTACKER,
     TAG_ATTACKER_INDIRECT,
@@ -55,12 +55,17 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
                      mem_symexpr: Optional[gtirb.SymbolicExpression], *,
                      reads_registers=None):
 
+        needs_end_reg = self.enable_asan_check and (
+            self.asan_tag_storage == ASAN_TAG_STORAGE_MTE or access_size > 8)
+        scratch_registers = 5 if needs_end_reg else 4
+
         @self.arch.constraints(
-            scratch_registers=4,
+            scratch_registers=scratch_registers,
             clobbers_flags=True,
             reads_registers=reads_registers or set())
         def patch(ctx: InsertionContext):
             tag_reg, addr_reg, tmp_reg, shadow_reg = ctx.scratch_registers[:4]
+            end_reg = ctx.scratch_registers[4] if scratch_registers > 4 else None
             done_label = f".L__mem_operand_policy_done{SYMBOL_SUFFIX}"
 
             asm = ""
@@ -86,7 +91,8 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
                 {self.arch.asan_check_snippet(
                     addr_reg, access_size, done_label,
                     shadow_offset=self.dift_layout.asan_shadow_offset,
-                    scratch_reg=tmp_reg, shadow_reg=shadow_reg)
+                    scratch_reg=tmp_reg, shadow_reg=shadow_reg,
+                    tag_storage=self.asan_tag_storage, end_reg=end_reg)
                  if self.enable_asan_check else f"b {done_label}"}
             .L__asan_check_fail{SYMBOL_SUFFIX}:
                 and {tmp_reg:32}, {tag_reg:32}, #{TAG_ATTACKER}

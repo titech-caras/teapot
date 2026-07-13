@@ -49,7 +49,8 @@ class X64Architecture(
         return X64TransientMemlogPass(reg_manager, section, decoder, self)
 
     def create_transient_mem_operand_policy_pass(self, reg_manager, section, decoder, *,
-                                                 dift_layout, enable_asan_check: bool):
+                                                 dift_layout, enable_asan_check: bool,
+                                                 asan_tag_storage: str = "shadow"):
         from teapot.passes.transient.gadget_policy.mem_operand.x64 import (
             X64TransientMemOperandPoliciesPass,
         )
