@@ -33,7 +33,8 @@ class X64CheckpointPatchesMixin:
         return patch
 
     def trampoline_patch(self, block_uuid: UUID, transient_block_uuid: UUID, mnemonic: str, op_str: str,
-                         conditional_target_symbol_name: str, non_conditional_target_symbol_name: str):
+                         conditional_target_symbol_name: str, non_conditional_target_symbol_name: str,
+                         checkpoint_spare_registers=()):
         return self.constraints()(lambda ctx: f"""
         {generate_distinct_label_name(".__trampoline_", block_uuid)}:
         {generate_distinct_label_name(".__trampoline_", transient_block_uuid)}:

@@ -23,7 +23,8 @@ class CreateTrampolinesPass(VisitorPassMixin):
     def __init__(self,
                  text_section: gtirb.Section, trampoline_section: gtirb.Section, branch_counter_section: gtirb.Section,
                  text_transient_mapping: CopiedSectionMapping, decoder: GtirbInstructionDecoder,
-                 arch: Architecture, reg_manager=None, landing_pad_targets=None):
+                 arch: Architecture, reg_manager=None, landing_pad_targets=None,
+                 checkpoint_spare_registers=None):
         self.text_section = text_section
         self.trampoline_section = trampoline_section
         self.branch_counter_section = branch_counter_section
@@ -31,11 +32,18 @@ class CreateTrampolinesPass(VisitorPassMixin):
         self.arch = arch
         self.reg_manager = reg_manager
         self.landing_pad_targets = landing_pad_targets if landing_pad_targets is not None else set()
+        self.checkpoint_spare_registers = (
+            checkpoint_spare_registers if checkpoint_spare_registers is not None else {})
 
         self.decoder = decoder
         self.trampoline_byte_interval = next(iter(trampoline_section.byte_intervals))
         self.branch_counter_byte_interval = next(iter(branch_counter_section.byte_intervals))
         self.processed_blocks = set()
+
+    def visit_function(self, function: Function):
+        if self.reg_manager is not None and self.arch.checkpoint_patch_uses_live_registers():
+            self.reg_manager.analyze(function)
+        super().visit_function(function)
 
     def __initialize_empty_trampoline_code_block(self):
         nop = self.arch.nop_bytes
@@ -86,6 +94,15 @@ class CreateTrampolinesPass(VisitorPassMixin):
             *_, last_instruction = instructions
             instruction_idx = max(len(instructions) - 1, 0)
 
+            spare_registers = ()
+            if self.reg_manager is not None and self.arch.checkpoint_patch_uses_live_registers():
+                spare_registers = self.arch.checkpoint_spare_registers(
+                    self.reg_manager.abi,
+                    self.reg_manager.live_registers(function, block, instruction_idx))
+            self.checkpoint_spare_registers[block.uuid] = spare_registers
+            self.checkpoint_spare_registers[
+                self.text_transient_mapping.code_blocks_map[block.uuid].uuid] = spare_registers
+
             trampoline_kwargs = {}
 
             trampoline_target_payload = self.text_transient_mapping.code_blocks_map[fallthrough_edge.target.uuid]
@@ -117,6 +134,7 @@ class CreateTrampolinesPass(VisitorPassMixin):
                 block.uuid, self.text_transient_mapping.code_blocks_map[block.uuid].uuid,
                 last_instruction.mnemonic, last_instruction.op_str, fallthrough_target_symbol_name,
                 branch_target_symbol_name,
+                checkpoint_spare_registers=spare_registers,
                 **trampoline_kwargs,
             )
             self.rewriting_ctx.replace_at(

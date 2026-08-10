@@ -26,12 +26,12 @@ class RISCV64FirstSpillMixin:
         """
 
     @classmethod
-    def save_regs_to_first_spill(cls, regs) -> str:
+    def save_regs_to_first_spill(cls, regs, *, offset: int = 0) -> str:
         lines = [
             cls.load_address("tp", f"scratchpad+{SCRATCHPAD_FIRST_SPILL_OFFSET}"),
         ]
         lines.extend(
-            f"sd {reg}, {idx * 8}(tp)"
+            f"sd {reg}, {offset + idx * 8}(tp)"
             for idx, reg in enumerate(regs)
         )
         lines.extend([

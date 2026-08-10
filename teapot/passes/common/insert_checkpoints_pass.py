@@ -21,11 +21,14 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def __init__(self, reg_manager: LiveRegisterManager, text_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder, arch: Architecture,
-                 eligible_block_uuids: Optional[Set[UUID]] = None):
+                 eligible_block_uuids: Optional[Set[UUID]] = None,
+                 checkpoint_spare_registers=None):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.text_section = text_section
         self.arch = arch
         self.eligible_block_uuids = eligible_block_uuids
+        self.checkpoint_spare_registers = (
+            checkpoint_spare_registers if checkpoint_spare_registers is not None else {})
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
@@ -62,17 +65,17 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                     f"in {fn_name} block {block.uuid} at 0x{block.address:x}; instructions: {insts}"
                 )
 
-            if not self.arch.checkpoint_patch_uses_live_registers():
-                self.insert_at(
-                    block, conditional_jump_offset,
-                    Patch.from_function(self.arch.checkpoint_patch(block.uuid, False)))
+            if not self.arch.CHECKPOINT_FIXED_REGISTERS:
+                try:
+                    self.insert_at(block, conditional_jump_offset, Patch.from_function(
+                        self.reg_manager.allocate_registers(
+                            function, block, len(instructions) - 1, False)(
+                            self.arch.checkpoint_patch(block.uuid))))
+                except NotEnoughFreeRegistersException:
+                    self.insert_at(block, conditional_jump_offset, Patch.from_function(
+                        self.arch.checkpoint_patch(block.uuid, False)))
                 return
 
-            try:
-                self.insert_at(block, conditional_jump_offset, Patch.from_function(
-                    self.reg_manager.allocate_registers(
-                        function, block, len(instructions) - 1, False)(
-                        self.arch.checkpoint_patch(block.uuid))))
-            except NotEnoughFreeRegistersException:
-                self.insert_at(block, conditional_jump_offset, Patch.from_function(
-                    self.arch.checkpoint_patch(block.uuid, False)))
+            self.insert_at(block, conditional_jump_offset, Patch.from_function(
+                self.arch.checkpoint_patch(
+                    block.uuid, self.checkpoint_spare_registers.get(block.uuid, ()))))

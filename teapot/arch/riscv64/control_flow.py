@@ -56,7 +56,8 @@ class RISCV64ControlFlowPatchesMixin:
                          use_long_jumps: bool = False, jump_register: str = None,
                          conditional_jump_register: str = None, non_conditional_jump_register: str = None,
                          conditional_use_long_jump: bool = None, non_conditional_use_long_jump: bool = None,
-                         preserve_jump_registers_with_landing: bool = False):
+                         preserve_jump_registers_with_landing: bool = False,
+                         checkpoint_spare_registers=()):
         conditional_taken = generate_distinct_label_name(".__trampoline_taken_", block_uuid)
         conditional_branch = self.retarget_last_operand(mnemonic, op_str, conditional_taken)
         conditional_use_long_jump = use_long_jumps if conditional_use_long_jump is None else conditional_use_long_jump
@@ -68,6 +69,10 @@ class RISCV64ControlFlowPatchesMixin:
         needs_allocated_jump_register = (
             jump_register is None and
             (conditional_needs_allocated_register or non_conditional_needs_allocated_register)
+        )
+        checkpoint_restore = "\n".join(
+            f"mv {fixed}, {spare}"
+            for fixed, spare in zip(self.CHECKPOINT_FIXED_REGISTERS, checkpoint_spare_registers)
         )
 
         @self.constraints(scratch_registers=1 if needs_allocated_jump_register else 0)
@@ -93,6 +98,7 @@ class RISCV64ControlFlowPatchesMixin:
         {generate_distinct_label_name(".__trampoline_landing_", block_uuid)}:
             {self.load_address("t0", "checkpoint_target_metadata")}
             ld t0, {self.CHECKPOINT_TARGET_SCRATCH_REG_ADDR}(t0)
+            {checkpoint_restore}
         {generate_distinct_label_name(".__trampoline_", block_uuid)}:
         {generate_distinct_label_name(".__trampoline_", transient_block_uuid)}:
             {conditional_branch}

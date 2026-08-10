@@ -46,7 +46,8 @@ class AArch64ControlFlowPatchesMixin:
                          conditional_target_symbol_name: str, non_conditional_target_symbol_name: str,
                          use_long_jumps: bool = False, jump_register: str = None,
                          conditional_jump_register: str = None, non_conditional_jump_register: str = None,
-                         conditional_use_long_jump: bool = None, non_conditional_use_long_jump: bool = None):
+                         conditional_use_long_jump: bool = None, non_conditional_use_long_jump: bool = None,
+                         checkpoint_spare_registers=()):
         fallthrough_label = generate_distinct_label_name(".__trampoline_fallthrough_", block_uuid)
         inverse_branch = self.invert_conditional_branch(mnemonic, op_str, fallthrough_label)
         conditional_use_long_jump = use_long_jumps if conditional_use_long_jump is None else conditional_use_long_jump
@@ -70,10 +71,15 @@ class AArch64ControlFlowPatchesMixin:
             {fallthrough_label}:
                 {non_conditional_jump}
             """
+        checkpoint_restore = "\n".join(
+            f"mov {fixed}, {spare}"
+            for fixed, spare in zip(self.CHECKPOINT_FIXED_REGISTERS, checkpoint_spare_registers)
+        )
         return self.constraints()(lambda ctx: f"""
         {generate_distinct_label_name(".__trampoline_landing_", block_uuid)}:
             {self.load_address("x16", "checkpoint_target_metadata")}
             ldr x16, [x16, #{self.CHECKPOINT_TARGET_SCRATCH_REG_ADDR}]
+            {checkpoint_restore}
         {generate_distinct_label_name(".__trampoline_", block_uuid)}:
         {generate_distinct_label_name(".__trampoline_", transient_block_uuid)}:
             {trampoline_body}
