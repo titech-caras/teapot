@@ -160,6 +160,7 @@ class TeapotPipeline:
         gtirb.ByteInterval(section=self.branch_counter_section)
 
         self.landing_pad_targets = set()
+        self.checkpoint_spare_registers = {}
 
     def _run_preprocess_passes(self):
         pass_manager = PassManager()
@@ -172,7 +173,8 @@ class TeapotPipeline:
             self.decoder,
             self.arch,
             self.reg_manager,
-            self.landing_pad_targets))
+            self.landing_pad_targets,
+            self.checkpoint_spare_registers))
         for arch_pass in self.arch.preprocess_passes(
                 text_section=self.text_section,
                 transient_section=self.transient_section,
@@ -208,7 +210,8 @@ class TeapotPipeline:
                 self.reg_manager, self.text_section, self.decoder, self.dift_layout))
         if self.options.enable_checkpoints and self.arch.text_checkpoints_in_main_text_pass():
             pass_manager.add(InsertCheckpointsPass(
-                self.reg_manager, self.text_section, self.decoder, self.arch, self.checkpoint_block_uuids))
+                self.reg_manager, self.text_section, self.decoder, self.arch,
+                self.checkpoint_block_uuids, self.checkpoint_spare_registers))
         _run_pass_manager(pass_manager, self.ir, "text")
         if self.reg_manager is not None:
             self.reg_manager.result_cache.clear()
@@ -263,7 +266,8 @@ class TeapotPipeline:
                 self.transient_section,
                 self.decoder,
                 self.arch,
-                _conditional_branch_block_uuids(self.transient_section)))
+                _conditional_branch_block_uuids(self.transient_section),
+                self.checkpoint_spare_registers))
         _run_pass_manager(pass_manager, self.ir, "transient")
 
     def _run_late_text_checkpoint_passes(self):
@@ -271,7 +275,8 @@ class TeapotPipeline:
         checkpoint_decoder = CachedGtirbInstructionDecoder(self.module.isa)
         if self.options.enable_checkpoints:
             pass_manager.add(InsertCheckpointsPass(
-                None, self.text_section, checkpoint_decoder, self.arch, self.checkpoint_block_uuids))
+                None, self.text_section, checkpoint_decoder, self.arch,
+                self.checkpoint_block_uuids, self.checkpoint_spare_registers))
         for arch_pass in self.arch.late_text_checkpoint_passes(
                 text_section=self.text_section,
                 transient_section=self.transient_section,
