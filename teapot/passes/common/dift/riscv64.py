@@ -35,7 +35,7 @@ class RISCV64DiftPropagationPass(DiftPropagationBase):
                 if mem_read is not None:
                     asm += self.arch.mem_operand_address_snippet(
                         self.reg_manager.abi, inst, addr_reg, tmp_reg, mem_read, ctx.stack_adjustment,
-                        saved_reg_offsets=saved_reg_offsets)
+                        mem_symexpr=mem_symexpr, saved_reg_offsets=saved_reg_offsets)
                     asm += self.arch.dift_shadow_addr_snippet(addr_reg, tmp_reg, self.dift_layout.xor_mask)
                     asm += f"""
                         lbu {tmp_reg}, 0({addr_reg})
@@ -49,7 +49,7 @@ class RISCV64DiftPropagationPass(DiftPropagationBase):
                 if mem_read is None or mem_write != mem_read:
                     asm += self.arch.mem_operand_address_snippet(
                         self.reg_manager.abi, inst, addr_reg, tmp_reg, mem_write, ctx.stack_adjustment,
-                        saved_reg_offsets=saved_reg_offsets)
+                        mem_symexpr=mem_symexpr, saved_reg_offsets=saved_reg_offsets)
                     asm += self.arch.dift_shadow_addr_snippet(addr_reg, tmp_reg, self.dift_layout.xor_mask)
                 for idx in range(mem_write_size):
                     if idx:

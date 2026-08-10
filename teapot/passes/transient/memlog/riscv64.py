@@ -13,7 +13,8 @@ class RISCV64TransientMemlogPass(TransientMemlogPassBase):
             addr_reg, top_reg, data_reg = ctx.scratch_registers[:3]
             return "\n".join((
                 self.arch.mem_operand_address_snippet(
-                    self.reg_manager.abi, inst, addr_reg, data_reg, mem_operand, ctx.stack_adjustment),
+                    self.reg_manager.abi, inst, addr_reg, data_reg, mem_operand,
+                    ctx.stack_adjustment, mem_symexpr=mem_symexpr),
                 self.arch.memlog_snippet(addr_reg, top_reg, data_reg, access_size),
             ))
 

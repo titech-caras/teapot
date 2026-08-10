@@ -1,11 +1,13 @@
 import re
 from dataclasses import dataclass
+from itertools import count
 from typing import Optional, Set
 
 import gtirb
 from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM, CS_OP_REG, CsInsn
 from gtirb_rewriting.assembly import Register
 
+from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.slots import SCRATCHPAD_FIRST_SPILL_OFFSET
 from teapot.utils.registers import get_register, register_from_name
 
@@ -19,6 +21,7 @@ _RISCV64_READ_WRITE_OPERAND0_MNEMONICS = {
     "c.add", "c.addi", "c.addi16sp", "c.addiw", "c.and", "c.andi",
     "c.or", "c.slli", "c.srai", "c.srli", "c.sub", "c.subw", "c.xor",
 }
+_PCREL_ADDRESS_LABEL_COUNTER = count()
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,76 @@ class Riscv64FallbackMemOperand:
 
 
 class RISCV64OperandMixin:
+    @staticmethod
+    def operand_symbolic_expression(block: gtirb.CodeBlock, inst, operand,
+                                    inst_offset: int = None):
+        interval = block.byte_interval
+        if interval is None:
+            return None
+
+        if inst_offset is None:
+            symexpr_offset = inst.address - interval.address if interval.address else inst.address
+        else:
+            symexpr_offset = block.offset + inst_offset
+        return interval.symbolic_expressions.get(symexpr_offset)
+
+    @staticmethod
+    def _paired_pcrel_hi_expression(symexpr):
+        if not isinstance(symexpr, gtirb.SymAddrConst):
+            return None
+        if not {
+                gtirb.SymbolicExpression.Attribute.PCREL,
+                gtirb.SymbolicExpression.Attribute.LO,
+        }.issubset(symexpr.attributes):
+            return None
+
+        anchor = symexpr.symbol.referent
+        if not isinstance(anchor, gtirb.ByteBlock) or anchor.byte_interval is None:
+            return None
+
+        high = anchor.byte_interval.symbolic_expressions.get(anchor.offset)
+        if not isinstance(high, gtirb.SymAddrConst):
+            return None
+        if not any(
+                attr in high.attributes
+                for attr in (
+                    gtirb.SymbolicExpression.Attribute.HI,
+                    gtirb.SymbolicExpression.Attribute.GOT,
+                    gtirb.SymbolicExpression.Attribute.TLSGD,
+                )):
+            return None
+        return high
+
+    @staticmethod
+    def _symbolic_reference(symexpr: gtirb.SymAddrConst) -> str:
+        symbol = symexpr.symbol.name
+        if symexpr.offset > 0:
+            return f"{symbol}+{symexpr.offset}"
+        if symexpr.offset < 0:
+            return f"{symbol}{symexpr.offset}"
+        return symbol
+
+    @classmethod
+    def _pcrel_address_snippet(cls, addr_reg, symexpr: gtirb.SymAddrConst) -> str:
+        if gtirb.SymbolicExpression.Attribute.GOT in symexpr.attributes:
+            modifier = "got_pcrel_hi"
+        elif gtirb.SymbolicExpression.Attribute.TLSGD in symexpr.attributes:
+            modifier = "tls_gd_pcrel_hi"
+        elif (
+                gtirb.SymbolicExpression.Attribute.PCREL in symexpr.attributes and
+                gtirb.SymbolicExpression.Attribute.HI in symexpr.attributes):
+            modifier = "pcrel_hi"
+        else:
+            raise ValueError("Unsupported RISC-V PC-relative address expression")
+
+        label = f".L__riscv64_mem_addr_{next(_PCREL_ADDRESS_LABEL_COUNTER)}{SYMBOL_SUFFIX}"
+        target = cls._symbolic_reference(symexpr)
+        return f"""
+            {label}:
+            auipc {addr_reg}, %{modifier}({target})
+            addi {addr_reg}, {addr_reg}, %pcrel_lo({label})
+        """
+
     @staticmethod
     def bare_mnemonic(mnemonic: str) -> str:
         return mnemonic[2:] if mnemonic.startswith("c.") else mnemonic
@@ -154,6 +227,10 @@ class RISCV64OperandMixin:
         tmp_reg = get_register(abi, tmp_reg)
         saved_reg_offsets = kwargs.get("saved_reg_offsets", {}) or {}
         stack_adjustment = stack_adjustment or 0
+
+        pcrel_hi = self._paired_pcrel_hi_expression(kwargs.get("mem_symexpr"))
+        if pcrel_hi is not None:
+            return self._pcrel_address_snippet(addr_reg, pcrel_hi)
 
         def load_original_reg(base_name: Optional[str]) -> str:
             normalized = abi.normalize_register_name(base_name)

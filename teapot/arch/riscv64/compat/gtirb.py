@@ -8,6 +8,7 @@ archInfo, and should disappear once upstream RISC-V support covers these paths.
 import os
 import re
 import sys
+from bisect import bisect_left
 
 import capstone
 import capstone.riscv
@@ -84,7 +85,11 @@ def install_riscv64_rewriting_compat() -> None:
     original_target_triple = rewriting_utils._target_triple
     original_assemble = assembler.Assembler.assemble
     original_fixup_to_symbolic_operand = assembler._Streamer._fixup_to_symbolic_operand
+    original_apply = rewriting.RewritingContext.apply
     original_insert_at = rewriting.RewritingContext.insert_at
+    # Insertions are registered before apply; discard the interval index when
+    # rewriting begins so later pass managers observe relocated expressions.
+    relocation_offsets_cache = {}
 
     def target_triple(isa: gtirb.Module.ISA, file_format: gtirb.Module.FileFormat) -> str:
         if isa == gtirb.Module.ISA.ValidButUnsupported and file_format == gtirb.Module.FileFormat.ELF:
@@ -285,6 +290,19 @@ def install_riscv64_rewriting_compat() -> None:
         jalr_rs1 = (second >> 15) & 0x1f
         return auipc_rd != 0 and auipc_rd == jalr_rs1
 
+    def riscv_relocation_offsets(block: gtirb.ByteBlock):
+        byte_interval = block.byte_interval
+        offsets = relocation_offsets_cache.get(byte_interval)
+        if offsets is None:
+            offsets = tuple(sorted(byte_interval.symbolic_expressions))
+            relocation_offsets_cache[byte_interval] = offsets
+
+        block_start = block.offset
+        block_end = block.offset + block.size
+        start_idx = bisect_left(offsets, block_start)
+        end_idx = bisect_left(offsets, block_end, start_idx)
+        return offsets[start_idx:end_idx]
+
     def safe_riscv64_insert_offset(block: gtirb.ByteBlock, offset: int) -> int:
         if not isinstance(block, gtirb.CodeBlock) or not _module_is_riscv64(block.module):
             return offset
@@ -295,11 +313,7 @@ def install_riscv64_rewriting_compat() -> None:
         block_end = block.offset + block.size
         insert_offset = block_start + offset
         symbolic_expressions = block.byte_interval.symbolic_expressions
-        relocation_offsets = sorted(
-            expr_offset
-            for expr_offset in symbolic_expressions
-            if block_start <= expr_offset < block_end
-        )
+        relocation_offsets = riscv_relocation_offsets(block)
 
         for call_offset in relocation_offsets:
             if not is_riscv_call_relocation(symbolic_expressions[call_offset]):
@@ -325,14 +339,15 @@ def install_riscv64_rewriting_compat() -> None:
 
             if lo_offset is None:
                 continue
-            if insert_offset == hi_offset:
-                after_lo_offset = lo_offset + riscv_instruction_size(block, lo_offset)
-                return min(after_lo_offset, block_end) - block_start
-            if hi_offset < insert_offset < lo_offset:
+            if hi_offset <= insert_offset <= lo_offset:
                 after_lo_offset = lo_offset + riscv_instruction_size(block, lo_offset)
                 return min(after_lo_offset, block_end) - block_start
 
         return offset
+
+    def apply(self) -> None:
+        relocation_offsets_cache.clear()
+        return original_apply(self)
 
     def insert_at(self, *args, **kwargs) -> None:
         if len(args) == 3 and not kwargs:
@@ -375,6 +390,7 @@ def install_riscv64_rewriting_compat() -> None:
     assembler.Assembler.assemble = assemble
     assembler._Streamer._fixup_to_symbolic_operand = fixup_to_symbolic_operand
     assembler._Streamer.emit_instruction = emit_instruction
+    rewriting.RewritingContext.apply = apply
     rewriting.RewritingContext.insert_at = insert_at
     mc_utils._INDIRECT_CALL_INSTRS[gtirb.Module.ISA.ValidButUnsupported] = {"JALR"}
     rewriting_utils._teapot_riscv64_compat = True

@@ -48,7 +48,7 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagatio
         @self.arch.constraints()
         def patch(ctx: InsertionContext):
             asm = self.arch.save_regs_to_first_spill(fixed_regs)
-            for scratchpad_idx, mem_operand, _ in capture_operands:
+            for scratchpad_idx, mem_operand, mem_symexpr in capture_operands:
                 asm += self.arch.mem_operand_address_snippet(
                     self.reg_manager.abi,
                     inst,
@@ -56,6 +56,7 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagatio
                     "t1",
                     mem_operand,
                     ctx.stack_adjustment,
+                    mem_symexpr=mem_symexpr,
                     saved_reg_offsets=saved_reg_offsets,
                 )
                 asm += self.arch.load_address("t1", f"scratchpad+{scratchpad_idx * 8}")
