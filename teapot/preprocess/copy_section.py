@@ -59,10 +59,20 @@ def create_section_bounds(section: gtirb.Section, name: str) -> Tuple[gtirb.Symb
     return start_symbol, end_symbol
 
 
-def _external_relative_table_base_symbol_uuids(module: gtirb.Module, copied_section: gtirb.Section):
+_EXCEPTION_METADATA_SECTION_PREFIXES = (
+    ".ARM.exidx",
+    ".ARM.extab",
+    ".eh_frame",
+    ".gcc_except_table",
+)
+
+
+def _external_relative_jump_table_base_symbol_uuids(module: gtirb.Module,
+                                                     copied_section: gtirb.Section):
     base_symbol_uuids = set()
     for section in module.sections:
-        if section is copied_section:
+        if (section is copied_section or
+                section.name.startswith(_EXCEPTION_METADATA_SECTION_PREFIXES)):
             continue
         for byte_interval in section.byte_intervals:
             for symbolic_expression in byte_interval.symbolic_expressions.values():
@@ -140,7 +150,8 @@ def copy_section(section: gtirb.Section, name: str) \
         module=section.module
     )
 
-    external_relative_table_base_symbol_uuids = _external_relative_table_base_symbol_uuids(section.module, section)
+    external_relative_jump_table_base_symbol_uuids = \
+        _external_relative_jump_table_base_symbol_uuids(section.module, section)
 
     def copied_symbol(symbol):
         return symbol_copy_mapping.get(symbol.uuid, symbol)
@@ -150,7 +161,7 @@ def copy_section(section: gtirb.Section, name: str) \
         # section.  The computed address then reaches the text marker/bouncer
         # instead of becoming a stale transient-relative offset after inserted
         # instrumentation shifts the copied code.
-        if symbol.uuid in external_relative_table_base_symbol_uuids:
+        if symbol.uuid in external_relative_jump_table_base_symbol_uuids:
             return symbol
         return copied_symbol(symbol)
 
