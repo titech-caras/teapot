@@ -38,11 +38,15 @@ class AArch64OperandMixin:
     @staticmethod
     def aarch64_mem_operand_size(inst: CsInsn) -> int:
         mnemonic = inst.mnemonic.lower()
-        if mnemonic.startswith(("ldrb", "strb", "ldursb")):
+        if mnemonic.startswith((
+                "ldrb", "strb", "ldurb", "sturb", "ldarb", "stlrb",
+                "ldaxrb", "stlxrb", "ldxrb", "stxrb", "ldursb", "ldrsb")):
             return 1
-        if mnemonic.startswith(("ldrh", "strh", "ldurh", "ldarh", "ldursh")):
+        if mnemonic.startswith((
+                "ldrh", "strh", "ldurh", "sturh", "ldarh", "stlrh",
+                "ldaxrh", "stlxrh", "ldxrh", "stxrh", "ldursh", "ldrsh")):
             return 2
-        if mnemonic.startswith(("ldrsw",)):
+        if mnemonic.startswith(("ldrsw", "ldursw")):
             return 4
 
         reg_sizes = []
