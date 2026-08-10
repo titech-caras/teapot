@@ -1,4 +1,7 @@
 import argparse
+import ctypes
+import gc
+import logging
 
 import gtirb
 
@@ -93,6 +96,11 @@ def main():
         action="store_true",
         help="Skip the AArch64 conditional-branch relaxation pass.",
     )
+    parser.add_argument(
+        "--rewrite-progress",
+        action="store_true",
+        help="Log coarse gtirb-rewriting phase and large-loop progress.",
+    )
     args = parser.parse_args()
 
     if args.list_dift_layouts:
@@ -101,6 +109,12 @@ def main():
         return
     if args.input is None or args.output is None:
         parser.error("input and output are required")
+    if args.rewrite_progress:
+        logging.basicConfig(
+            format="%(asctime)s [%(name)s] %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        logging.getLogger("gtirb_rewriting").setLevel(logging.INFO)
 
     ir = gtirb.IR.load_protobuf(args.input)
     options = InstrumentationOptions(
@@ -118,8 +132,27 @@ def main():
         enable_nested_speculation=args.enable_nested_speculation,
         aarch64_tag_storage=args.aarch64_tag_storage,
     )
-    TeapotPipeline(ir, args.dift_layout, options).run()
+    pipeline = TeapotPipeline(ir, args.dift_layout, options)
+    pipeline.run()
+    del pipeline
+
+    # Protobuf serialization constructs a second representation of the IR.
+    # Return memory released by the rewrite passes before building it.
+    print("[teapot] begin serialization cleanup", flush=True)
+    gc.collect()
+    try:
+        malloc_trim = ctypes.CDLL(None).malloc_trim
+    except (AttributeError, OSError):
+        pass
+    else:
+        malloc_trim.argtypes = (ctypes.c_size_t,)
+        malloc_trim.restype = ctypes.c_int
+        malloc_trim(0)
+    print("[teapot] end serialization cleanup", flush=True)
+
+    print("[teapot] begin serialization", flush=True)
     ir.save_protobuf(args.output)
+    print("[teapot] end serialization", flush=True)
 
 
 if __name__ == "__main__":

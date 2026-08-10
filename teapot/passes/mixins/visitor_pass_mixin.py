@@ -31,6 +31,10 @@ class VisitorPassMixin(Pass):
         self.module = module
         self.rewriting_ctx = rewriting_ctx
 
+    def end_module(self, module: gtirb.Module, functions) -> None:
+        del self.rewriting_ctx
+        del self.module
+
     def insert_at(self, block: gtirb.CodeBlock, offset: int, patch):
         arch = getattr(self, "arch", None)
         decoder = getattr(self, "decoder", None)

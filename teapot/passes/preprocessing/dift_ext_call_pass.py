@@ -37,6 +37,7 @@ class DiftExtCallPass(VisitorPassMixin):
             version_entries.pop(forwarded_sym, None)
             if self.wrap_dift_calls and not self.should_ignore_dift_wrapper(forwarded_sym.name):
                 forwarded_sym.name += "__dift_wrapper__"
+        super().end_module(module, functions)
 
     def visit_function(self, function: Function):
         if is_blacklisted_function(function):

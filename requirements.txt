@@ -1,5 +1,5 @@
 gtirb>=2.0.0
-gtirb-rewriting>=0.3.0
+gtirb-rewriting @ git+https://github.com/lin-toto/gtirb-rewriting.git@2c0308e2050481cda557b2aa741066c8a38cb747
 gtirb-functions>=1.0.9
 gtirb-capstone>=1.1.1
 gtirb-live-register-analysis

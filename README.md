@@ -19,6 +19,9 @@ It also requires the following packages for interfacing with GTIRB format:
 - `gtirb-capstone`
 - `gtirb-live-register-analysis`
 
+`requirements.txt` pins Teapot's `gtirb-rewriting` fork because its scoped
+rewrite preparation reduces runtime and peak memory on large RV64 modules.
+
 Teapot also requires `llvmlite` for generating optimized DIFT instrumentation.
 If the debug symbol manipulation functions are used, `pyelftools` is also required.
 

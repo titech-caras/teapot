@@ -1,6 +1,8 @@
+import gc
 from dataclasses import dataclass
 
 import gtirb
+from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 from gtirb_rewriting import PassManager
 from gtirb_rewriting.abi import _ABIS
@@ -39,6 +41,7 @@ def _run_pass_manager(pass_manager: PassManager, ir: gtirb.IR, label: str):
     print(f"[teapot] begin {label}", flush=True)
     pass_manager.run(ir)
     CachedGtirbInstructionDecoder.cache.clear()
+    gc.collect()
     print(f"[teapot] end {label}", flush=True)
 
 
@@ -272,7 +275,10 @@ class TeapotPipeline:
 
     def _run_late_text_checkpoint_passes(self):
         pass_manager = PassManager()
-        checkpoint_decoder = CachedGtirbInstructionDecoder(self.module.isa)
+        # This pass visits each eligible block once and does not run live-register
+        # analysis, so caching the expanded text disassembly only raises the peak
+        # during rewrite application.
+        checkpoint_decoder = GtirbInstructionDecoder(self.module.isa)
         if self.options.enable_checkpoints:
             pass_manager.add(InsertCheckpointsPass(
                 None, self.text_section, checkpoint_decoder, self.arch,

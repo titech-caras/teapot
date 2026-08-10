@@ -29,6 +29,7 @@ class TransientCoveragePass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def end_module(self, module: gtirb.Module, functions):
         create_guards(self.guard_section, self.idx)
+        super().end_module(module, functions)
 
     def visit_function(self, function: Function):
         if is_blacklisted_function(function):
