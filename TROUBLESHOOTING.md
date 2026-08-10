@@ -44,9 +44,10 @@ When adding AArch64 instrumentation, do not reuse a shadow-stack frame offset or
 
 The libhtp compressed-response tests include compression-bomb timing behavior.
 Full Teapot instrumentation can make those paths cross libhtp's time budget, so
-the smoke output may differ even when rewriting, linking, and ordinary execution
-are working. Treat this as a harness/runtime-budget issue and confirm other
-inputs still execute and report gadgets before debugging the instrumentation.
+semantic smoke builds should call
+`htp_config_set_compression_time_limit(cfg, 1000000)` in the affected fixtures.
+This uses libhtp's supported one-second cap; otherwise truncated decompression
+under qemu can look like rollback corruption.
 
 **Linker error `undefined reference to 'xxxyyy__dift_wrapper__'`**
 
