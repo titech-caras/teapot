@@ -38,10 +38,9 @@ class X64TransientMemlogPass(TransientMemlogPassBase):
         def patch(ctx: InsertionContext):
             r1, r2, r3 = ctx.scratch_registers
 
-            asm = f"""
-                lea {r2}, {mem_operand_str}
-                {self.arch.memlog_snippet(r2, r1, r3, access_size)}
-            """
+            asm = self.arch.effective_address_snippet(
+                r2, mem_operand_str, r3)
+            asm += self.arch.memlog_snippet(r2, r1, r3, access_size)
 
             asm = self.arch.conditional_patch_wrapper(asm, conditional, label_key="memlog")
             return asm

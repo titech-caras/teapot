@@ -140,10 +140,10 @@ class X64DiftPropagationPass(DiftPropagationBase):
             asm = ""
 
             if mem_read_operand_str:
-                    asm += f"""
-                        lea {r2}, {mem_read_operand_str}
-                    {self.arch.dift_shadow_addr_snippet(r2, None, self.dift_layout.xor_mask)}
-                """
+                asm += self.arch.effective_address_snippet(
+                    r2, mem_read_operand_str, r3)
+                asm += self.arch.dift_shadow_addr_snippet(
+                    r2, None, self.dift_layout.xor_mask)
 
             asm += self.arch.clear_register_snippet(r4)
 
@@ -159,10 +159,10 @@ class X64DiftPropagationPass(DiftPropagationBase):
 
             if mem_write_operand_str:
                 if mem_write_operand_str != mem_read_operand_str:
-                    asm += f"""
-                        lea {r2}, {mem_write_operand_str}
-                        {self.arch.dift_shadow_addr_snippet(r2, None, self.dift_layout.xor_mask)}
-                    """
+                    asm += self.arch.effective_address_snippet(
+                        r2, mem_write_operand_str, r3)
+                    asm += self.arch.dift_shadow_addr_snippet(
+                        r2, None, self.dift_layout.xor_mask)
 
                 extended_size = min(mem_write_size, 8)
                 r4_ext = r4.sizes["8l" if extended_size == 1 else str(extended_size * 8)]

@@ -38,11 +38,20 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
         if not self.arch.mem_operand_uses_dynamic_address(mem_operand):
             return None
 
+        write_reg = self.arch.register_from_name(
+            self.reg_manager.abi, inst.reg_name(write_operand.reg))
+        if write_reg is None:
+            # The x64 ABI/DIFT register map intentionally covers GPRs and XMM
+            # registers, but not AVX-512 mask registers such as k0.  The main
+            # DIFT pass already omits such unsupported destinations; keep the
+            # memory-operand policy consistent instead of failing the rewrite.
+            return None
+
         mem_operand_str = self.arch.mem_operand_to_str(block, inst, mem_operand)
         patch = self._build_patch(
             inst, mem_operand_str, mem_operand.size,
             conditional=self.arch.conditional_move_suffix(inst), mem_operand=mem_operand,
-            write_reg=self.reg_manager.abi.get_register(inst.reg_name(write_operand.reg)))
+            write_reg=write_reg)
         return MemOperandPolicyPatch(patch, set())
 
     def _build_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
@@ -67,10 +76,8 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
                 r4 = None
                 r5 = None
 
-            asm = f"""
-                lea {r2}, {mem_operand_str}
-                {self.arch.clear_register_snippet(r1)}
-            """
+            asm = self.arch.effective_address_snippet(r2, mem_operand_str, r3)
+            asm += self.arch.clear_register_snippet(r1)
 
             for reg in addr_regs:
                 asm += self.arch.dift_or_reg_tag_snippet(r1, None, reg)

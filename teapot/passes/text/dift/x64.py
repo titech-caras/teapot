@@ -22,6 +22,15 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
     EXPECTED_ARCH = "x64"
     ALLOCATE_INST_PATCH_REGISTERS = True
     ALLOCATE_BLOCK_PATCH_REGISTERS = True
+    # gtirb-rewriting's x86 scratch-register ABI allocates and spills GPRs.
+    # Keep LLVM's generated replay snippets in that register class as well;
+    # otherwise backend store combining can introduce XMM temporaries that the
+    # GPR allocator cannot substitute or preserve.  The DIFT IR is integer and
+    # pointer-only, so disabling SIMD changes only its lowering strategy.
+    NATIVE_TARGET_FEATURES = (
+        "-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-sse4a,"
+        "-avx,-avx2,-avx512f"
+    )
     """
     LLVM optimized version of x64 text-section DIFT propagation.
 
@@ -75,7 +84,10 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
 
     def _build_store_values_patch(self, inst: CsInsn, capture_operands, scratch_plan=None,
                                   conditional: Optional[str] = None, conditional_slot: Optional[int] = None):
-        scratch_registers = 1 if capture_operands else 0
+        has_segmented_operand = any(
+            self.arch.mem_operand_segment(mem_operand_str) is not None
+            for _, mem_operand_str, _ in capture_operands)
+        scratch_registers = (2 if has_segmented_operand else 1) if capture_operands else 0
         asm = ""
 
         def store_r1(scratchpad_idx: int):
@@ -86,7 +98,8 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
             asm += f"set{conditional} byte ptr scratchpad+{conditional_slot * 8}\n"
 
         for scratchpad_idx, mem_operand_str, _ in capture_operands:
-            asm += f"lea {{0}}, {mem_operand_str}\n"
+            asm += self.arch.effective_address_snippet(
+                "{0}", mem_operand_str, "{1}" if has_segmented_operand else None)
             asm += store_r1(scratchpad_idx)
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers)
@@ -97,7 +110,8 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
                 return asm
 
             r1: Register = ctx.scratch_registers[0]
-            return asm.format(r1.name, r1.sizes["8l"])
+            segment_reg = ctx.scratch_registers[1] if has_segmented_operand else None
+            return asm.format(r1.name, segment_reg.name if segment_reg else "")
 
         return patch
 

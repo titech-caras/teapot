@@ -33,17 +33,30 @@ class X64TransientPortContentionPolicyPass(TransientPortContentionPolicyPassBase
             if operand.type == CS_OP_MEM:
                 mem_read_operand_str = self.arch.mem_operand_to_str(block, inst, operand)
             elif operand.type == CS_OP_REG:
-                regs_read.append(self.reg_manager.abi.get_register(inst.reg_name(operand.reg)))
+                reg = self.arch.register_from_name(
+                    self.reg_manager.abi, inst.reg_name(operand.reg))
+                if reg is not None:
+                    regs_read.append(reg)
 
-        scratch_registers = 2 if mem_read_operand_str else 1
+        if not regs_read and mem_read_operand_str is None:
+            return None
+
+        segmented_operand = (
+            mem_read_operand_str is not None
+            and self.arch.mem_operand_segment(mem_read_operand_str) is not None)
+        scratch_registers = 3 if segmented_operand else (2 if mem_read_operand_str else 1)
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
-            if mem_read_operand_str:
+            if segmented_operand:
+                r1, r2, segment_reg = ctx.scratch_registers
+            elif mem_read_operand_str:
                 r1, r2 = ctx.scratch_registers
+                segment_reg = None
             else:
                 r1, = ctx.scratch_registers
                 r2 = None
+                segment_reg = None
 
             asm = self.arch.clear_register_snippet(r1)
 
@@ -51,11 +64,11 @@ class X64TransientPortContentionPolicyPass(TransientPortContentionPolicyPassBase
                 asm += self.arch.dift_or_reg_tag_snippet(r1, None, reg)
 
             if mem_read_operand_str:
-                asm += f"""
-                    lea {r2}, {mem_read_operand_str}
-                    {self.arch.dift_shadow_addr_snippet(r2, None, self.dift_layout.xor_mask)}
-                    or {r1:8l}, [{r2}]
-                """
+                asm += self.arch.effective_address_snippet(
+                    r2, mem_read_operand_str, segment_reg)
+                asm += self.arch.dift_shadow_addr_snippet(
+                    r2, None, self.dift_layout.xor_mask)
+                asm += f"or {r1:8l}, [{r2}]\n"
 
             asm += f"""
                 test {r1:8l}, {TAG_SECRET | TAG_SECRET_INDIRECT}

@@ -43,6 +43,7 @@ class TextDiftLLVMBase(DiftPropagationBase):
     TAG_TYPE = "i8"
     SCRATCHPAD_ELEM_TYPE = "i64"
     TARGET_TRIPLE = None
+    NATIVE_TARGET_FEATURES = ""
     ALLOCATE_INST_PATCH_REGISTERS = False
     ALLOCATE_BLOCK_PATCH_REGISTERS = False
 
@@ -61,7 +62,7 @@ class TextDiftLLVMBase(DiftPropagationBase):
         self._init_llvm_pass_manager()
         self.target_triple = None
         self.target_machine = llvm.Target.from_default_triple().create_target_machine(
-            "", "", 3, "static"
+            "", self.NATIVE_TARGET_FEATURES, 3, "static"
         )
 
     def _init_llvm_target(self, target_triple: str):
