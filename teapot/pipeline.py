@@ -36,10 +36,53 @@ from teapot.utils.reg_analysis import LiveRegisterManagerWrapper
 ARCH_INFO_AUX_TYPE = "mapping<string,string>"
 AARCH64_MTE_ARCH_FEATURE = "mte"
 
+_TLS_SYMBOL_ATTRIBUTES = {
+    gtirb.SymbolicExpression.Attribute.TLS,
+    gtirb.SymbolicExpression.Attribute.TLSGD,
+    gtirb.SymbolicExpression.Attribute.TLSLD,
+    gtirb.SymbolicExpression.Attribute.TLSLDM,
+    gtirb.SymbolicExpression.Attribute.TLSCALL,
+    gtirb.SymbolicExpression.Attribute.TLSDESC,
+    gtirb.SymbolicExpression.Attribute.TPREL,
+    gtirb.SymbolicExpression.Attribute.TPOFF,
+    gtirb.SymbolicExpression.Attribute.DTPREL,
+    gtirb.SymbolicExpression.Attribute.DTPOFF,
+    gtirb.SymbolicExpression.Attribute.DTPMOD,
+    gtirb.SymbolicExpression.Attribute.NTPOFF,
+    gtirb.SymbolicExpression.Attribute.GOTNTPOFF,
+    gtirb.SymbolicExpression.Attribute.INDNTPOFF,
+    gtirb.SymbolicExpression.Attribute.TLSLDO,
+}
+
+
+def _integral_tls_symbol_values(module: gtirb.Module):
+    """Capture integral TLS symbols that layout must not turn into labels."""
+    symbols = {}
+    for byte_interval in module.byte_intervals:
+        for expression in byte_interval.symbolic_expressions.values():
+            if not expression.attributes.intersection(_TLS_SYMBOL_ATTRIBUTES):
+                continue
+            for symbol in expression.symbols:
+                if symbol.value is not None:
+                    symbols[symbol] = symbol.value
+    return tuple(symbols.items())
+
+
+def _restore_integral_symbol_values(symbol_values):
+    # gtirb-layout assigns integral symbols to blocks when their numeric value
+    # happens to fall in a laid-out interval.  That is invalid for TLS offsets:
+    # their value is relative to the thread pointer, not a module address.
+    for symbol, value in symbol_values:
+        symbol.value = value
+
 
 def _run_pass_manager(pass_manager: PassManager, ir: gtirb.IR, label: str):
     print(f"[teapot] begin {label}", flush=True)
-    pass_manager.run(ir)
+    integral_tls_symbols = _integral_tls_symbol_values(ir.modules[0])
+    try:
+        pass_manager.run(ir)
+    finally:
+        _restore_integral_symbol_values(integral_tls_symbols)
     CachedGtirbInstructionDecoder.cache.clear()
     gc.collect()
     print(f"[teapot] end {label}", flush=True)
@@ -120,7 +163,11 @@ class TeapotPipeline:
             self._run_text_passes()
 
         if self.options.enable_conditional_branch_relax and self.arch.needs_conditional_branch_relax():
-            self.arch.relax_conditional_branches(self.module)
+            integral_tls_symbols = _integral_tls_symbol_values(self.module)
+            try:
+                self.arch.relax_conditional_branches(self.module)
+            finally:
+                _restore_integral_symbol_values(integral_tls_symbols)
 
         if self.arch.needs_late_text_checkpoints():
             self._run_late_text_checkpoint_passes()
