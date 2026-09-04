@@ -67,8 +67,14 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         while insert_until_idx - last_insertion_idx > self.INSERTION_SPACING * 4 // 3:
             # In the last sub-block, allow a bit more than 50 instructions to be handled by the final rollback
             current_insertion_idx = last_insertion_idx + self.INSERTION_SPACING
-            while not self.__can_insert_restore_point(function, block, current_insertion_idx):
+            while (current_insertion_idx < insert_until_idx and
+                   not self.__can_insert_restore_point(function, block, current_insertion_idx)):
                 current_insertion_idx += 1
+            if current_insertion_idx >= insert_until_idx:
+                # No eligible intermediate point remains. The final point below
+                # already has a flag-preserving fallback, so leave the rest of
+                # this block to it instead of searching beyond the block forever.
+                break
 
             self.__insert_conditional_restore_point(
                 block, function, current_insertion_idx, instruction_len_sum[current_insertion_idx],
