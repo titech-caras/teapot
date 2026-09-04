@@ -8,6 +8,7 @@ import gtirb
 from teapot.configs.runtime import ASAN_TAG_STORAGES, ASAN_TAG_STORAGE_SHADOW
 from teapot.datacls.dift_layout import LAYOUTS, layout_names_for_arch
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
+from teapot.utils.serialization import compact_for_pprinter
 
 
 def main():
@@ -101,6 +102,14 @@ def main():
         action="store_true",
         help="Log coarse gtirb-rewriting phase and large-loop progress.",
     )
+    parser.add_argument(
+        "--compact-output",
+        action="store_true",
+        help=(
+            "Before serialization, discard CFG edges and code-only symbolic "
+            "expression widths that the GTIRB pretty-printer does not consume."
+        ),
+    )
     args = parser.parse_args()
 
     if args.list_dift_layouts:
@@ -139,6 +148,16 @@ def main():
     # Protobuf serialization constructs a second representation of the IR.
     # Return memory released by the rewrite passes before building it.
     print("[teapot] begin serialization cleanup", flush=True)
+    if args.compact_output:
+        compact_stats = compact_for_pprinter(ir)
+        print(
+            "[teapot] compact output "
+            f"cfg_edges_removed={compact_stats.cfg_edges_removed} "
+            f"symbolic_sizes_before={compact_stats.symbolic_sizes_before} "
+            f"symbolic_sizes_after={compact_stats.symbolic_sizes_after} "
+            f"code_only_sizes_removed={compact_stats.code_only_sizes_removed}",
+            flush=True,
+        )
     gc.collect()
     try:
         malloc_trim = ctypes.CDLL(None).malloc_trim
