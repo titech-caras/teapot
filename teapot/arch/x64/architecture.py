@@ -1,4 +1,5 @@
 from gtirb_rewriting import patch_constraints
+from gtirb_rewriting import PassManager
 from gtirb_rewriting.assembly import X86Syntax
 
 from teapot.arch.architecture import Architecture
@@ -33,6 +34,25 @@ class X64Architecture(
 
     def constraints(self, **kwargs):
         return patch_constraints(x86_syntax=X86Syntax.INTEL, **kwargs)
+
+    def return_address_is_stack_resident(self) -> bool:
+        return True
+
+    def relax_conditional_branches(self, module) -> None:
+        from gtirb_capstone.instructions import GtirbInstructionDecoder
+        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+
+        from teapot.passes.common.x64_relax_jcxz_pass import X64RelaxJcxzPass
+
+        if not self.needs_conditional_branch_relax():
+            return
+        print("[teapot] begin x64-relax", flush=True)
+        pass_manager = PassManager()
+        pass_manager.add(X64RelaxJcxzPass(
+            GtirbInstructionDecoder(module.isa), self))
+        pass_manager.run(module.ir)
+        CachedGtirbInstructionDecoder.cache.clear()
+        print("[teapot] end x64-relax", flush=True)
 
     def create_text_dift_pass(self, reg_manager, section, decoder, dift_layout):
         from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
