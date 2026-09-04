@@ -90,6 +90,7 @@ def install_riscv64_rewriting_compat() -> None:
     # Insertions are registered before apply; discard the interval index when
     # rewriting begins so later pass managers observe relocated expressions.
     relocation_offsets_cache = {}
+    code_blocks_ending_at_cache = {}
 
     def target_triple(isa: gtirb.Module.ISA, file_format: gtirb.Module.FileFormat) -> str:
         if isa == gtirb.Module.ISA.ValidButUnsupported and file_format == gtirb.Module.FileFormat.ELF:
@@ -303,6 +304,19 @@ def install_riscv64_rewriting_compat() -> None:
         end_idx = bisect_left(offsets, block_end, start_idx)
         return offsets[start_idx:end_idx]
 
+    def riscv_code_blocks_ending_at(byte_interval: gtirb.ByteInterval):
+        blocks_by_end = code_blocks_ending_at_cache.get(byte_interval)
+        if blocks_by_end is None:
+            blocks_by_end = {}
+            for candidate in byte_interval.blocks:
+                if not isinstance(candidate, gtirb.CodeBlock) or candidate.size == 0:
+                    continue
+                blocks_by_end.setdefault(candidate.offset + candidate.size, []).append(candidate)
+            for candidates in blocks_by_end.values():
+                candidates.sort(key=lambda candidate: (candidate.offset, str(candidate.uuid)), reverse=True)
+            code_blocks_ending_at_cache[byte_interval] = blocks_by_end
+        return blocks_by_end
+
     def safe_riscv64_insert_offset(block: gtirb.ByteBlock, offset: int) -> int:
         if not isinstance(block, gtirb.CodeBlock) or not _module_is_riscv64(block.module):
             return offset
@@ -321,8 +335,8 @@ def install_riscv64_rewriting_compat() -> None:
             if not is_riscv_auipc_jalr_pair(block, call_offset):
                 continue
             after_call_offset = call_offset + 8
-            if call_offset <= insert_offset < after_call_offset:
-                return min(after_call_offset, block_end) - block_start
+            if call_offset < insert_offset < after_call_offset:
+                return call_offset - block_start
 
         for idx, hi_offset in enumerate(relocation_offsets):
             if not is_riscv_insert_protected_hi_relocation(symbolic_expressions[hi_offset]):
@@ -339,23 +353,49 @@ def install_riscv64_rewriting_compat() -> None:
 
             if lo_offset is None:
                 continue
-            if hi_offset <= insert_offset <= lo_offset:
+            if hi_offset < insert_offset <= lo_offset:
                 after_lo_offset = lo_offset + riscv_instruction_size(block, lo_offset)
                 return min(after_lo_offset, block_end) - block_start
 
         return offset
 
+    def safe_riscv64_insert_location(block: gtirb.ByteBlock, offset: int):
+        if (not isinstance(block, gtirb.CodeBlock) or
+                not _module_is_riscv64(block.module) or
+                block.byte_interval is None or offset != 0 or block.offset < 4):
+            return block, safe_riscv64_insert_offset(block, offset)
+
+        # ddisasm may represent a direct RISC-V call as two adjacent blocks:
+        # the AUIPC block owns the call relocation and the JALR block owns the
+        # CFG call edge.  An insertion at the start of the JALR block is still
+        # inside the architectural call pair.  Redirect it to immediately
+        # before the AUIPC, otherwise the pretty-printer's call pseudo-op and
+        # suppressed JALR are separated and the JALR is emitted a second time.
+        call_offset = block.offset - 4
+        symbolic = block.byte_interval.symbolic_expressions.get(call_offset)
+        if (is_riscv_call_relocation(symbolic) and
+                is_riscv_auipc_jalr_pair(block, call_offset)):
+            for prefix_block in riscv_code_blocks_ending_at(block.byte_interval).get(block.offset, ()):
+                if prefix_block.offset <= call_offset < prefix_block.offset + prefix_block.size:
+                    prefix_offset = call_offset - prefix_block.offset
+                    return prefix_block, safe_riscv64_insert_offset(prefix_block, prefix_offset)
+
+        return block, safe_riscv64_insert_offset(block, offset)
+
     def apply(self) -> None:
         relocation_offsets_cache.clear()
+        code_blocks_ending_at_cache.clear()
         return original_apply(self)
 
     def insert_at(self, *args, **kwargs) -> None:
         if len(args) == 3 and not kwargs:
             block, offset, patch = args
-            return original_insert_at(self, block, safe_riscv64_insert_offset(block, offset), patch)
+            block, offset = safe_riscv64_insert_location(block, offset)
+            return original_insert_at(self, block, offset, patch)
         elif len(args) == 4 and not kwargs:
             function, block, offset, patch = args
-            return original_insert_at(self, function, block, safe_riscv64_insert_offset(block, offset), patch)
+            block, offset = safe_riscv64_insert_location(block, offset)
+            return original_insert_at(self, function, block, offset, patch)
 
         return original_insert_at(self, *args, **kwargs)
 

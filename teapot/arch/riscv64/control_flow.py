@@ -22,8 +22,12 @@ class RISCV64ControlFlowPatchesMixin:
 
         attrs = symbolic.attributes
         if (
-            gtirb.SymbolicExpression.Attribute.PCREL in attrs and
-            gtirb.SymbolicExpression.Attribute.HI in attrs
+            (
+                gtirb.SymbolicExpression.Attribute.PCREL in attrs and
+                gtirb.SymbolicExpression.Attribute.HI in attrs
+            ) or
+            gtirb.SymbolicExpression.Attribute.GOT in attrs or
+            gtirb.SymbolicExpression.Attribute.TLSGD in attrs
         ):
             return instructions[0].size
         return offset
