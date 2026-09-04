@@ -23,6 +23,7 @@ from teapot.passes.preprocessing.normalize_control_flow_targets_pass import (
 )
 from teapot.passes.text.text_indirect_branch_transform_pass import TextIndirectBranchTransformPass
 from teapot.passes.text.text_initialize_library_pass import TextInitializeLibraryPass
+from teapot.passes.text.text_skipped_transform_restore_pass import TextSkippedTransformRestorePass
 from teapot.passes.transient.indirect_branch_check_pass import TransientIndirectBranchCheckDestPass
 from teapot.passes.transient.transient_coverage import TransientCoveragePass
 from teapot.passes.transient.transient_insert_restore_points_pass import TransientInsertRestorePointsPass
@@ -256,6 +257,9 @@ class TeapotPipeline:
                 self.reg_manager, self.text_section, self.decoder, self.arch, False,
                 dift_layout=self.dift_layout, tag_storage=self.options.aarch64_tag_storage))
         if self.options.enable_indirect_transform:
+            if self.options.enable_checkpoints:
+                pass_manager.add(TextSkippedTransformRestorePass(
+                    self.text_section, self.arch))
             pass_manager.add(TextIndirectBranchTransformPass(
                 self.text_section,
                 self.text_transient_mapping,

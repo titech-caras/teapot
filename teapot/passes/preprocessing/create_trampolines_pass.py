@@ -5,6 +5,7 @@ from gtirb_capstone.instructions import GtirbInstructionDecoder
 from capstone_gt import CsInsn
 
 from teapot.arch.architecture import Architecture
+from teapot.configs.blacklist import is_blacklisted_function
 from teapot.passes.mixins import VisitorPassMixin
 from teapot.datacls.copied_section_mapping import CopiedSectionMapping
 from teapot.utils.misc import distinguish_edges, generate_distinct_label_name
@@ -41,6 +42,9 @@ class CreateTrampolinesPass(VisitorPassMixin):
         self.processed_blocks = set()
 
     def visit_function(self, function: Function):
+        if is_blacklisted_function(function):
+            return
+
         if self.reg_manager is not None and self.arch.checkpoint_patch_uses_live_registers():
             self.reg_manager.analyze(function)
         super().visit_function(function)

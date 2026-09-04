@@ -6,6 +6,15 @@ import gtirb
 
 
 class ArchitectureControlFlowMixin(ABC):
+    def skipped_text_restore_guard_patch(self):
+        """Restore before executing a text block skipped by target transforms.
+
+        Architectures override this with a state-preserving checkpoint-count
+        test.  The normal path must leave every application register, flags,
+        and stack location unchanged.
+        """
+        return None
+
     @abstractmethod
     def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, *, use_scratch_registers: bool = False):
         pass

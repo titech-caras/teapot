@@ -35,6 +35,10 @@ class Architecture(
     nop_bytes: bytes
     abi: Any
 
+    def return_address_is_stack_resident(self) -> bool:
+        """Whether a call stores its return address in application memory."""
+        return False
+
     def constraints(self, **kwargs):
         return patch_constraints(**kwargs)
 

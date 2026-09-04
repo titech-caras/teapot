@@ -9,6 +9,24 @@ from teapot.utils.misc import generate_distinct_label_name
 
 
 class AArch64ControlFlowPatchesMixin:
+    def skipped_text_restore_guard_patch(self):
+        """Guard untransformed text without relying on initialized scratch state."""
+        return self.constraints()(lambda ctx: f"""
+            sub sp, sp, #32
+            stp x16, x17, [sp]
+            mrs x16, nzcv
+            str x16, [sp, #16]
+            {self.load_address("x16", "checkpoint_cnt")}
+            ldr x16, [x16]
+            cbz x16, 1f
+            b restore_checkpoint_EXT_LIB
+        1:
+            ldr x16, [sp, #16]
+            msr nzcv, x16
+            ldp x16, x17, [sp]
+            add sp, sp, #32
+        """)
+
     @staticmethod
     def retarget_last_operand(mnemonic: str, op_str: str, target_symbol_name: str) -> str:
         operands = [operand.strip() for operand in op_str.split(",") if operand.strip()]

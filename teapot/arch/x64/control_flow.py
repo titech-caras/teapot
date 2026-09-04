@@ -7,6 +7,25 @@ from teapot.configs.runtime import SYMBOL_SUFFIX
 
 
 class X64ControlFlowPatchesMixin:
+    def skipped_text_restore_guard_patch(self):
+        """Guard untransformed text while preserving the SysV red zone."""
+        return self.constraints()(lambda ctx: """
+            lea rsp, [rsp-160]
+            mov qword ptr [rsp], rax
+            seto al
+            lahf
+            mov qword ptr [rsp+8], rax
+            cmp qword ptr checkpoint_cnt, 0
+            je 1f
+            jmp restore_checkpoint_EXT_LIB
+        1:
+            mov rax, qword ptr [rsp+8]
+            add al, 0x7f
+            sahf
+            mov rax, qword ptr [rsp]
+            lea rsp, [rsp+160]
+        """)
+
     @staticmethod
     def conditional_patch_wrapper(asm: str, conditional: Optional[str], *,
                                   label_key: str = "conditional",

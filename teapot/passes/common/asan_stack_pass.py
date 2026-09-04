@@ -6,7 +6,7 @@ from gtirb_rewriting import Patch, RewritingContext
 
 from teapot.arch.architecture import Architecture
 from teapot.configs.runtime import ASAN_TAG_STORAGE_SHADOW
-from teapot.configs.blacklist import function_symbol_names, is_blacklisted_function_name
+from teapot.configs.blacklist import function_symbol_names, is_blacklisted_function
 from teapot.datacls.dift_layout import get_dift_layout
 from teapot.passes.mixins import RegInstAwarePassMixin, VisitorPassMixin
 from teapot.utils.misc import distinguish_edges
@@ -30,7 +30,14 @@ class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
         self.visit_functions(functions, self.section)
 
     def visit_function(self, function: Function):
-        if any(name == "main" or is_blacklisted_function_name(name) for name in function_symbol_names(function)):
+        # This pass poisons the memory slot containing a call's return address.
+        # Link-register architectures have no such stack slot: treating SP-8
+        # as one corrupts sanitizer metadata for caller-owned memory that a
+        # callee may legitimately use as part of its frame.
+        if not self.arch.return_address_is_stack_resident():
+            return
+
+        if any(name == "main" for name in function_symbol_names(function)) or is_blacklisted_function(function):
             return
 
         self.reg_manager.analyze(function)

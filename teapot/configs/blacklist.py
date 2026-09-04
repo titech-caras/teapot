@@ -42,8 +42,39 @@ def function_symbol_names(function):
     return names
 
 
+def is_gnu_ifunc_resolver(function) -> bool:
+    """Return whether an ELF GNU_IFUNC symbol resolves through this function.
+
+    IFUNC resolvers run while the dynamic loader is still applying
+    relocations, before Teapot's runtime and ASan shadow state are ready.  A
+    resolver's Function name is often a local implementation name rather than
+    the public GNU_IFUNC symbol name, so identify it through the entry block
+    referenced by ``elfSymbolInfo`` instead of a name list.
+    """
+    entry_blocks = set(function.get_entry_blocks())
+    if not entry_blocks:
+        return False
+
+    entry_block = next(iter(entry_blocks))
+    section = entry_block.section
+    module = section.module if section is not None else None
+    if module is None:
+        return False
+
+    elf_symbol_info = module.aux_data.get("elfSymbolInfo")
+    if elf_symbol_info is None:
+        return False
+
+    for symbol, info in elf_symbol_info.data.items():
+        if (getattr(symbol, "referent", None) in entry_blocks and
+                len(info) > 1 and info[1] == "GNU_IFUNC"):
+            return True
+    return False
+
+
 def is_blacklisted_function(function) -> bool:
-    return any(is_blacklisted_function_name(name) for name in function_symbol_names(function))
+    return (any(is_blacklisted_function_name(name) for name in function_symbol_names(function)) or
+            is_gnu_ifunc_resolver(function))
 
 
 # TODO: eventually take an abilist file instead

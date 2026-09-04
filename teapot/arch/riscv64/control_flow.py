@@ -9,6 +9,20 @@ from teapot.utils.misc import generate_distinct_label_name
 
 
 class RISCV64ControlFlowPatchesMixin:
+    def skipped_text_restore_guard_patch(self):
+        """Guard untransformed text using only a temporary stack slot."""
+        return self.constraints()(lambda ctx: f"""
+            addi sp, sp, -16
+            sd t0, 0(sp)
+            {self.load_address("t0", "checkpoint_cnt")}
+            ld t0, 0(t0)
+            beqz t0, 1f
+            {self.jump_symbol("restore_checkpoint_EXT_LIB", "t0")}
+        1:
+            ld t0, 0(sp)
+            addi sp, sp, 16
+        """)
+
     def adjust_insertion_offset(self, block: gtirb.CodeBlock, offset: int, instructions) -> int:
         if offset != 0 or block.byte_interval is None:
             return offset
