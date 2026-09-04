@@ -291,3 +291,12 @@ class TeapotPipeline:
                 decoder=checkpoint_decoder):
             pass_manager.add(arch_pass)
         _run_pass_manager(pass_manager, self.ir, "text-checkpoints")
+        self.arch.relax_late_branches(
+            module=self.module,
+            text_section=self.text_section,
+            transient_section=self.transient_section,
+            text_transient_mapping=self.text_transient_mapping,
+            landing_pad_targets=self.landing_pad_targets,
+            run_pass_manager=lambda manager, label: _run_pass_manager(
+                manager, self.ir, label),
+        )

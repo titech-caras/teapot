@@ -51,6 +51,12 @@ class Architecture(
                                     decoder):
         return []
 
+    def relax_late_branches(self, *, module, text_section, transient_section,
+                            text_transient_mapping, landing_pad_targets,
+                            run_pass_manager):
+        """Finish architecture-specific branch relaxation after late layout."""
+        return ()
+
     def relax_conditional_branches(self, module: gtirb.Module) -> None:
         return None
 

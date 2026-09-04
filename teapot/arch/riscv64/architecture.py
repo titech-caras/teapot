@@ -30,6 +30,7 @@ class RISCV64Architecture(
         Architecture):
     MAGIC_WORDS = (0x11400013, 0x51400013)
     CHECKPOINT_TARGET_SCRATCH_REG_ADDR = 24
+    MAX_BRANCH_RELAXATION_ITERATIONS = 8
 
     def __init__(self):
         marker_bytes = b"".join(word.to_bytes(4, "little") for word in self.MAGIC_WORDS)
@@ -63,6 +64,67 @@ class RISCV64Architecture(
                 landing_pad_targets,
                 decoder=decoder)
         ]
+
+    def relax_late_branches(self, *, module, text_section, transient_section,
+                            text_transient_mapping, landing_pad_targets,
+                            run_pass_manager):
+        """Drive transient jumps and resulting landing pads to a fixed point."""
+        from gtirb_capstone.instructions import GtirbInstructionDecoder
+        from gtirb_rewriting import PassManager
+
+        from teapot.passes.common.riscv64_relax_unconditional_branches_pass import (
+            RISCV64RelaxUnconditionalBranchesPass,
+        )
+        from teapot.passes.preprocessing.riscv64_landing_pads_pass import (
+            RISCV64LandingPadsPass,
+        )
+
+        adjusted_by_iteration = []
+        for iteration in range(1, self.MAX_BRANCH_RELAXATION_ITERATIONS + 1):
+            previous_landing_targets = set(landing_pad_targets)
+            relax = RISCV64RelaxUnconditionalBranchesPass(
+                transient_section,
+                text_transient_mapping,
+                landing_pad_targets,
+                GtirbInstructionDecoder(module.isa),
+                self,
+            )
+            manager = PassManager()
+            manager.add(relax)
+            # Applying this manager also relayouts the module, so the next
+            # decoder observes distances after every replacement in this round.
+            run_pass_manager(manager, f"riscv64-relax-{iteration}")
+            adjusted_by_iteration.append(relax.relaxed)
+
+            new_landing_targets = landing_pad_targets - previous_landing_targets
+            if new_landing_targets:
+                landing_manager = PassManager()
+                landing_manager.add(RISCV64LandingPadsPass(
+                    text_section,
+                    transient_section,
+                    text_transient_mapping,
+                    self,
+                    new_landing_targets,
+                    decoder=GtirbInstructionDecoder(module.isa),
+                ))
+                run_pass_manager(
+                    landing_manager,
+                    f"riscv64-relax-landing-pads-{iteration}",
+                )
+
+            print(
+                f"[teapot] RV64 branch-relax iteration {iteration} "
+                f"adjusted {relax.relaxed} instructions",
+                flush=True,
+            )
+            if relax.relaxed == 0:
+                return tuple(adjusted_by_iteration)
+
+        raise RuntimeError(
+            "RV64 branch relaxation did not converge within "
+            f"{self.MAX_BRANCH_RELAXATION_ITERATIONS} iterations: "
+            f"{adjusted_by_iteration}"
+        )
 
     def create_text_dift_pass(self, reg_manager, section, decoder, dift_layout):
         from teapot.passes.text.dift.riscv64 import RISCV64TextDiftPropagationLLVMPass
