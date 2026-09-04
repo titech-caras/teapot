@@ -28,6 +28,7 @@ class AArch64Architecture(
         Architecture):
     MAGIC_WORDS = (0xd280229f, 0xd280a29f)
     CHECKPOINT_TARGET_SCRATCH_REG_ADDR = 24
+    MAX_BRANCH_RELAXATION_ITERATIONS = 8
     INVERSE_CONDITIONS = {
         "eq": "ne",
         "ne": "eq",
@@ -75,9 +76,27 @@ class AArch64Architecture(
         if not self.needs_conditional_branch_relax():
             return
         print("[teapot] begin aarch64-relax", flush=True)
-        AArch64RelaxConditionalBranchesPass(GtirbInstructionDecoder(module.isa)).begin_module(
-            module, [], None)
-        CachedGtirbInstructionDecoder.cache.clear()
+        adjusted_by_iteration = []
+        for iteration in range(1, self.MAX_BRANCH_RELAXATION_ITERATIONS + 1):
+            relax = AArch64RelaxConditionalBranchesPass(
+                GtirbInstructionDecoder(module.isa)
+            )
+            relax.begin_module(module, [], None)
+            adjusted_by_iteration.append(relax.relaxed_instructions)
+            CachedGtirbInstructionDecoder.cache.clear()
+            print(
+                f"[teapot] AArch64 branch-relax iteration {iteration} "
+                f"adjusted {relax.relaxed_instructions} instructions",
+                flush=True,
+            )
+            if relax.relaxed_instructions == 0:
+                break
+        else:
+            raise RuntimeError(
+                "AArch64 branch relaxation did not converge within "
+                f"{self.MAX_BRANCH_RELAXATION_ITERATIONS} iterations: "
+                f"{adjusted_by_iteration}"
+            )
         print("[teapot] end aarch64-relax", flush=True)
 
     def create_text_dift_pass(self, reg_manager, section, decoder, dift_layout):

@@ -17,7 +17,7 @@ from teapot.utils.misc import distinguish_edges, generate_distinct_label_name, g
 class _BranchTarget:
     symbol: gtirb.Symbol
     addend: int
-    address: int
+    address: Optional[int]
 
 
 @dataclass
@@ -37,7 +37,9 @@ class _Replacement:
 class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
     SHORT_BRANCH_SAFETY_MARGIN = 4096
     CONDITIONAL_BRANCH_SAFETY_MARGIN = 32768
+    DIRECT_BRANCH_SAFETY_MARGIN = 1048576
     ADR_SAFETY_MARGIN = 32768
+    LITERAL_LOAD_SAFETY_MARGIN = 32768
 
     def __init__(self, decoder: GtirbInstructionDecoder):
         self.decoder = decoder
@@ -47,6 +49,8 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         super().begin_module(module, functions, rewriting_ctx)
         self.relaxed_instructions = 0
         self.replacements_by_interval: Dict[gtirb.ByteInterval, List[_Replacement]] = {}
+        forwarding = module.aux_data.get("symbolForwarding")
+        self.symbol_forwarding = forwarding.data if forwarding is not None else {}
         self.code_block_by_address = {
             block.address: block
             for section in module.sections
@@ -79,6 +83,8 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
 
     def _visit_instruction(self, block: gtirb.CodeBlock, instructions, instruction_idx: int, inst_offset: int):
         instruction = instructions[instruction_idx]
+        if self._relax_literal_load(block, instruction, inst_offset):
+            return
         if self._relax_adr(block, instruction, inst_offset):
             return
 
@@ -86,9 +92,13 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         if target is None:
             return
         if target.address is None:
+            self._relax_external_direct_branch(block, instruction, inst_offset, target)
             return
 
         if not self._branch_out_of_range(block, inst_offset, instruction.mnemonic, target.address):
+            return
+
+        if self._relax_direct_branch(block, instruction, inst_offset, target):
             return
 
         inverted_branch = AArch64Architecture.invert_conditional_branch(
@@ -109,6 +119,131 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         ))
         self.relaxed_instructions += 1
 
+    def _relax_direct_branch(self, block: gtirb.CodeBlock, instruction, inst_offset: int,
+                             target: _BranchTarget) -> bool:
+        """Replace an out-of-range B/BL with the standard IP0 long-branch sequence.
+
+        AAPCS64 reserves x16/IP0 for linker-generated veneers at inter-procedure
+        branches. Materializing the exact symbolic target at the original branch
+        site avoids relying on section-wide veneer placement while preserving BL's
+        link-register behavior (BLR writes x30; BR does not).
+        """
+        mnemonic = instruction.mnemonic.lower()
+        if mnemonic not in ("b", "bl"):
+            return False
+        if mnemonic == "b" and not self._is_function_entry_target(target):
+            # IP0 is reserved for veneers at inter-procedure boundaries, but a
+            # local intra-procedure branch may legitimately keep x16 live.
+            return False
+
+        branch = 0xD63F0200 if mnemonic == "bl" else 0xD61F0200
+        replacement = self._encode_adrp_add(16) + branch.to_bytes(4, "little")
+        self.replacements_by_interval.setdefault(block.byte_interval, []).append(_Replacement(
+            offset=block.offset + inst_offset,
+            bytes=replacement,
+            symbolic_expressions=(
+                (0, target, {gtirb.SymbolicExpression.Attribute.PAGE}),
+                (4, target, {gtirb.SymbolicExpression.Attribute.LO12}),
+            ),
+        ))
+        self.relaxed_instructions += 1
+        return True
+
+    def _is_function_entry_target(self, target: _BranchTarget) -> bool:
+        if target.addend != 0 or not isinstance(target.symbol.referent, gtirb.CodeBlock):
+            return False
+        function_entries = self.module.aux_data.get("functionEntries")
+        if function_entries is None:
+            return False
+        return any(target.symbol.referent in entries for entries in function_entries.data.values())
+
+    def _relax_external_direct_branch(self, block: gtirb.CodeBlock, instruction,
+                                      inst_offset: int, target: _BranchTarget) -> bool:
+        """Replace an external B/BL with an inline GOT-based IP0 veneer."""
+        mnemonic = instruction.mnemonic.lower()
+        if mnemonic not in ("b", "bl"):
+            return False
+        if target.addend != 0 or not isinstance(target.symbol.referent, gtirb.ProxyBlock):
+            return False
+
+        branch = 0xD63F0200 if mnemonic == "bl" else 0xD61F0200
+        replacement = self._encode_adrp_ldr(16) + branch.to_bytes(4, "little")
+        self.replacements_by_interval.setdefault(block.byte_interval, []).append(_Replacement(
+            offset=block.offset + inst_offset,
+            bytes=replacement,
+            symbolic_expressions=(
+                (0, target, {
+                    gtirb.SymbolicExpression.Attribute.GOT,
+                    gtirb.SymbolicExpression.Attribute.PAGE,
+                }),
+                (4, target, {
+                    gtirb.SymbolicExpression.Attribute.GOT,
+                    gtirb.SymbolicExpression.Attribute.LO12,
+                }),
+            ),
+        ))
+        self.relaxed_instructions += 1
+        return True
+
+    def _relax_literal_load(self, block: gtirb.CodeBlock, instruction,
+                            inst_offset: int) -> bool:
+        """Replace a range-fragile GPR literal load with ADRP plus LDR.
+
+        AArch64 literal loads have a signed 19-bit word-scaled displacement and
+        therefore only reach roughly one MiB.  A symbolic literal in a different
+        section has no stable range after the linker lays out large rewritten
+        sections.  Reusing the destination GPR as the temporary page base keeps
+        the transformation register-neutral.
+        """
+        if instruction.mnemonic.lower() != "ldr":
+            return False
+        if len(instruction.operands) < 2 or instruction.operands[1].type != CS_OP_IMM:
+            return False
+
+        target = self._symbolic_target(block, inst_offset, instruction)
+        if target is None or target.address is None:
+            return False
+        if gtirb.SymbolicExpression.Attribute.GOT in self._symbolic_attributes(
+                block, inst_offset, instruction):
+            return False
+        if not self._literal_load_needs_relaxation(block, inst_offset, target):
+            return False
+
+        reg_num = self._destination_register_number(instruction)
+        if reg_num is None:
+            return False
+        reg_name = instruction.reg_name(instruction.operands[0].reg)
+        if not reg_name.startswith("x"):
+            return False
+
+        replacement = self._encode_adrp_ldr(reg_num)
+        self.replacements_by_interval.setdefault(block.byte_interval, []).append(_Replacement(
+            offset=block.offset + inst_offset,
+            bytes=replacement,
+            symbolic_expressions=(
+                (0, target, {gtirb.SymbolicExpression.Attribute.PAGE}),
+                (4, target, {gtirb.SymbolicExpression.Attribute.LO12}),
+            ),
+        ))
+        self.relaxed_instructions += 1
+        return True
+
+    def _literal_load_needs_relaxation(self, block: gtirb.CodeBlock,
+                                       inst_offset: int, target: _BranchTarget) -> bool:
+        source_interval = block.byte_interval
+        target_interval = getattr(target.symbol.referent, "byte_interval", None)
+        if (source_interval is not None and target_interval is not None and
+                source_interval.section is not target_interval.section):
+            return True
+
+        source_address = self._block_layout_address(block)
+        if source_address is None or target.address is None:
+            return False
+        source_address += inst_offset
+        literal_range = 1048576 - self.LITERAL_LOAD_SAFETY_MARGIN
+        delta = target.address - source_address
+        return delta < -literal_range or delta > literal_range - 4
+
     def _relax_adr(self, block: gtirb.CodeBlock, instruction, inst_offset: int) -> bool:
         if instruction.mnemonic.lower() != "adr":
             return False
@@ -116,7 +251,7 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         target = self._symbolic_target(block, inst_offset, instruction)
         if target is None or target.address is None:
             return False
-        if not self._adr_out_of_range(block, inst_offset, target.address):
+        if not self._adr_needs_relaxation(block, inst_offset, target):
             return False
         if gtirb.SymbolicExpression.Attribute.GOT in self._symbolic_attributes(block, inst_offset, instruction):
             return False
@@ -137,12 +272,21 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         self.relaxed_instructions += 1
         return True
 
+    def _adr_needs_relaxation(self, block: gtirb.CodeBlock,
+                              inst_offset: int, target: _BranchTarget) -> bool:
+        source_interval = block.byte_interval
+        target_interval = getattr(target.symbol.referent, "byte_interval", None)
+        if (source_interval is not None and target_interval is not None and
+                source_interval.section is not target_interval.section):
+            return True
+        return self._adr_out_of_range(block, inst_offset, target.address)
+
     def _branch_target(self, block: gtirb.CodeBlock, instructions, instruction_idx: int,
                        inst_offset: int) -> Optional[_BranchTarget]:
         instruction = instructions[instruction_idx]
         symbolic_target = self._symbolic_target(block, inst_offset, instruction)
         if symbolic_target is not None:
-            return symbolic_target
+            return self._forward_branch_target(symbolic_target)
 
         if instruction_idx == len(instructions) - 1:
             edge_target = self._terminator_branch_target(block)
@@ -167,6 +311,18 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         )
         return _BranchTarget(symbol, 0, self._block_layout_address(target_block))
 
+    def _forward_branch_target(self, target: _BranchTarget) -> _BranchTarget:
+        symbol = target.symbol
+        seen = set()
+        while symbol in self.symbol_forwarding and symbol not in seen:
+            seen.add(symbol)
+            symbol = self.symbol_forwarding[symbol]
+        if symbol is target.symbol:
+            return target
+        symbol_address = self._symbol_address(symbol)
+        address = None if symbol_address is None else symbol_address + target.addend
+        return _BranchTarget(symbol, target.addend, address)
+
     @staticmethod
     def _symbolic_target(block: gtirb.CodeBlock, inst_offset: int, instruction) -> Optional[_BranchTarget]:
         symexpr = AArch64RelaxConditionalBranchesPass._instruction_symbolic_expression(
@@ -176,10 +332,11 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
             return None
 
         symbol_address = AArch64RelaxConditionalBranchesPass._symbol_address(symexpr.symbol)
-        if symbol_address is None:
+        if symbol_address is None and not isinstance(symexpr.symbol.referent, gtirb.ProxyBlock):
             return None
 
-        return _BranchTarget(symexpr.symbol, symexpr.offset, symbol_address + symexpr.offset)
+        address = None if symbol_address is None else symbol_address + symexpr.offset
+        return _BranchTarget(symexpr.symbol, symexpr.offset, address)
 
     @staticmethod
     def _symbolic_attributes(block: gtirb.CodeBlock, inst_offset: int, instruction):
@@ -257,6 +414,8 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
             return 32768 - cls.SHORT_BRANCH_SAFETY_MARGIN
         if mnemonic in ("cbz", "cbnz") or mnemonic.startswith("b."):
             return 1048576 - cls.CONDITIONAL_BRANCH_SAFETY_MARGIN
+        if mnemonic in ("b", "bl"):
+            return 134217728 - cls.DIRECT_BRANCH_SAFETY_MARGIN
         return None
 
     @staticmethod
@@ -329,6 +488,10 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
             return None
 
         reg_name = instruction.reg_name(instruction.operands[0].reg)
+        if reg_name == "fp":
+            return 29
+        if reg_name == "lr":
+            return 30
         if reg_name.startswith("w"):
             reg_name = "x" + reg_name[1:]
         if not reg_name.startswith("x"):
@@ -348,6 +511,12 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         adrp = 0x90000000 | reg_num
         add = 0x91000000 | (reg_num << 5) | reg_num
         return adrp.to_bytes(4, "little") + add.to_bytes(4, "little")
+
+    @staticmethod
+    def _encode_adrp_ldr(reg_num: int) -> bytes:
+        adrp = 0x90000000 | reg_num
+        ldr = 0xF9400000 | (reg_num << 5) | reg_num
+        return adrp.to_bytes(4, "little") + ldr.to_bytes(4, "little")
 
     def _apply_replacements(self) -> None:
         for interval, replacements in self.replacements_by_interval.items():
