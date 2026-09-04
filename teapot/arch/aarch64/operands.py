@@ -1,10 +1,90 @@
 from typing import Optional
 
 import gtirb
-from capstone.arm64 import ARM64_EXT_SXTW, ARM64_EXT_UXTW, ARM64_SFT_LSL
+from capstone.arm64 import (
+    ARM64_EXT_SXTW,
+    ARM64_EXT_UXTW,
+    ARM64_SFT_LSL,
+    ARM64_VAS_16B,
+    ARM64_VAS_1B,
+    ARM64_VAS_1D,
+    ARM64_VAS_1H,
+    ARM64_VAS_1Q,
+    ARM64_VAS_1S,
+    ARM64_VAS_2D,
+    ARM64_VAS_2H,
+    ARM64_VAS_2S,
+    ARM64_VAS_4B,
+    ARM64_VAS_4H,
+    ARM64_VAS_4S,
+    ARM64_VAS_8B,
+    ARM64_VAS_8H,
+)
 from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, CsInsn
 
 from teapot.utils.registers import get_register
+
+
+_AARCH64_VECTOR_ARRANGEMENTS = {
+    ARM64_VAS_16B: (16, 1),
+    ARM64_VAS_8B: (8, 1),
+    ARM64_VAS_4B: (4, 1),
+    ARM64_VAS_1B: (1, 1),
+    ARM64_VAS_8H: (8, 2),
+    ARM64_VAS_4H: (4, 2),
+    ARM64_VAS_2H: (2, 2),
+    ARM64_VAS_1H: (1, 2),
+    ARM64_VAS_4S: (4, 4),
+    ARM64_VAS_2S: (2, 4),
+    ARM64_VAS_1S: (1, 4),
+    ARM64_VAS_2D: (2, 8),
+    ARM64_VAS_1D: (1, 8),
+    ARM64_VAS_1Q: (1, 16),
+}
+
+
+_ATOMIC_FETCH_MNEMONIC_PREFIXES = (
+    "ldadd", "ldclr", "ldeor", "ldset",
+    "ldsmax", "ldsmin", "ldumax", "ldumin",
+)
+_ATOMIC_STORE_ALIAS_MNEMONIC_PREFIXES = (
+    "stadd", "stclr", "steor", "stset",
+    "stsmax", "stsmin", "stumax", "stumin",
+)
+_ATOMIC_RMW_MNEMONIC_PREFIXES = (
+    *_ATOMIC_FETCH_MNEMONIC_PREFIXES,
+    *_ATOMIC_STORE_ALIAS_MNEMONIC_PREFIXES,
+    "swp", "cas",
+)
+
+
+def aarch64_is_atomic_rmw_mnemonic(mnemonic: str) -> bool:
+    """Return whether *mnemonic* performs an atomic read/modify/write."""
+    return mnemonic.lower().startswith(_ATOMIC_RMW_MNEMONIC_PREFIXES)
+
+
+def aarch64_atomic_written_operand_indices(mnemonic: str):
+    """Return explicit register operands written by an atomic instruction."""
+    mnemonic = mnemonic.lower()
+    if mnemonic.startswith(_ATOMIC_FETCH_MNEMONIC_PREFIXES) or mnemonic.startswith("swp"):
+        return (1,)
+    if mnemonic.startswith("casp"):
+        return (0, 1)
+    if mnemonic.startswith("cas"):
+        return (0,)
+    return ()
+
+
+def aarch64_atomic_read_operand_indices(mnemonic: str):
+    """Return explicit register operands read by an atomic instruction."""
+    mnemonic = mnemonic.lower()
+    if mnemonic.startswith("casp"):
+        return (0, 1, 2, 3)
+    if mnemonic.startswith("cas"):
+        return (0, 1)
+    if aarch64_is_atomic_rmw_mnemonic(mnemonic):
+        return (0,)
+    return ()
 
 
 class AArch64OperandMixin:
@@ -36,8 +116,43 @@ class AArch64OperandMixin:
         return get_register(abi, name).name
 
     @staticmethod
+    def aarch64_structure_mem_operand_size(inst: CsInsn) -> int:
+        mnemonic = inst.mnemonic.lower()
+        structure_prefixes = (
+            "ld1", "ld2", "ld3", "ld4",
+            "st1", "st2", "st3", "st4",
+        )
+        if not mnemonic.startswith(structure_prefixes):
+            return 0
+
+        replicate_load = mnemonic.startswith(("ld1r", "ld2r", "ld3r", "ld4r"))
+        total_size = 0
+        found_vector = False
+        for operand in inst.operands:
+            if operand.type != CS_OP_REG:
+                continue
+            name = inst.reg_name(operand.reg).lower()
+            if not name.startswith("v"):
+                continue
+
+            arrangement = _AARCH64_VECTOR_ARRANGEMENTS.get(getattr(operand, "vas", 0))
+            if arrangement is None:
+                return 0
+            lanes, element_size = arrangement
+            lane_access = getattr(operand, "vector_index", -1) >= 0
+            total_size += element_size if replicate_load or lane_access else lanes * element_size
+            found_vector = True
+
+        return total_size if found_vector else 0
+
+    @staticmethod
     def aarch64_mem_operand_size(inst: CsInsn) -> int:
         mnemonic = inst.mnemonic.lower()
+        atomic_rmw = aarch64_is_atomic_rmw_mnemonic(mnemonic)
+        if atomic_rmw and mnemonic.endswith("b"):
+            return 1
+        if atomic_rmw and mnemonic.endswith("h"):
+            return 2
         if mnemonic.startswith((
                 "ldrb", "strb", "ldurb", "sturb", "ldarb", "stlrb",
                 "ldaxrb", "stlxrb", "ldxrb", "stxrb", "ldursb", "ldrsb")):
@@ -48,6 +163,10 @@ class AArch64OperandMixin:
             return 2
         if mnemonic.startswith(("ldrsw", "ldursw")):
             return 4
+
+        structure_size = AArch64OperandMixin.aarch64_structure_mem_operand_size(inst)
+        if structure_size:
+            return structure_size
 
         reg_sizes = []
         for op in inst.operands:
@@ -65,7 +184,7 @@ class AArch64OperandMixin:
             elif name.startswith("b"):
                 reg_sizes.append(1)
 
-        if mnemonic.startswith(("ldp", "stp")) and len(reg_sizes) >= 2:
+        if mnemonic.startswith(("ldp", "stp", "casp")) and len(reg_sizes) >= 2:
             return reg_sizes[0] + reg_sizes[1]
         if reg_sizes:
             return reg_sizes[0]
@@ -207,6 +326,8 @@ class AArch64OperandMixin:
     @staticmethod
     def mem_operand_is_read(inst, operand) -> bool:
         mnemonic = inst.mnemonic.lower()
+        if aarch64_is_atomic_rmw_mnemonic(mnemonic):
+            return True
         if mnemonic.startswith("ld"):
             return True
         if mnemonic.startswith("st"):
@@ -221,6 +342,8 @@ class AArch64OperandMixin:
     @staticmethod
     def mem_operand_is_write(inst, operand) -> bool:
         mnemonic = inst.mnemonic.lower()
+        if aarch64_is_atomic_rmw_mnemonic(mnemonic):
+            return True
         if mnemonic.startswith("st"):
             return True
         if mnemonic.startswith("ld"):

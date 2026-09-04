@@ -1,6 +1,12 @@
 from typing import Set
 
-from capstone_gt import CS_OP_REG
+from capstone_gt import CS_OP_MEM, CS_OP_REG
+
+from teapot.arch.aarch64.operands import (
+    aarch64_atomic_read_operand_indices,
+    aarch64_atomic_written_operand_indices,
+    aarch64_is_atomic_rmw_mnemonic,
+)
 
 
 _COMPARE_MNEMONICS = {"cmp", "cmn", "tst", "ccmp", "ccmn"}
@@ -37,6 +43,11 @@ class AArch64RegisterMixin:
         return name
 
     def access_registers(self, abi, inst, acc_type: int) -> Set:
+        if aarch64_is_atomic_rmw_mnemonic(inst.mnemonic):
+            if acc_type == 0:
+                return self._fallback_atomic_read_registers(abi, inst)
+            if acc_type == 1:
+                return self._fallback_atomic_written_registers(abi, inst)
         result = super().access_registers(abi, inst, acc_type)
         if acc_type == 0 and self._needs_explicit_read_fallback(inst):
             result |= self._fallback_operand_registers(abi, inst)
@@ -74,6 +85,33 @@ class AArch64RegisterMixin:
             mnemonic.startswith(_STORE_PREFIXES) or
             mnemonic.startswith(("cb", "tb"))
         )
+
+    def _fallback_atomic_read_registers(self, abi, inst) -> Set:
+        result = self._fallback_atomic_register_operands(
+            abi, inst, aarch64_atomic_read_operand_indices(inst.mnemonic))
+        for operand in inst.operands:
+            if operand.type == CS_OP_MEM:
+                result |= self.mem_operand_registers(abi, inst, operand)
+        return result
+
+    def _fallback_atomic_written_registers(self, abi, inst) -> Set:
+        return self._fallback_atomic_register_operands(
+            abi, inst, aarch64_atomic_written_operand_indices(inst.mnemonic))
+
+    def _fallback_atomic_register_operands(self, abi, inst, operand_indices) -> Set:
+        flag_register = abi.flag_register()
+        flag_name = flag_register.name if flag_register is not None else None
+        result = set()
+        for operand_index in operand_indices:
+            if operand_index >= len(inst.operands):
+                continue
+            operand = inst.operands[operand_index]
+            if operand.type != CS_OP_REG:
+                continue
+            reg = self.register_from_name(abi, inst.reg_name(operand.reg), flag_name)
+            if reg is not None:
+                result.add(reg)
+        return result
 
     @staticmethod
     def clear_register_snippet(reg) -> str:
