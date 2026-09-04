@@ -21,7 +21,43 @@ _RISCV64_READ_WRITE_OPERAND0_MNEMONICS = {
     "c.add", "c.addi", "c.addi16sp", "c.addiw", "c.and", "c.andi",
     "c.or", "c.slli", "c.srai", "c.srli", "c.sub", "c.subw", "c.xor",
 }
+_RISCV64_ATOMIC_MEMORY_MNEMONIC_RE = re.compile(
+    r"^(amo(?:add|and|maxu?|minu?|or|swap|xor)|lr|sc)\.([wd])"
+    r"(?:\.(?:aqrl|aq|rl))?$"
+)
 _PCREL_ADDRESS_LABEL_COUNTER = count()
+
+
+def riscv64_atomic_memory_access(mnemonic: str):
+    """Return the memory access kind and width for an A-extension operation.
+
+    The RISC-V decoder used by Teapot represents the address in LR/SC and AMO
+    instructions as an ordinary register operand rather than ``CS_OP_MEM``.
+    Keep the architectural classification here so all consumers (memlog,
+    DIFT, memory checks, and register liveness) see the same memory operation.
+    """
+    match = _RISCV64_ATOMIC_MEMORY_MNEMONIC_RE.fullmatch(mnemonic.lower())
+    if match is None:
+        return None
+
+    operation = match.group(1)
+    kind = "amo" if operation.startswith("amo") else operation
+    width = 4 if match.group(2) == "w" else 8
+    return kind, width
+
+
+def riscv64_atomic_read_operand_indices(mnemonic: str):
+    access = riscv64_atomic_memory_access(mnemonic)
+    if access is None:
+        return ()
+    kind, _ = access
+    if kind == "lr":
+        return (1,)
+    return (1, 2)
+
+
+def riscv64_atomic_written_operand_indices(mnemonic: str):
+    return (0,) if riscv64_atomic_memory_access(mnemonic) is not None else ()
 
 
 @dataclass(frozen=True)
@@ -61,13 +97,13 @@ class RISCV64OperandMixin:
         high = anchor.byte_interval.symbolic_expressions.get(anchor.offset)
         if not isinstance(high, gtirb.SymAddrConst):
             return None
-        if not any(
-                attr in high.attributes
-                for attr in (
+        if not (
+                gtirb.SymbolicExpression.Attribute.GOT in high.attributes or
+                gtirb.SymbolicExpression.Attribute.TLSGD in high.attributes or
+                {
+                    gtirb.SymbolicExpression.Attribute.PCREL,
                     gtirb.SymbolicExpression.Attribute.HI,
-                    gtirb.SymbolicExpression.Attribute.GOT,
-                    gtirb.SymbolicExpression.Attribute.TLSGD,
-                )):
+                }.issubset(high.attributes)):
             return None
         return high
 
@@ -122,8 +158,18 @@ class RISCV64OperandMixin:
     @classmethod
     def fallback_mem_operand(cls, inst: CsInsn) -> Optional[Riscv64FallbackMemOperand]:
         mnemonic = inst.mnemonic.lower()
-        if not (cls.is_load_mnemonic(mnemonic) or cls.is_store_mnemonic(mnemonic)):
+        atomic_access = riscv64_atomic_memory_access(mnemonic)
+        if not (
+                cls.is_load_mnemonic(mnemonic) or
+                cls.is_store_mnemonic(mnemonic) or
+                atomic_access is not None):
             return None
+
+        if atomic_access is not None:
+            match = re.search(r"\(([^(),\s]+)\)\s*$", inst.op_str)
+            if match is None:
+                return None
+            return Riscv64FallbackMemOperand(match.group(1), 0)
 
         match = re.search(r"(^|,\s*)(-?(?:0x[0-9a-fA-F]+|\d+))\(([^()]+)\)\s*$", inst.op_str)
         if match is None:
@@ -135,6 +181,7 @@ class RISCV64OperandMixin:
     def fallback_access_regs(cls, abi, inst: CsInsn, acc_type: int,
                              flag_name: Optional[str]) -> Set[Register]:
         mnemonic = inst.mnemonic.lower()
+        atomic_access = riscv64_atomic_memory_access(mnemonic)
         is_store = cls.is_store_mnemonic(mnemonic)
         is_branch = cls.is_branch_mnemonic(mnemonic)
         read_write_operand0 = mnemonic in _RISCV64_READ_WRITE_OPERAND0_MNEMONICS
@@ -154,6 +201,14 @@ class RISCV64OperandMixin:
             access = getattr(operand, "access", 0)
             if access:
                 if not (access & (CS_AC_READ if acc_type == 0 else CS_AC_WRITE)):
+                    continue
+            elif atomic_access is not None:
+                operand_indices = (
+                    riscv64_atomic_read_operand_indices(mnemonic)
+                    if acc_type == 0 else
+                    riscv64_atomic_written_operand_indices(mnemonic)
+                )
+                if idx not in operand_indices:
                     continue
             elif acc_type == 1:
                 if is_store or is_branch or idx != 0:
@@ -204,6 +259,9 @@ class RISCV64OperandMixin:
     @staticmethod
     def riscv64_mem_operand_size(inst: CsInsn) -> int:
         mnemonic = inst.mnemonic.lower()
+        atomic_access = riscv64_atomic_memory_access(mnemonic)
+        if atomic_access is not None:
+            return atomic_access[1]
         if mnemonic in {"lb", "lbu", "sb"}:
             return 1
         if mnemonic in {"lh", "lhu", "sh"}:
@@ -228,7 +286,18 @@ class RISCV64OperandMixin:
         saved_reg_offsets = kwargs.get("saved_reg_offsets", {}) or {}
         stack_adjustment = stack_adjustment or 0
 
-        pcrel_hi = self._paired_pcrel_hi_expression(kwargs.get("mem_symexpr"))
+        mem_symexpr = kwargs.get("mem_symexpr")
+        if (
+                isinstance(mem_symexpr, gtirb.SymAddrConst) and
+                gtirb.SymbolicExpression.Attribute.LO in mem_symexpr.attributes and
+                gtirb.SymbolicExpression.Attribute.PCREL not in mem_symexpr.attributes):
+            target = self._symbolic_reference(mem_symexpr)
+            return f"""
+                lui {addr_reg}, %hi({target})
+                addi {addr_reg}, {addr_reg}, %lo({target})
+            """
+
+        pcrel_hi = self._paired_pcrel_hi_expression(mem_symexpr)
         if pcrel_hi is not None:
             return self._pcrel_address_snippet(addr_reg, pcrel_hi)
 
@@ -297,6 +366,9 @@ class RISCV64OperandMixin:
     @classmethod
     def mem_operand_is_read(cls, inst, operand) -> bool:
         mnemonic = inst.mnemonic.lower()
+        atomic_access = riscv64_atomic_memory_access(mnemonic)
+        if atomic_access is not None:
+            return atomic_access[0] in {"amo", "lr"}
         if cls.is_load_mnemonic(mnemonic):
             return True
         if cls.is_store_mnemonic(mnemonic):
@@ -311,6 +383,9 @@ class RISCV64OperandMixin:
     @classmethod
     def mem_operand_is_write(cls, inst, operand) -> bool:
         mnemonic = inst.mnemonic.lower()
+        atomic_access = riscv64_atomic_memory_access(mnemonic)
+        if atomic_access is not None:
+            return atomic_access[0] in {"amo", "sc"}
         if cls.is_store_mnemonic(mnemonic):
             return True
         if cls.is_load_mnemonic(mnemonic):

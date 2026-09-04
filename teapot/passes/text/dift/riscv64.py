@@ -19,6 +19,11 @@ from teapot.passes.text.dift.base import (
 class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagationPass):
     EXPECTED_ARCH = "riscv64"
     TARGET_TRIPLE = "riscv64-unknown-linux-gnu"
+    LLVM_CALLER_SAVED_GPRS = (
+        "ra",
+        "t0", "t1", "t2", "t3", "t4", "t5", "t6",
+        "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+    )
 
     def _get_register_usage(self, asm: str):
         regs = {}
@@ -28,6 +33,17 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagatio
             normalized = self.reg_manager.abi.normalize_register_name(name)
             if normalized != "zero":
                 regs[normalized] = self.reg_manager.abi.register_from_name(normalized)
+
+        # LLVM targets the baseline RV64 ISA here, so operations such as a
+        # 64-bit multiply may be lowered to a libgcc call (for example,
+        # __muldi3).  Registers that the callee clobbers are implicit in the
+        # assembly and therefore absent from the scan above.  The generated
+        # snippet is inlined into application code, so preserve every
+        # caller-saved GPR whenever it contains a call.
+        if re.search(r"(?m)^\s*call\s+", asm):
+            for name in self.LLVM_CALLER_SAVED_GPRS:
+                reg = self.reg_manager.abi.register_from_name(name)
+                regs[reg.name] = reg
         return self.reg_manager.abi.sort_registers(regs.values())
 
     def _build_store_values_patch(self, inst: CsInsn, capture_operands, scratch_plan=None,
