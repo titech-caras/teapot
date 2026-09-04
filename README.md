@@ -26,8 +26,10 @@ Teapot also requires `llvmlite` for generating optimized DIFT instrumentation.
 If the debug symbol manipulation functions are used, `pyelftools` is also required.
 
 Teapot live-register analysis uses conservative call liveness on every ISA:
-calls do not make ABI caller-saved GPRs available for instrumentation.
-Keep this behavior until Teapot has a more precise cross-call analysis.
+every GPR that instrumentation could allocate as scratch remains live at a
+call.  This also preserves inputs to local assembly helpers that use a private
+register convention rather than the platform ABI.  Keep this behavior until
+Teapot has a more precise cross-call analysis.
 
 See [`libcheckpoint/README.md`](libcheckpoint/README.md) for runtime
 build options, ASan/MTE tag-storage requirements, DIFT layout profiles,

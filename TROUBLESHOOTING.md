@@ -10,7 +10,7 @@ We could not display a progress bar since it is difficult to track the GTIRB int
 
 **Conservative call liveness**
 
-Teapot must keep conservative call liveness enabled for all ISAs: instrumentation should not treat ABI caller-saved GPRs as dead after calls.
+Teapot must keep conservative call liveness enabled for all ISAs: every GPR that instrumentation could allocate as scratch remains live at a call, including possible inputs to local assembly helpers with private register conventions.
 Do not disable this to make register allocation easier; add a principled cross-call analysis or an architecture-specific safe scratch strategy instead.
 
 **Execution of instrumented binary fails with `Map address 0x400000000000 failed: Address already in use`**
