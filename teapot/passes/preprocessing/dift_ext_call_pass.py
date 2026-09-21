@@ -46,6 +46,44 @@ class DiftExtCallPass(VisitorPassMixin):
 
         super().visit_function(function)
 
+    def _riscv_call_pair_expression(self, block, terminator):
+        arch_info = block.module.aux_data.get("archInfo")
+        if (arch_info is None or not isinstance(arch_info.data, dict)
+                or str(arch_info.data.get("ISA", "")).upper() != "RISCV64"
+                or block.module.byte_order != gtirb.Module.ByteOrder.Little
+                or terminator.size != 4):
+            return None
+
+        interval = block.byte_interval
+        low_offset = block.offset + terminator.address - block.address
+        high_offset = low_offset - 4
+        if high_offset < 0:
+            return None
+        high_word = int.from_bytes(interval.contents[high_offset:low_offset], "little")
+        low_word = int.from_bytes(terminator.bytes, "little")
+        # R_RISCV_CALL[_PLT] is attached to AUIPC, not the JALR terminator.
+        # Check both opcodes and the shared base register before inspecting
+        # that earlier expression: an unrelated data address must not qualify.
+        base = (high_word >> 7) & 31
+        if ((high_word & 0x7f) != 0x17 or (low_word & 0x707f) != 0x67
+                or base == 0 or base != ((low_word >> 15) & 31)):
+            return None
+
+        # A frontend can split the two instructions at the low anchor. Confirm
+        # the high word starts a decoded code instruction, even across blocks.
+        high_address = terminator.address - 4
+        owners = interval.code_blocks_on_offset(high_offset)
+        if not any(inst.address == high_address and inst.size == 4 and inst.mnemonic == "auipc"
+                   for owner in owners for inst in self.decoder.get_instructions(owner)):
+            return None
+        expression = interval.symbolic_expressions.get(high_offset)
+        if not isinstance(expression, gtirb.SymAddrConst):
+            return None
+        attrs = gtirb.SymbolicExpression.Attribute
+        if expression.attributes & {attrs.GOT, attrs.TLSGD, attrs.LO}:
+            return None
+        return expression
+
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         targets = {
             edge.target for edge in block.outgoing_edges
@@ -58,7 +96,8 @@ class DiftExtCallPass(VisitorPassMixin):
 
         # A PLT block can be referenced only by a RISC-V AUIPC/LO anchor.
         # The call relocation, not that anchor, names the external function.
-        # Inspect only the terminator: earlier expressions may be data operands.
+        # Inspect the terminator and, for a verified RISC-V control-flow pair,
+        # its high relocation. Other earlier expressions may be data operands.
         last_instruction = None
         for last_instruction in self.decoder.get_instructions(block):
             pass
@@ -68,6 +107,9 @@ class DiftExtCallPass(VisitorPassMixin):
                 expression = block.byte_interval.symbolic_expressions.get(position)
                 if isinstance(expression, gtirb.SymAddrConst):
                     self.symbols_to_rename.add(expression.symbol)
+            pair_expression = self._riscv_call_pair_expression(block, last_instruction)
+            if pair_expression is not None:
+                self.symbols_to_rename.add(pair_expression.symbol)
 
         # Other frontends use PLT aliases plus symbolForwarding. Keep all
         # candidates; end_module filters by the forwarded callable name.
