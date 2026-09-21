@@ -152,15 +152,26 @@ memory limit. Add `--full` for the complete Teapot suite; the September 21 run
 passed **139/139 tests** (134 prior tests plus five policy regressions).
 
 The runtime runner builds the normal, unmodified runtime sources in shadow and
-MTE configurations and runs 12 checkpoint-entry cases per configuration. Its new
+MTE configurations and runs 13 checkpoint-entry cases per configuration. Its
 `bti-fault` case uses a real protected-page violation, checks original-handler
 forwarding outside simulation, and verifies memory-history, guard-list, DIFT-tag,
-instruction-counter and GPR restoration. The nested binary tests a real inner
-checkpoint at an **initialized depth-one state**, not a live outer checkpoint
-chain. Its recovery code remains unguarded, like the existing runtime; it does
-not prove recovery into BTI-guarded runtime pages. Entry fixtures use the existing
-ASan-call stubs; they are not a new full-pipeline ASan validation. Unsupported
-environments are explicit CTest skips (77), not hardware passes.
+instruction-counter and GPR restoration. It retains the original initialized-
+depth-one case. The separate nested-only `bti-live-chain` test now creates both
+checkpoints from depth zero, mutates the same memory at each depth, faults at the
+actual invalid landing at depth two, restores the inner state to depth one, and
+then performs an explicit budget rollback of the still-live outer checkpoint.
+It verifies both metadata slots remain distinct, the outer snapshot survives
+inner recovery, both sets of saved GPRs, memory-history/guard tops, DIFT tags,
+instruction counters and per-depth/reason statistics. Its signal observer
+delegates to the installed runtime handler without changing the fault context.
+The default (nesting-off) test binary explicitly skips the live-chain request.
+
+Both shadow and MTE entry groups pass 13/13 under QEMU 10.0.11, with explicit
+no-BTI CPU and nesting-off skip controls. Recovery code remains unguarded, like
+the existing runtime; this does not prove recovery into BTI-guarded runtime
+pages or native Arm behavior. Entry fixtures use the existing ASan-call stubs;
+they are not a new full-pipeline ASan validation. Unsupported environments are
+explicit CTest skips (77), not hardware passes. Production nesting stays off.
 
 ## Performance scope
 

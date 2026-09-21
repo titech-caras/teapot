@@ -151,17 +151,22 @@ def main():
             run(name + "-build", ["cmake", "--build", build, "--target", "checkpoint_entry_default_test",
                                   "checkpoint_entry_nested_test", "-j4"], timeout=60)
             run(name + "-ctest", ["ctest", "--test-dir", build, "-R",
-                                  "checkpoint_entry_.*_(bti_fault|capacity|timing|storage|memlog|report)",
+                                  "checkpoint_entry_.*_(bti_fault|bti_live_chain|capacity|timing|storage|memlog|report)",
                                   "--output-on-failure", "-j1"])
             for mode in ("default", "nested"):
                 binary = build / ("checkpoint_entry_" + mode + "_test")
                 manifest["binaries"][name + "-" + mode] = {"path": str(binary), "sha256": sha256(binary)}
                 run(name + "-" + mode + "-bti", emulator + [binary, "bti-fault"])
+                run(name + "-" + mode + "-bti-live-chain",
+                    emulator + [binary, "bti-live-chain"],
+                    expected=(0,) if mode == "nested" else (77,))
                 if storage == "shadow":
                     unsupported = emulator[:]
                     unsupported[2] = "cortex-a53"
                     run(name + "-" + mode + "-unsupported",
                         unsupported + [binary, "bti-fault"], expected=(77,))
+                    run(name + "-" + mode + "-live-chain-unsupported",
+                        unsupported + [binary, "bti-live-chain"], expected=(77,))
     manifest["commands"] = records
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps({"evidence": str(root), "teapot_backend_supported": False,
