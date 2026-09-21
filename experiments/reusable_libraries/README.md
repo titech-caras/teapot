@@ -164,7 +164,14 @@ static-baseline reports including counters. The printer preserves multi-byte
 NOP encodings rather than turning them into several instructions. Old artifacts
 and the measurements below are unchanged. This does **not** fix reusable v3's
 liveness-dependent check placement or its 177 counter differences against the
-static baseline; no budget policy has been changed.
+static baseline; no budget policy has been changed. A fresh native timing
+comparison using the NOP-preserving binary passes all 5,192 strict runs. Its
+median 118-input round is 2.351 s, versus 2.351 s for static and 2.413 s for
+reusable v3. Median paired reusable/static and reusable/new-converted ratios
+are 1.030 and 1.031. Evidence:
+`workers/baseline-runtime-20260921/timing-compare-nop-preserved-20260921/`.
+As below, this includes process startup and I/O on a shared host; reuse is a
+build-cache benefit, not a demonstrated runtime acceleration or cutoff fix.
 
 The remaining promotion gate is report/cutoff policy, plus broader supported-
 input and architecture coverage. This is an independently reviewable prototype,

@@ -165,6 +165,18 @@ corpus, not the separate liveness-dependent cutoff issue in reusable component
 instrumentation. Nor is corpus agreement proof of equivalence on untested
 inputs. Earlier timings apply to the old converted binary, not this fresh one.
 
+A subsequent timing run does use the NOP-preserving binary above. On the same
+native x64 host/CPU 0, one warmup plus ten deterministically shuffled 118-input
+rounds per variant produced **5,192/5,192** strict behavior passes. Median round
+times were 0.443 s for the original dynamic binary, 2.351 s for the accepted
+static instrumentation, 2.351 s for the new converted binary and 2.413 s for
+reusable v3. The median paired converted/static ratio was **1.002** (range
+0.976–1.021); this does not establish a runtime speedup. Startup and report/log
+I/O are included, and other host workloads remained active. Results are in
+`workers/baseline-runtime-20260921/timing-compare-nop-preserved-20260921/`.
+Its legacy JSON key `converted_v2` names the new executable here; the manifest's
+path and SHA-256, not that old label, identify the measured binary.
+
 ## Ordinary-artifact cache, not an instrumentation cache
 
 `--cache-dir` stores two immutable, content-addressed stages:
