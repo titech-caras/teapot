@@ -160,3 +160,54 @@ time spent on a cache hit.
 The remaining promotion gate is report/cutoff policy, plus broader supported-
 input and architecture coverage. This is an independently reviewable prototype,
 not a default-path replacement or a claim of identical behavior on every input.
+
+## Cutoff probe and repeated native timings
+
+The cutoff limitation is now **observed**, not merely hypothetical. The
+coordinator's `workers/root/baseline-20260921/probe-rob-cutoff.py` runs each
+accepted executable in a fresh debugger-owned process. At one real depth-one
+checkpoint entry to `htp_utf8_decode_allow_overlong`, it replaces counter 5 with
+one of six values: 5, 225, 226, 230, 236, 237. It changes neither executable bytes
+nor the emitted instrumentation. This is a controlled process-state experiment,
+not an ordinary testcase pass or proof that every injected state arises from an
+unmodified input.
+
+| Injected counter | Static / link-before target reports | Reusable v3 target reports |
+|---|---|---|
+| 5, 225 | MDS ordinal 0, CACHE ordinal 4, MDS ordinal 8 | Same three sites |
+| 226, 230, 236 | MDS ordinal 0 only | All three sites |
+| 237 | MDS ordinal 0 only | MDS ordinal 0 only |
+
+All 18 cases exit successfully, retain one injected checkpoint, preserve the
+ordinary dynamic application's log, and leave executable hashes unchanged.
+Evidence is in `rob-cutoff-probe-v1/`, independently checked in the runtime
+worker's `cutoff-audit-20260921/`. Only the listed discrete counters were tested.
+The static/link-before pass charges an 11-instruction block before the later
+reports, while the reusable build charges it after them. Both eventually check
+the same cost, but the report observations differ. Therefore **v3 is not a
+report-equivalent replacement for the static/link-before mode**. The existing
+restore-point pass uses liveness to choose positions; changing preservation
+assumptions can move checks. Do not loosen preservation or suppress counters to
+hide this result. Default-path behavior and passing artifacts remain unchanged.
+
+A separate CPU-pinned native timing comparison used one warmup and ten timed
+118-input rounds per variant, with a deterministic shuffled variant order per
+round. All 5,192 processes passed strict ordinary-behavior checks; timing includes
+process startup and application/report I/O. The machine was shared with other
+workloads. These are workload measurements, not general-purpose performance
+claims or evidence of cutoff equivalence.
+
+| Variant | Median seconds / 118 inputs | Min–max | IQR |
+|---|---:|---:|---:|
+| Original dynamic | 0.442 | 0.422–0.449 | 0.010 |
+| Static Teapot | 2.342 | 2.285–2.384 | 0.046 |
+| Converted, link-before | 2.325 | 2.282–2.385 | 0.042 |
+| Reusable v3 | 2.408 | 2.313–2.466 | 0.060 |
+
+The median of paired per-round reusable/static ratios is 1.031; reusable/
+link-before is 1.035. This does not establish a runtime speedup: reuse saves
+instrumentation work, and v3's all-live policy adds preservation overhead. Raw
+rounds, commands, hashes and machine information are retained in the runtime
+worker's `timing-compare-20260921/`. A stable budget-check placement policy needs
+separate design and validation before promotion; no such semantic change is
+silently included in this prototype.
