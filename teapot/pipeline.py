@@ -313,11 +313,12 @@ class TeapotPipeline:
                 self.landing_pad_targets,
                 required_target_symbols=(self.linked_component.exported_function_symbols
                                          if self.linked_component else ()))
-        if self.linked_component:
-            # Exported addresses themselves must start with the full marker.
-            # Register this before stack poisoning in the SAME rewrite round:
-            # an active cross-component call redirects before any unlogged
-            # normal-path effects, without instrumenting generated bouncers.
+        if target_transform is not None:
+            # Every legal normal target address must start with the full
+            # marker, not just a separately rewritten component's exports.
+            # Register this before all other entry effects in the SAME round:
+            # an active indirect call redirects before normal stack poisoning
+            # or runtime initialization, without instrumenting the bouncer.
             pass_manager.add(target_transform)
         pass_manager.add(TextInitializeLibraryPass(self.text_section, self.decoder, self.arch))
         if self.options.enable_asan:
@@ -328,8 +329,6 @@ class TeapotPipeline:
             if self.options.enable_checkpoints:
                 pass_manager.add(TextSkippedTransformRestorePass(
                     self.text_section, self.arch))
-            if not self.linked_component:
-                pass_manager.add(target_transform)
         if self.options.enable_dift:
             pass_manager.add(self.arch.create_text_dift_pass(
                 self.reg_manager, self.text_section, self.decoder, self.dift_layout))
