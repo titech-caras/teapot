@@ -160,13 +160,25 @@ from the exact existing PIC objects. Those objects remain exclusively under
 `groundtruth/` and never enter the binary-only converter. These are additional
 verification controls, not alternative conversion outputs.
 
-Required tool changes are generic: the DDisasm unique-local-GOT fallback and
-split-load/boundary fixes; Teapot RV pre-transfer insertion (`9303bf0`) and
+Required tool changes are generic: the DDisasm unique-local-GOT fallback
+(`c9efdc01`), relocatable split fragments (`6e78c4dc`) and AArch64 owning-section
+anchors (`73506f25`); Teapot RV pre-transfer insertion (`9303bf0`) and
 external AUIPC/JALR wrapper recognition (`c2cd6da`); and printer preservation
 of same-section RV conditional branches (`3fc00dd`). The last fix lets GAS
 relax only branches that need it and removes all observed RV counter deltas.
 The new printer passes 141 tests (one pre-existing Windows-only test is
 inapplicable on Linux); this adds no PE/DLL conversion support.
+
+All three DDisasm fixes were subsequently compiled together in a clean build
+(binary SHA-256 `6098a63b10f9573e594e7b5fc77cc3133e7f336de75bddb8db8b87aa1ee3eaaa`).
+It passes 31 C++ and nine focused Python tests with recorded before/after
+source and tool hashes. Fresh ordinary conversions using that build, the
+current converter and current printer pass all 118 inputs on each architecture.
+All three final executables are byte-identical to the accepted conversions;
+Arm object/archive hashes differ before linking. Existing passing instrumented
+artifacts were not replaced. See `*-combined-frontend-v1/` in the multiarch
+worker and `workers/baseline-runtime-20260921/ddisasm-combined-private-v1/`.
+These are targeted gates, not a claim of a passing all-architecture DD suite.
 
 Current multi-architecture corpus evidence:
 
