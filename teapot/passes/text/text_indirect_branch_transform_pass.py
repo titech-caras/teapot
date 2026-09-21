@@ -18,12 +18,14 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
 
     def __init__(self, text_section: gtirb.Section, text_transient_mapping: CopiedSectionMapping,
                  decoder: GtirbInstructionDecoder, arch: Architecture,
-                 reg_manager: LiveRegisterManager = None, landing_pad_targets=None):
+                 reg_manager: LiveRegisterManager = None, landing_pad_targets=None,
+                 required_target_symbols=()):
         self.text_section = text_section
         self.text_transient_mapping = text_transient_mapping
         self.arch = arch
         self.reg_manager = reg_manager
         self.landing_pad_targets = landing_pad_targets if landing_pad_targets is not None else set()
+        self.required_target_symbols = frozenset(required_target_symbols)
 
         self.decoder = decoder
         self.analyzed_function_ids = set()
@@ -111,7 +113,8 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
         non_fallthrough_edges, fallthrough_edges = distinguish_edges(incoming_edges)
         # FIXME: this thing clobbers flags!
 
-        if (len(incoming_edges) == 0 or  # Sometimes GTIRB doesn't detect indirect branches
+        if (any(symbol.name in self.required_target_symbols for symbol in block.references) or
+                len(incoming_edges) == 0 or  # Sometimes GTIRB doesn't detect indirect branches
                 any(e.label.type in (gtirb.cfg.Edge.Type.Call, gtirb.cfg.Edge.Type.Branch) and
                     not e.label.direct for e in non_fallthrough_edges)):
             # FIXME: Can we handle jump tables better altogether? Maybe there's a better way...

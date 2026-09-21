@@ -17,11 +17,13 @@ class TransientCoveragePass(VisitorPassMixin, RegInstAwarePassMixin):
     idx: int = 0
 
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
-                 decoder: GtirbInstructionDecoder, guard_section: gtirb.Section, arch: Architecture):
+                 decoder: GtirbInstructionDecoder, guard_section: gtirb.Section, arch: Architecture,
+                 index_base_symbol=None):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.transient_section = transient_section
         self.guard_section = guard_section
         self.arch = arch
+        self.index_base_symbol = index_base_symbol
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
@@ -40,7 +42,8 @@ class TransientCoveragePass(VisitorPassMixin, RegInstAwarePassMixin):
         VisitorPassMixin.visit_function(self, function)
 
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
-        patch = self.arch.coverage_patch(self.idx)
+        patch = (self.arch.coverage_patch(self.idx) if self.index_base_symbol is None else
+                 self.arch.coverage_patch(self.idx, index_base_symbol=self.index_base_symbol))
         if self.reg_manager is not None and self.arch.uses_live_registers:
             patch = self.allocate_registers(function, block, 0)(patch)
         self.insert_at(block, 0, Patch.from_function(patch))

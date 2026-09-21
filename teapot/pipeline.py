@@ -127,16 +127,26 @@ class InstrumentationOptions:
 
 
 class TeapotPipeline:
+    linked_component = None
+    component_guard_base = None
+
     def __init__(self, ir: gtirb.IR, dift_layout_name=None,
-                 options: InstrumentationOptions = InstrumentationOptions()):
+                 options: InstrumentationOptions = InstrumentationOptions(), *,
+                 linked_component=None):
         self.ir = ir
         self.dift_layout_name = dift_layout_name
         self.options = options
+        self.linked_component = linked_component
         self.reg_manager = None
 
     def run(self):
         self.module = self.ir.modules[0]
         self.arch = get_arch(self.module)
+        if self.linked_component is not None:
+            if len(self.ir.modules) != 1 or self.arch.name != "x64":
+                raise ValueError("separate component rewriting currently requires one x64 module")
+            if self.options != InstrumentationOptions():
+                raise ValueError("component prototype requires all default instrumentation, nesting off")
         if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE and self.arch.name != "aarch64":
             raise ValueError("--aarch64-tag-storage=mte is only valid for AArch64 modules")
         if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE:
@@ -155,6 +165,13 @@ class TeapotPipeline:
                 # Invalid tables must not enter the rewriter's offset hooks.
                 self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
                 self.module.aux_data.pop(LIVE_REGISTER_SETS_AUXDATA, None)
+            if self.linked_component is not None:
+                if self.reg_manager.analysis_source != "ddisasm":
+                    raise ValueError("component prototype requires validated DDisasm liveness metadata")
+                count = self.linked_component.make_liveness_caller_independent(self.module)
+                self.reg_manager.refresh(preserve_liveness=True)
+                print(f"[teapot] component liveness: {count} masks conservatively all-live "
+                      "for caller-independent reuse", flush=True)
 
         self._run_normalize_passes()
         self._create_instrumentation_sections()
@@ -221,6 +238,13 @@ class TeapotPipeline:
             self.text_transient_mapping = copy_section(self.text_section, ".teapot_transient")
         self.text_section_start_symbol, self.text_section_end_symbol = create_section_bounds(
             self.text_section, "text")
+        self.component_guard_base = None
+        if self.linked_component is not None:
+            (self.text_section_start_symbol, self.text_section_end_symbol,
+             self.transient_section_start_symbol, self.transient_section_end_symbol) = \
+                self.linked_component.bounds(self.module)
+            self.component_guard_base = self.linked_component.external_symbol(
+                self.module, self.linked_component.guard_base_name)
 
         self._refresh_register_analysis()
 
@@ -278,6 +302,23 @@ class TeapotPipeline:
 
     def _run_text_passes(self):
         pass_manager = PassManager()
+        target_transform = None
+        if self.options.enable_indirect_transform:
+            target_transform = TextIndirectBranchTransformPass(
+                self.text_section,
+                self.text_transient_mapping,
+                self.decoder,
+                self.arch,
+                self.reg_manager,
+                self.landing_pad_targets,
+                required_target_symbols=(self.linked_component.exported_function_symbols
+                                         if self.linked_component else ()))
+        if self.linked_component:
+            # Exported addresses themselves must start with the full marker.
+            # Register this before stack poisoning in the SAME rewrite round:
+            # an active cross-component call redirects before any unlogged
+            # normal-path effects, without instrumenting generated bouncers.
+            pass_manager.add(target_transform)
         pass_manager.add(TextInitializeLibraryPass(self.text_section, self.decoder, self.arch))
         if self.options.enable_asan:
             pass_manager.add(AsanStackPass(
@@ -287,13 +328,8 @@ class TeapotPipeline:
             if self.options.enable_checkpoints:
                 pass_manager.add(TextSkippedTransformRestorePass(
                     self.text_section, self.arch))
-            pass_manager.add(TextIndirectBranchTransformPass(
-                self.text_section,
-                self.text_transient_mapping,
-                self.decoder,
-                self.arch,
-                self.reg_manager,
-                self.landing_pad_targets))
+            if not self.linked_component:
+                pass_manager.add(target_transform)
         if self.options.enable_dift:
             pass_manager.add(self.arch.create_text_dift_pass(
                 self.reg_manager, self.text_section, self.decoder, self.dift_layout))
@@ -311,7 +347,8 @@ class TeapotPipeline:
                 dift_layout=self.dift_layout, tag_storage=self.options.aarch64_tag_storage))
         if self.options.enable_gadgets:
             pass_manager.add(TransientCoveragePass(
-                self.reg_manager, self.transient_section, self.decoder, self.guard_section, self.arch))
+                self.reg_manager, self.transient_section, self.decoder, self.guard_section, self.arch,
+                index_base_symbol=self.component_guard_base))
             if self.options.enable_mem_operand_gadgets:
                 pass_manager.add(self.arch.create_transient_mem_operand_policy_pass(
                     self.reg_manager,
@@ -336,7 +373,9 @@ class TeapotPipeline:
                 self.reg_manager, self.transient_section, self.decoder))
         if self.options.enable_checkpoints:
             pass_manager.add(TransientInsertRestorePointsPass(
-                self.reg_manager, self.text_section, self.transient_section, self.decoder, self.arch))
+                self.reg_manager, self.text_section, self.transient_section, self.decoder, self.arch,
+                linked_function_symbols=(self.linked_component.linked_function_symbols
+                                         if self.linked_component else ())))
         if self.options.enable_indirect_check:
             pass_manager.add(TransientIndirectBranchCheckDestPass(
                 self.reg_manager,

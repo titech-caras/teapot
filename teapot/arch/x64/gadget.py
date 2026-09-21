@@ -6,13 +6,14 @@ from teapot.configs.runtime import SCRATCHPAD_SIZE
 
 
 class X64GadgetPatchesMixin:
-    def coverage_patch(self, idx: int):
+    def coverage_patch(self, idx: int, *, index_base_symbol=None):
+        index = str(idx) if index_base_symbol is None else f"OFFSET {index_base_symbol.name} + {idx}"
         @self.constraints(scratch_registers=1)
         def patch(ctx):
             r1, = ctx.scratch_registers
             return f"""
                 mov {r1}, guard_list_top
-                mov dword ptr [{r1}], {idx}
+                mov dword ptr [{r1}], {index}
                 lea {r1}, [{r1} + 4]
                 mov guard_list_top, {r1}
             """

@@ -23,11 +23,39 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def __init__(self, reg_manager: LiveRegisterManager,
                  text_section: gtirb.Section, transient_section: gtirb.Section,
-                 decoder: GtirbInstructionDecoder, arch: Architecture):
+                 decoder: GtirbInstructionDecoder, arch: Architecture, *,
+                 linked_function_symbols=()):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.text_section = text_section
         self.transient_section = transient_section
         self.arch = arch
+        self.linked_function_symbols = frozenset(linked_function_symbols)
+
+    def _targets_linked_component(self, block, instructions, edge):
+        """Recognize only a named transfer to a validated, instrumented provider.
+
+        Do not treat arbitrary addresses/data operands/unnamed indirect targets
+        as selected-library calls. Unknown and true external transfers retain
+        the existing rollback; barriers/syscalls are handled before this test.
+        """
+        if not self.linked_function_symbols or not instructions:
+            return False
+        forwarding_aux = block.module.aux_data.get("symbolForwarding")
+        forwarding = forwarding_aux.data if forwarding_aux is not None else {}
+        last = instructions[-1]
+        offset = block.offset + last.address - block.address
+        names = set()
+        for position in range(offset, offset + last.size):
+            expression = block.byte_interval.symbolic_expressions.get(position)
+            if expression is not None:
+                # Only the exported entry was required to have a bouncer.
+                # provider+N could enter normal code after that redirection.
+                if not isinstance(expression, gtirb.SymAddrConst) or expression.offset != 0:
+                    return False
+                symbol = forwarding.get(expression.symbol, expression.symbol)
+                names.add(symbol.name)
+        names.update(forwarding.get(symbol, symbol).name for symbol in edge.target.references)
+        return bool(names) and names <= self.linked_function_symbols
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
@@ -117,7 +145,8 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
             # The call may be a jmp because of tail-call optimization
             if (non_fallthrough_edges[0].label.type in (gtirb.EdgeType.Call, gtirb.EdgeType.Branch) and
                 (isinstance(non_fallthrough_edges[0].target, gtirb.ProxyBlock) or
-                 non_fallthrough_edges[0].target.section.name not in (self.text_section.name, self.transient_section.name))):
+                 non_fallthrough_edges[0].target.section.name not in (self.text_section.name, self.transient_section.name)) and
+                not self._targets_linked_component(block, instructions, non_fallthrough_edges[0])):
                 # is a call to external library function, rollback
                 unconditional_rollback_idx = len(instructions) - 1
 
