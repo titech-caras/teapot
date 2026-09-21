@@ -25,7 +25,7 @@ def mutate(name, base, kind, target, value=None):
         if kind == 'entry':
             struct.pack_into('<Q', data, 24, elf['e_entry'] + 1)
         elif kind == 'machine':
-            struct.pack_into('<H', data, 18, 183)
+            struct.pack_into('<H', data, 18, 8)  # EM_MIPS remains unsupported.
         elif kind == 'elf-type':
             struct.pack_into('<H', data, 16, 3)
         elif kind == 'tag':

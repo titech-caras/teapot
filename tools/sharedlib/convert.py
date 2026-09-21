@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed x86-64 selected-DSO to ET_REL/ET_EXEC research prototype.
+"""Fail-closed ELF64 selected-DSO to ET_REL/ET_EXEC research prototype.
 
 Run in an isolated container exposing only this script, the ELF inputs, the
 pinned toolchain, the explicitly selected external ELF dependencies and output.
@@ -8,6 +8,7 @@ No source/original object/archive is accepted. Assembly is never text-filtered.
 import argparse
 from collections import Counter
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -26,7 +27,7 @@ from elftools.elf.relocation import RelocationSection
 from elftools.dwarf.callframe import FDE
 
 
-CONTRACT = 'teapot-selected-elf-x64-v1'
+CONTRACT = 'teapot-selected-elf64-v2'
 LOOKUP = {'dlopen', 'dlmopen', 'dlsym', 'dlvsym', 'dlclose', 'dlinfo',
           'dl_iterate_phdr', '__libc_dlopen_mode'}
 UNWIND_UNSUPPORTED = {'__cxa_throw', '__cxa_rethrow', '__cxa_atexit',
@@ -34,6 +35,17 @@ UNWIND_UNSUPPORTED = {'__cxa_throw', '__cxa_rethrow', '__cxa_atexit',
 CRT_WEAK = {'__gmon_start__', '_ITM_registerTMCloneTable',
             '_ITM_deregisterTMCloneTable', '__cxa_finalize'}
 RELOCS_X64 = {1, 6, 7, 8}  # 64, GLOB_DAT, JUMP_SLOT, RELATIVE; COPY is excluded.
+ARCHITECTURES = {
+    'EM_X86_64': {'name': 'x64', 'relocations': RELOCS_X64, 'copy': 5,
+                 'relative': 8, 'got': 6, 'plt': 7, 'emulation': 'elf_x86_64',
+                 'interpreter': '/lib64/ld-linux-x86-64.so.2'},
+    'EM_AARCH64': {'name': 'aarch64', 'relocations': {257, 1025, 1026, 1027},
+                   'copy': 1024, 'relative': 1027, 'got': 1025, 'plt': 1026,
+                   'emulation': 'aarch64linux', 'interpreter': '/lib/ld-linux-aarch64.so.1'},
+    'EM_RISCV': {'name': 'riscv64', 'relocations': {2, 3, 5}, 'copy': 4,
+                 'relative': 3, 'got': 2, 'plt': 5, 'emulation': 'elf64lriscv',
+                 'interpreter': '/lib/ld-linux-riscv64-lp64d.so.1'},
+}
 
 # Known x64 glibc/GCC CRT bodies. Only RIP-relative operands and cross-function
 # branch displacements vary; their actual targets are checked separately. This
@@ -234,12 +246,362 @@ def validate_crt_callbacks(elf, static, relocations, dynsym, path):
     got(target(plt, 2, 6), '__cxa_finalize')
 
 
+def signed(value, width):
+    return value - (1 << width) if value & (1 << (width - 1)) else value
+
+
+# Fixed-width RISC-V relocations used in assembler-generated .eh_frame.
+# psABI: https://riscv-non-isa.github.io/riscv-elf-psabi-doc/#_relocations
+# tuple: storage bytes, affected bits, operation. SET6/SUB6 must preserve the
+# DW_CFA opcode in the top two bits. Unknown/variable-length forms fail closed.
+RISCV_CFI_RELOCATIONS = {
+    1: (4, 32, 'set'), 2: (8, 64, 'set'),
+    33: (1, 8, 'add'), 34: (2, 16, 'add'), 35: (4, 32, 'add'), 36: (8, 64, 'add'),
+    37: (1, 8, 'sub'), 38: (2, 16, 'sub'), 39: (4, 32, 'sub'), 40: (8, 64, 'sub'),
+    52: (1, 6, 'sub'), 53: (1, 6, 'set'),
+    54: (1, 8, 'set'), 55: (2, 16, 'set'), 56: (4, 32, 'set'), 57: (4, 32, 'pcrel'),
+}
+
+
+def riscv_cfi_value(kind, value, symbol, addend, place):
+    """Apply one supported psABI relocation, preserving unaffected field bits."""
+    _, bits, operation = RISCV_CFI_RELOCATIONS[kind]
+    mask = (1 << bits) - 1
+    operand = symbol + addend
+    if operation == 'add':
+        relocated = (value & mask) + operand
+    elif operation == 'sub':
+        relocated = (value & mask) - operand
+    elif operation == 'pcrel':
+        relocated = operand - place
+    else:
+        relocated = operand
+    return (value & ~mask) | (relocated & mask)
+
+
+def eh_cfi_entries(elf, path):
+    """Read CFI without skipping the RV64 ET_REL relocation/validation step.
+
+    pyelftools 0.32 has no RISC-V relocation recipes. Apply the limited CFI
+    recipes to a private in-memory section copy before invoking its decoder.
+    Original ET_REL bytes/relocations are untouched and still go to the linker.
+    ET_REL code addresses remain section-relative, as in other architectures;
+    this is not a final executable load-address or unwind-execution proof.
+    """
+    if elf['e_machine'] != 'EM_RISCV' or elf['e_type'] != 'ET_REL':
+        return elf.get_dwarf_info().EH_CFI_entries()
+    eh_index = elf.get_section_index('.eh_frame')
+    if eh_index is None:
+        return []
+    eh = elf.get_section(eh_index)
+    data = bytearray(eh.data())
+    for relocations in elf.iter_sections():
+        if not isinstance(relocations, RelocationSection) or relocations['sh_info'] != eh_index:
+            continue
+        symbols = elf.get_section(relocations['sh_link'])
+        for relocation in relocations.iter_relocations():
+            kind, offset = relocation['r_info_type'], relocation['r_offset']
+            if not relocation.is_RELA() or kind not in RISCV_CFI_RELOCATIONS:
+                reject('UNSUPPORTED_CFI_RELOCATION', path, str(kind))
+            # GNU ld 2.42 subtracts S before adding A for SUB relocations,
+            # unlike the psABI's V-S-A. Assembler-produced CFI uses A=0 here.
+            # Do not validate a different unwind table from what that linker
+            # will emit for a hand-crafted/nonstandard nonzero SUB addend.
+            if RISCV_CFI_RELOCATIONS[kind][2] == 'sub' and relocation['r_addend'] != 0:
+                reject('UNSUPPORTED_CFI_RELOCATION', path, 'nonzero SUB addend')
+            width, _, _ = RISCV_CFI_RELOCATIONS[kind]
+            if offset < 0 or offset + width > len(data):
+                reject('INVALID_CFI_RELOCATION', path, 'field outside .eh_frame')
+            if relocation['r_info_sym'] >= symbols.num_symbols():
+                reject('INVALID_CFI_RELOCATION', path, 'symbol index outside table')
+            symbol = symbols.get_symbol(relocation['r_info_sym'])
+            section_index = symbol['st_shndx']
+            if isinstance(section_index, int) and 0 < section_index < elf.num_sections():
+                target = elf.get_section(section_index)
+                if symbol['st_value'] > target['sh_size']:
+                    reject('INVALID_CFI_RELOCATION', path, 'symbol outside its section')
+                address = target['sh_addr'] + symbol['st_value']
+            elif section_index == 'SHN_ABS':
+                address = symbol['st_value']
+            else:
+                reject('UNRESOLVED_CFI_RELOCATION', path, symbol.name)
+            value = int.from_bytes(data[offset:offset + width], 'little')
+            relocated = riscv_cfi_value(kind, value, address, relocation['r_addend'],
+                                       eh['sh_addr'] + offset)
+            data[offset:offset + width] = relocated.to_bytes(width, 'little')
+    dwarf = elf.get_dwarf_info(relocate_dwarf_sections=False)
+    dwarf.eh_frame_sec = dwarf.eh_frame_sec._replace(stream=io.BytesIO(data))
+    return dwarf.EH_CFI_entries()
+
+
+class StartupImage:
+    """Validate fixed GCC/glibc CRT instruction forms and their actual targets.
+
+    Only address immediates vary in accepted forms. This is not general code
+    interpretation: an unfamiliar instruction, register, branch, hook, ABI or
+    callback shape is rejected. Selected callback bodies/state are retained.
+    """
+    def __init__(self, elf, static, relocations, dynsym, path):
+        self.elf, self.relocations, self.dynsym, self.path = elf, relocations, dynsym, path
+        self.symbols = {s['name']: s['address'] for s in static if isinstance(s['section'], int)}
+        self.arch = ARCHITECTURES[elf['e_machine']]
+
+    def check(self, condition, detail):
+        if not condition:
+            reject('UNSUPPORTED_CRT_CALLBACK_BODY', self.path, detail)
+
+    def address(self, name):
+        self.check(name in self.symbols, 'missing helper ' + name)
+        return self.symbols[name]
+
+    def read(self, address, size):
+        for section in self.elf.iter_sections():
+            if section['sh_flags'] & 6 == 6 and section['sh_addr'] <= address and \
+                    address + size <= section['sh_addr'] + section['sh_size']:
+                offset = address - section['sh_addr']
+                return int.from_bytes(section.data()[offset:offset + size], 'little')
+        reject('UNSUPPORTED_CRT_CALLBACK_BODY', self.path, 'unmapped code at ' + hex(address))
+
+    def word(self, address, expected=None, mask=0xffffffff, size=4):
+        word = self.read(address, size)
+        if expected is not None:
+            self.check(word & mask == expected,
+                       '{}: unexpected CRT instruction {}'.format(hex(address), hex(word)))
+        return word
+
+    def named(self, address, name):
+        if self.symbols.get(name) != address:
+            reject('UNSUPPORTED_CRT_CALLBACK_TARGET', self.path,
+                   '{} must name {}'.format(hex(address), name))
+
+    def got(self, address, name, kind=None):
+        relocation = self.relocations.get(address)
+        if not relocation or relocation['r_info_type'] != (kind or self.arch['got']) or \
+                self.dynsym.get_symbol(relocation['r_info_sym']).name != name or \
+                relocation.get('r_addend', 0) != 0:
+            reject('UNSUPPORTED_CRT_CALLBACK_TARGET', self.path,
+                   '{} must be the unadjusted {} relocation'.format(hex(address), name))
+
+    def arm_page(self, pc, register):
+        word = self.word(pc, 0x90000000 | register, 0x9f00001f)
+        immediate = ((word >> 29) & 3) | (((word >> 5) & 0x7ffff) << 2)
+        return (pc & ~4095) + signed(immediate, 21) * 4096
+
+    def arm_pair(self, pc, register, load=False):
+        page = self.arm_page(pc, register)
+        opcode = 0xf9400000 if load else 0x91000000
+        word = self.word(pc + 4, opcode | (register << 5) | register, 0xffc003ff)
+        return page + ((word >> 10) & 4095) * (8 if load else 1)
+
+    def arm_branch(self, pc, target=None, link=False):
+        word = self.word(pc, 0x94000000 if link else 0x14000000, 0xfc000000)
+        actual = pc + 4 * signed(word & 0x3ffffff, 26)
+        if target is not None:
+            self.check(actual == target, 'CRT branch target at ' + hex(pc))
+        return actual
+
+    def arm_plt(self, address, name):
+        page = self.arm_page(address, 16)
+        load = self.word(address + 4, 0xf9400211, 0xffc003ff)
+        add = self.word(address + 8, 0x91000210, 0xffc003ff)
+        self.word(address + 12, 0xd61f0220)
+        slot = page + ((load >> 10) & 4095) * 8
+        self.check(slot == page + ((add >> 10) & 4095), 'inconsistent PLT slot')
+        self.got(slot, name, self.arch['plt'])
+
+    def arm_init_fini(self, init, fini):
+        for section, is_init in ((init, True), (fini, False)):
+            if section is None or section['sh_size'] == 0:
+                continue
+            address, size = section['sh_addr'], section['sh_size']
+            pac = self.read(address, 4) == 0xd503233f
+            expected_size = (5 if is_init else 4) * 4 + (8 if pac else 0)
+            self.check(size == expected_size, 'unrecognized ' + section.name + ' size')
+            pc = address + (4 if pac else 0)
+            self.word(pc, 0xa9bf7bfd)
+            self.word(pc + 4, 0x910003fd)
+            if is_init:
+                helper = self.address('call_weak_fn')
+                self.arm_branch(pc + 8, helper, link=True)
+                self.got(self.arm_pair(helper, 0, load=True), '__gmon_start__')
+                self.word(helper + 8, 0xb4000040)
+                self.arm_plt(self.arm_branch(helper + 12), '__gmon_start__')
+                self.word(helper + 16, 0xd65f03c0)
+                pc += 4
+            self.word(pc + 8, 0xa8c17bfd)
+            if pac:
+                self.word(pc + 12, 0xd50323bf)
+                pc += 4
+            self.word(pc + 12, 0xd65f03c0)
+
+    def arm_callbacks(self):
+        address = self.address('frame_dummy')
+        if self.read(address, 4) == 0xd503245f:  # Optional BTI c emitted by GCC CRT.
+            address += 4
+        self.arm_branch(address, self.address('register_tm_clones'))
+        for name in ('deregister_tm_clones', 'register_tm_clones'):
+            address = self.address(name)
+            self.named(self.arm_pair(address, 0), '__TMC_END__')
+            self.named(self.arm_pair(address + 8, 1), '__TMC_END__')
+            if name == 'deregister_tm_clones':
+                words = {4: 0xeb00003f, 5: 0x540000c0, 8: 0xb4000061,
+                         9: 0xaa0103f0, 10: 0xd61f0200, 11: 0xd65f03c0}
+                self.got(self.arm_pair(address + 24, 1, load=True), '_ITM_deregisterTMCloneTable')
+            else:
+                words = {4: 0xcb000021, 5: 0xd37ffc22, 6: 0x8b810c41, 7: 0x9341fc21,
+                         8: 0xb40000c1, 11: 0xb4000062, 12: 0xaa0203f0,
+                         13: 0xd61f0200, 14: 0xd65f03c0}
+                self.got(self.arm_pair(address + 36, 2, load=True), '_ITM_registerTMCloneTable')
+            for offset, word in words.items():
+                self.word(address + offset * 4, word)
+        address = self.address('__do_global_dtors_aux')
+        pac = self.read(address, 4) == 0xd503233f
+        address += 4 if pac else 0
+        for offset, word in {0: 0xa9be7bfd, 1: 0x910003fd, 2: 0xf9000bf3,
+                             8: 0xb4000080, 13: 0x52800020, 15: 0xf9400bf3,
+                             16: 0xa8c27bfd}.items():
+            self.word(address + offset * 4, word)
+        page = self.arm_page(address + 12, 19)
+        load = self.word(address + 16, 0x39400260, 0xffc003ff)
+        store = self.word(address + 56, 0x39000260, 0xffc003ff)
+        self.named(page + ((load >> 10) & 4095), 'completed.0')
+        self.named(page + ((store >> 10) & 4095), 'completed.0')
+        self.check(self.read(address + 20, 4) in (0x37000140, 0x35000140),
+                   'unrecognized completed-state branch')
+        self.got(self.arm_pair(address + 24, 0, load=True), '__cxa_finalize')
+        self.named(self.arm_pair(address + 36, 0, load=True), '__dso_handle')
+        self.arm_plt(self.arm_branch(address + 44, link=True), '__cxa_finalize')
+        self.arm_branch(address + 48, self.address('deregister_tm_clones'), link=True)
+        if pac:
+            self.word(address + 68, 0xd50323bf)
+        self.word(address + 68 + (4 if pac else 0), 0xd65f03c0)
+
+    def rv_pair(self, pc, register, operation=0):
+        # operation is ADDI=0, LD=3 or LBU=4; operand registers stay fixed.
+        upper = self.word(pc, (register << 7) | 0x17, 0xfff)
+        opcode = 0x13 if operation == 0 else 0x03
+        lower = self.word(pc + 4, (register << 15) | (operation << 12) |
+                          (register << 7) | opcode, 0xfffff)
+        return pc + signed(upper & 0xfffff000, 32) + signed(lower >> 20, 12)
+
+    def rv_jal(self, pc, target, register=1):
+        word = self.word(pc, (register << 7) | 0x6f, 0xfff)
+        immediate = ((word >> 31) << 20) | (((word >> 12) & 255) << 12) | \
+                    (((word >> 20) & 1) << 11) | (((word >> 21) & 1023) << 1)
+        self.check(pc + signed(immediate, 21) == target, 'RISC-V CRT call target')
+
+    def rv_cbranch(self, pc, register, target, nonzero=False):
+        word = self.word(pc, (0xe001 if nonzero else 0xc001) | ((register - 8) << 7),
+                         0xe383, size=2)
+        immediate = (((word >> 12) & 1) << 8) | (((word >> 10) & 3) << 3) | \
+                    (((word >> 5) & 3) << 6) | (((word >> 3) & 3) << 1) | (((word >> 2) & 1) << 5)
+        self.check(pc + signed(immediate, 9) == target, 'RISC-V CRT conditional target')
+
+    def rv_preinit(self, section, static, allow_call_pair=False):
+        # glibc's RV executable CRT initializes GP before dependency constructors
+        # and again at _start. Retain this array and its real callback; dropping
+        # it would change the process-wide GP contract for selected libraries.
+        self.check(section is not None and section['sh_size'] == 8 and
+                   section['sh_type'] == 'SHT_PREINIT_ARRAY' and
+                   section['sh_entsize'] == 8 and section['sh_flags'] == 3 and
+                   section['sh_addralign'] >= 8,
+                   'RV executable requires the single-entry CRT preinit array')
+        self.check(not any(section['sh_addr'] <= address < section['sh_addr'] + 8
+                           for address in self.relocations),
+                   'RV non-PIE CRT preinit entry must be an unrelocated pointer')
+        target = int.from_bytes(section.data(), 'little')
+        self.named(target, 'load_gp')
+        gp = [symbol['address'] for symbol in static
+              if symbol['name'] == '__global_pointer$' and
+              symbol['section'] == 'SHN_ABS' and symbol['type'] == 'STT_NOTYPE']
+        self.check(len(gp) == 1 and gp[0] == self.rv_pair(target, 3),
+                   'load_gp must initialize the linker-defined global pointer')
+        self.word(target + 8, 0x8082, size=2)  # ret; no other callback effect.
+        entry = self.elf['e_entry']
+        if allow_call_pair and self.read(entry, 4) & 0xfff == 0x97:
+            # The reconstructed `call` pseudo-instruction remains an exact
+            # AUIPC ra / JALR ra,ra pair when final relaxation is disabled.
+            # Validate both registers/opcodes and the actual call destination.
+            upper = self.word(entry, 0x97, 0xfff)
+            lower = self.word(entry + 4, 0x80e7, 0xfffff)
+            destination = (entry + signed(upper & 0xfffff000, 32) +
+                           signed(lower >> 20, 12)) & ~1
+            self.check(destination == target, 'RISC-V CRT call-pair target')
+        else:
+            self.rv_jal(entry, target)
+
+    def rv_callbacks(self):
+        address = self.address('frame_dummy')
+        if self.read(address, 2) & 3 == 3:
+            self.rv_jal(address, self.address('register_tm_clones'), register=0)
+        else:
+            word = self.word(address, 0xa001, 0xe003, size=2)
+            immediate = (((word >> 12) & 1) << 11) | (((word >> 11) & 1) << 4) | \
+                        (((word >> 9) & 3) << 8) | (((word >> 8) & 1) << 10) | \
+                        (((word >> 7) & 1) << 6) | (((word >> 6) & 1) << 7) | \
+                        (((word >> 3) & 7) << 1) | (((word >> 2) & 1) << 5)
+            self.named(address + signed(immediate, 12), 'register_tm_clones')
+        address = self.address('deregister_tm_clones')
+        self.named(self.rv_pair(address, 10), '__TMC_END__')
+        self.named(self.rv_pair(address + 8, 15), '__TMC_END__')
+        self.word(address + 16, 0x00a78863)  # beq a5,a0,ret, +16.
+        self.got(self.rv_pair(address + 20, 15, 3), '_ITM_deregisterTMCloneTable')
+        self.rv_cbranch(address + 28, 15, address + 32)
+        self.word(address + 30, 0x8782, size=2)
+        self.word(address + 32, 0x8082, size=2)
+        address = self.address('register_tm_clones')
+        self.named(self.rv_pair(address, 10), '__TMC_END__')
+        self.named(self.rv_pair(address + 8, 11), '__TMC_END__')
+        for offset, word in {16: 0x8d89, 22: 0x91fd, 24: 0x95be, 26: 0x8585,
+                             40: 0x8782, 42: 0x8082}.items():
+            self.word(address + offset, word, size=2)
+        self.word(address + 18, 0x4035d793)
+        self.rv_cbranch(address + 28, 11, address + 42)
+        self.got(self.rv_pair(address + 30, 15, 3), '_ITM_registerTMCloneTable')
+        self.rv_cbranch(address + 38, 15, address + 42)
+        address = self.address('__do_global_dtors_aux')
+        self.named(self.rv_pair(address, 15, 4), 'completed.0')
+        self.rv_cbranch(address + 8, 15, address + 54, nonzero=True)
+        for offset, word in {10: 0x1141, 12: 0xe406, 32: 0x9782, 38: 0x60a2,
+                             40: 0x4785, 50: 0x0141, 52: 0x8082, 54: 0x8082}.items():
+            self.word(address + offset, word, size=2)
+        self.got(self.rv_pair(address + 14, 15, 3), '__cxa_finalize')
+        self.rv_cbranch(address + 22, 15, address + 34)
+        self.named(self.rv_pair(address + 24, 10, 3), '__dso_handle')
+        self.rv_jal(address + 34, self.address('deregister_tm_clones'))
+        upper = self.word(address + 42, 0x717, 0xfff)  # auipc a4
+        store = self.word(address + 46, 0x00f70023, 0x01fff07f)  # sb a5,imm(a4)
+        immediate = ((store >> 25) << 5) | ((store >> 7) & 31)
+        self.named(address + 42 + signed(upper & 0xfffff000, 32) + signed(immediate, 12),
+                   'completed.0')
+
+
+def validate_linked_riscv_startup(elf, path):
+    """Recheck the actual GP initializer after reconstruction and final link."""
+    table = elf.get_section_by_name('.symtab')
+    if table is None:
+        reject('MISSING_LINKED_GP_METADATA', path, 'symbol table required')
+    static = [sym_record(symbol) for symbol in table.iter_symbols() if symbol.name]
+    relocations = {relocation['r_offset']: relocation
+                   for section in elf.iter_sections() if isinstance(section, RelocationSection)
+                   for relocation in section.iter_relocations()}
+    image = StartupImage(elf, static, relocations, elf.get_section_by_name('.dynsym'), path)
+    image.rv_preinit(elf.get_section_by_name('.preinit_array'), static, allow_call_pair=True)
+
+
 def inspect(path, role):
     path = Path(path)
     with path.open('rb') as stream:
         elf = ELFFile(stream)
-        if elf.elfclass != 64 or not elf.little_endian or elf['e_machine'] != 'EM_X86_64':
-            reject('UNSUPPORTED_ARCH', path, 'only little-endian x86-64 ELF64 is implemented')
+        machine = elf['e_machine']
+        if elf.elfclass != 64 or not elf.little_endian or machine not in ARCHITECTURES:
+            reject('UNSUPPORTED_ARCH', path, 'only little-endian x64/AArch64/RV64 ELF64 is implemented')
+        architecture = ARCHITECTURES[machine]
+        rv_executable = machine == 'EM_RISCV' and role == 'executable'
+        flags = elf['e_flags']
+        if (machine == 'EM_RISCV' and (flags & ~5 or flags & 6 != 4)) or \
+                (machine != 'EM_RISCV' and flags != 0):
+            reject('UNSUPPORTED_ABI_FLAGS', path, 'requires normal ELF64 ABI, RV64 LP64D with optional RVC')
         expected = 'ET_EXEC' if role == 'executable' else 'ET_DYN'
         if elf['e_type'] != expected:
             reject('UNSUPPORTED_ELF_TYPE', path, '{} requires {}'.format(role, expected))
@@ -254,11 +616,17 @@ def inspect(path, role):
         needed = [t.needed for t in tags if t.entry.d_tag == 'DT_NEEDED']
         sonames = [t.soname for t in tags if t.entry.d_tag == 'DT_SONAME']
         result = {'path': str(path), 'sha256': sha(path), 'role': role,
+                  'machine': machine, 'architecture': architecture['name'], 'elf_flags': flags,
                   'needed': needed, 'soname': sonames[0] if sonames else None,
                   'symbols': symbols, 'entry': elf['e_entry'], 'fde_count': 0,
                   'application_fdes': [], 'relocation_types': {}, 'versions': []}
         if role == 'external':
             return result
+        if role == 'executable':
+            interpreters = [s.data().rstrip(b'\0').decode('ascii') for s in elf.iter_segments()
+                            if s['p_type'] == 'PT_INTERP']
+            if interpreters != [architecture['interpreter']]:
+                reject('UNSUPPORTED_INTERPRETER', path, str(interpreters))
         if not symtab:
             reject('STRIPPED_STARTUP_CONTRACT', path,
                    'prototype requires symbol-table evidence for startup/unwind ownership')
@@ -274,9 +642,14 @@ def inspect(path, role):
         if all_names & UNWIND_UNSUPPORTED:
             reject('NONLOCAL_UNWIND', path, ', '.join(sorted(all_names & UNWIND_UNSUPPORTED)))
         for sec in elf.iter_sections():
+            if machine != 'EM_X86_64' and sec.name == '.note.gnu.property' and sec['sh_size']:
+                reject('UNSUPPORTED_PROPERTY_CONTRACT', path,
+                       'selected Arm/RV GNU properties require an explicit preserved enforcement contract')
             if sec['sh_flags'] & 0x400:
                 reject('TLS_SECTION', path, sec.name)
-            if sec.name in {'.gcc_except_table', '.preinit_array', '.ctors', '.dtors'} and sec['sh_size']:
+            unsupported_startup = sec.name in {'.gcc_except_table', '.ctors', '.dtors'} or \
+                (sec.name == '.preinit_array' and not rv_executable)
+            if unsupported_startup and sec['sh_size']:
                 reject('UNSUPPORTED_STARTUP_OR_UNWIND_SECTION', path, sec.name)
             if sec.name == '.gnu.version_d' and sec['sh_size']:
                 reject('SELECTED_SYMBOL_VERSION_DEFINITION', path, sec.name)
@@ -302,6 +675,8 @@ def inspect(path, role):
         unsupported_tags = {'DT_SYMBOLIC', 'DT_FILTER', 'DT_AUXILIARY', 'DT_AUDIT',
                             'DT_DEPAUDIT', 'DT_TEXTREL', 'DT_RELR', 'DT_RELRSZ',
                             'DT_PREINIT_ARRAY', 'DT_PREINIT_ARRAYSZ'}
+        if rv_executable:
+            unsupported_tags -= {'DT_PREINIT_ARRAY', 'DT_PREINIT_ARRAYSZ'}
         for tag in tags:
             if tag.entry.d_tag in unsupported_tags:
                 reject('UNSUPPORTED_DYNAMIC_TAG', path, tag.entry.d_tag)
@@ -317,9 +692,9 @@ def inspect(path, role):
             for relocation in sec.iter_relocations():
                 rtype = relocation['r_info_type']
                 counts[rtype] += 1
-                if rtype == 5:
+                if rtype == architecture['copy']:
                     reject('COPY_RELOCATION', path, hex(relocation['r_offset']))
-                if rtype not in RELOCS_X64:
+                if rtype not in architecture['relocations']:
                     reject('UNSUPPORTED_RELOCATION', path, str(rtype))
                 relocations[relocation['r_offset']] = dict(relocation.entry)
         result['relocation_types'] = dict(counts)
@@ -327,16 +702,19 @@ def inspect(path, role):
         for symbol in static:
             if isinstance(symbol['section'], int):
                 address_names.setdefault(symbol['address'], set()).add(symbol['name'])
-        # Default ELF startup is accepted only with the concrete x64 glibc CRT
-        # byte pattern, not merely because a function is named _init/_fini.
+        # Default ELF startup is accepted only with validated architecture-
+        # specific CRT bodies/targets, not because a function has a CRT name.
         init = elf.get_section_by_name('.init')
         fini = elf.get_section_by_name('.fini')
         for section, tag_name in ((init, 'DT_INIT'), (fini, 'DT_FINI')):
             addresses = [t.entry.d_val for t in tags if t.entry.d_tag == tag_name]
             if addresses and (len(addresses) != 1 or section is None or addresses[0] != section['sh_addr']):
                 reject('REDIRECTED_' + tag_name, path, 'dynamic tag does not name its validated section')
-        for name, address_tag, size_tag in (('.init_array', 'DT_INIT_ARRAY', 'DT_INIT_ARRAYSZ'),
-                                            ('.fini_array', 'DT_FINI_ARRAY', 'DT_FINI_ARRAYSZ')):
+        array_tags = [('.init_array', 'DT_INIT_ARRAY', 'DT_INIT_ARRAYSZ'),
+                      ('.fini_array', 'DT_FINI_ARRAY', 'DT_FINI_ARRAYSZ')]
+        if rv_executable:
+            array_tags.append(('.preinit_array', 'DT_PREINIT_ARRAY', 'DT_PREINIT_ARRAYSZ'))
+        for name, address_tag, size_tag in array_tags:
             section = elf.get_section_by_name(name)
             addresses = [t.entry.d_val for t in tags if t.entry.d_tag == address_tag]
             sizes = [t.entry.d_val for t in tags if t.entry.d_tag == size_tag]
@@ -345,7 +723,16 @@ def inspect(path, role):
                     reject('MISMATCHED_' + address_tag, path, 'dynamic address/size must describe the retained array')
             elif addresses or (sizes and sizes != [0]):
                 reject('MISMATCHED_' + address_tag, path, 'dynamic array has no retained section')
-        if role in ('selected', 'executable'):
+        if machine == 'EM_AARCH64':
+            StartupImage(elf, static, relocations, dynsym, path).arm_init_fini(init, fini)
+        elif machine == 'EM_RISCV':
+            if any(section is not None and section['sh_size'] for section in (init, fini)):
+                reject('CUSTOM_DT_INIT_OR_FINI', path, 'RV64 startup contract has no init/fini code section')
+            if rv_executable:
+                StartupImage(elf, static, relocations, dynsym, path).rv_preinit(
+                    elf.get_section_by_name('.preinit_array'), static)
+                result['preinit_contract'] = 'retained single CRT load_gp; validated _start initialization'
+        elif role in ('selected', 'executable'):
             if init:
                 data = init.data()
                 prefix, suffix = bytes.fromhex('4883ec08488b05'), bytes.fromhex('4885c07402ffd04883c408c3')
@@ -368,11 +755,17 @@ def inspect(path, role):
                 if section['sh_size'] != 8:
                     reject('CUSTOM_CONSTRUCTOR_OR_DESTRUCTOR', path, section_name)
                 relocation = relocations.get(section['sh_addr'])
-                target = relocation.get('r_addend') if relocation and relocation['r_info_type'] == 8 else None
+                target = relocation.get('r_addend') if relocation and \
+                    relocation['r_info_type'] == architecture['relative'] and relocation['r_info_sym'] == 0 else None
                 if target is None or allowed not in address_names.get(target, set()):
                     reject('CUSTOM_CONSTRUCTOR_OR_DESTRUCTOR', path, section_name)
             if callbacks_present:
-                validate_crt_callbacks(elf, static, relocations, dynsym, path)
+                if machine == 'EM_X86_64':
+                    validate_crt_callbacks(elf, static, relocations, dynsym, path)
+                elif machine == 'EM_AARCH64':
+                    StartupImage(elf, static, relocations, dynsym, path).arm_callbacks()
+                else:
+                    StartupImage(elf, static, relocations, dynsym, path).rv_callbacks()
             tm = elf.get_section_by_name('.tm_clone_table')
             if tm and tm['sh_size']:
                 reject('TRANSACTION_CLONE_REGISTRATION', path, 'nonempty .tm_clone_table')
@@ -403,6 +796,9 @@ def inspect(path, role):
 
 
 def validate_closure(executable, selected, external):
+    for item in selected + external:
+        if item['machine'] != executable['machine']:
+            reject('MIXED_ARCHITECTURES', item['path'], executable['machine'] + ' required')
     providers = {}
     for item in selected + external:
         if not item['soname']:
@@ -539,8 +935,10 @@ def reconstruct(item, args, out, index=0, priority=None):
     run(directory, 'assemble', [args.cc, '-c', '-o', obj, assembly])
     with obj.open('rb') as stream:
         elf = ELFFile(stream)
-        if elf['e_type'] != 'ET_REL' or elf['e_machine'] != 'EM_X86_64':
+        if elf['e_type'] != 'ET_REL' or elf['e_machine'] != item['machine']:
             raise RuntimeError('assembler did not create expected ET_REL')
+        if item['machine'] == 'EM_RISCV' and (elf['e_flags'] & 6 != 4 or elf['e_flags'] & ~5):
+            reject('ASSEMBLED_ABI_MISMATCH', item['path'], 'RV64 object must retain LP64D ABI')
         table = elf.get_section_by_name('.symtab')
         emitted = {s.name: s for s in table.iter_symbols() if s['st_shndx'] != 'SHN_UNDEF'}
         for symbol in item['symbols']:
@@ -548,7 +946,7 @@ def reconstruct(item, args, out, index=0, priority=None):
                 continue
             if symbol['name'] not in emitted:
                 reject('MISSING_RECONSTRUCTED_EXPORT', item['path'], symbol['name'])
-        reconstructed_fdes = sum(isinstance(e, FDE) for e in elf.get_dwarf_info().EH_CFI_entries())
+        reconstructed_fdes = sum(isinstance(e, FDE) for e in eh_cfi_entries(elf, obj))
         if reconstructed_fdes < len(item['application_fdes']):
             reject('MISSING_RECONSTRUCTED_UNWIND', item['path'], str(reconstructed_fdes))
         summary.update({'elf_type': elf['e_type'], 'object_sha256': sha(obj),
@@ -589,6 +987,7 @@ def main():
         dump(args.out / 'container.command.json', json.loads(os.environ['TEAPOT_CONTAINER_ARGV']))
     try:
         executable = inspect(args.executable, 'executable')
+        architecture = ARCHITECTURES[executable['machine']]
         selected = [inspect(path, 'selected') for path in args.select]
         external = [inspect(path, 'external') for path in args.external]
         initialization_order = validate_closure(executable, selected, external)
@@ -603,6 +1002,9 @@ def main():
         args.tool_identities['linker_files'] = {token: sha(token) for token in shlex.split(args.linker)
                                                if Path(token).is_file()}
         args.cache_context = {'contract': CONTRACT, 'converter_sha256': sha(__file__),
+            'machine': executable['machine'],
+            'architecture': {key: sorted(value) if isinstance(value, set) else value
+                             for key, value in architecture.items()},
             'tools': args.tool_identities, 'python': python_identity(),
             'source_provenance': args.source_provenance_data,
             'executable': executable['sha256'],
@@ -620,7 +1022,7 @@ def main():
                     'tools': args.tool_identities, 'cache_context': args.cache_context,
                     'assumptions': ['single thread', 'no LD_PRELOAD/LD_AUDIT/interposers',
                                     'no alternate runtime symbol lookup',
-                                    'normal x64 glibc process startup',
+                                    'validated ' + architecture['name'] + ' glibc process startup',
                                     'no hot-swapped dependency providers'],
                     'instrumentation': 'none; ordinary reconstruction only'}
         dump(args.out / 'manifest.json', manifest)
@@ -639,16 +1041,22 @@ def main():
         run(args.out, 'archive', [args.ar, 'rcsD', archive] + members)
         run(args.out, 'archive-members', [args.ar, 't', archive])
         output = args.out / 'monolith'
-        run(args.out, 'link', shlex.split(args.linker) + [
-            '-m', 'elf_x86_64', '--dynamic-linker', '/lib64/ld-linux-x86-64.so.2',
+        # The input CRT's .option norelax is not represented by instruction
+        # bytes. Without this, the linker may turn load_gp's AUIPC/ADDI pair
+        # into mv gp,gp, assuming the very GP value this code must initialize.
+        link_policy = ['--no-relax'] if executable['machine'] == 'EM_RISCV' else []
+        run(args.out, 'link', shlex.split(args.linker) + link_policy + [
+            '-m', architecture['emulation'], '--dynamic-linker', architecture['interpreter'],
             '--eh-frame-hdr', '--build-id=sha1', '-z', 'noexecstack',
             '-Map=' + str(args.out / 'link.map'), '-o', output, main_object,
             '--whole-archive', archive, '--no-whole-archive', '--as-needed']
             + [item['path'] for item in external])
         with output.open('rb') as stream:
             elf = ELFFile(stream)
-            if elf['e_type'] != 'ET_EXEC':
-                raise RuntimeError('output is not non-PIE ET_EXEC')
+            if elf['e_type'] != 'ET_EXEC' or elf['e_machine'] != executable['machine']:
+                raise RuntimeError('output is not the expected architecture/non-PIE ET_EXEC')
+            if executable['machine'] == 'EM_RISCV':
+                validate_linked_riscv_startup(elf, output)
             needed = [t.needed for t in elf.get_section_by_name('.dynamic').iter_tags()
                       if t.entry.d_tag == 'DT_NEEDED']
             selected_names = {item['soname'] for item in selected}

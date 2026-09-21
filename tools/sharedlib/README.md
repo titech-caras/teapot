@@ -1,7 +1,9 @@
 # Binary-only selected-library conversion prototype
 
-This is a deliberately narrow x86-64 research prototype, not a general-purpose
-ELF static linker. `convert.py` accepts one non-PIE executable, selected compiled
+This is a deliberately narrow research prototype, not a general-purpose
+ELF static linker. Full conversion/behavior evidence covers x86-64,
+AArch64 shadow/MTE and RV64 under the contract below; Arm/RV execution is
+QEMU evidence, not native. `convert.py` accepts one non-PIE executable, selected compiled
 shared libraries and explicitly supplied external ELF dependencies. It never
 uses workload sources, original objects, original application archives, or a
 dynamic library disguised as an archive member.
@@ -11,7 +13,7 @@ The tested strategy is:
 1. Validate the ELF binding/startup/unwind contract and complete dependency set.
 2. Lift each input independently with the pinned DDisasm frontend.
 3. Preserve symbolic GOT/PLT references, data pointers, symbol versions and CFI.
-   Print assembly, then assemble genuine x64 `ET_REL` objects.
+   Print assembly, then assemble genuine target-architecture `ET_REL` objects.
 4. Put only reconstructed selected objects into a deterministic archive. Link
    the executable object and whole selected archive into one non-PIE `ET_EXEC`.
    Verify that selected SONAMEs are absent from `DT_NEEDED` and every selected
@@ -28,7 +30,8 @@ They are not installed as Teapot CLI commands and do not change existing default
 
 ## Tested outcome
 
-Evidence lives under `workers/shared-library-20260921/`.
+Original x64 evidence lives under `workers/shared-library-20260921/`;
+multi-architecture evidence is under `workers/shared-library-multiarch-20260921/`.
 
 | Check | Result |
 | --- | --- |
@@ -38,6 +41,9 @@ Evidence lives under `workers/shared-library-20260921/`.
 | Fresh monolith with NOP-preserving printer | 118/118 ordinary and instrumented behavior matches; all 810 mapped reports, including counters, match static baseline |
 | Rejections | 29 expected failures, before lifting or creating a monolith |
 | Ordinary cache | Warm IR/object reuse, ELF/dependency invalidation and corruption rejection; 33 additional behavior comparisons |
+| RV64 link-before path | Corrected startup and native-branch printer: 118/118 ordinary and fully instrumented behavior; all 472 mapped reports including counters agree with the same-PIC reference |
+| AArch64 link-before path | 118/118 ordinary and instrumented behavior for shadow/MTE; MTE matches all 1086 mapped reports/counters against the same-PIC reference; shadow matches 117/118 report cases, with its one difference traced to differing poisoned bytes beyond input |
+| Arm/RV two-library fixtures | 11/11 ordinary cases each; current RV cold/warm cache hits all three entries, retains byte-identical executable/archive, and passes 11/11 each |
 | Other architectures, PIE or stripped inputs | Explicitly unsupported, not silently converted |
 
 The real workload validation is the approved 118-input `test_fuzz` corpus at
@@ -55,8 +61,13 @@ Container commands and input/tool hashes are retained with each conversion.
 
 ## Explicit semantic contract
 
-- ELF64 little-endian x86-64 only. Executable input must be `ET_EXEC`, shared
-  inputs `ET_DYN`, and executable entry must name the preserved `_start`.
+- ELF64 little-endian x86-64, AArch64 and RV64.
+  Executable input must be `ET_EXEC`, shared inputs `ET_DYN`, and executable
+  entry must name the preserved `_start`. All input/output machines must agree.
+  Architecture-specific relocation numbers, interpreter, linker emulation and
+  cache identity are checked. RV64 requires LP64D with optional RVC; other ABI
+  flags are refused. Arm/RV GNU property notes require a separate preserved
+  enforcement contract and are currently refused, not stripped.
 - Complete supplied dependency closure, unique selected SONAMEs and unambiguous
   strong global binding are required. Selected dependency cycles, unreachable
   selections, selected/external conflicting definitions, GNU-unique bindings,
@@ -78,12 +89,15 @@ Container commands and input/tool hashes are retained with each conversion.
   stack unwinding. C++ exceptions/LSDA, nonlocal unwind/longjmp and unsupported
   frontend diagnostics are refused. This is not universal unwind support.
 - Selected library CRT callbacks, their arrays, local state and per-DSO
-  `__dso_handle` are retained. Accepted callbacks must match narrow x64 glibc/GCC
+  `__dso_handle` are retained. Accepted callbacks must match narrow per-ISA glibc/GCC
   CRT instruction templates **and actual branch/GOT/data targets**. Names alone
   are not sufficient. Callable gmon/TM hooks and clone tables are rejected.
 - Only byte-validated gmon-only `.init` and empty `.fini` stubs can be omitted from
   selected objects. Their dynamic tags must name those exact sections. Array
-  address/size tags must describe retained arrays; preinit arrays are rejected.
+  address/size tags must describe retained arrays. Preinit arrays are rejected
+  except for RV64's validated single executable `load_gp` CRT entry, which is
+  retained with its callback. Its exact GP initialization and `_start` call are
+  checked; selected-library/custom preinit remains unsupported.
   Custom constructors/destructors, renamed or body-mutated callback lookalikes,
   and redirected startup tags are negative tests.
 - Array priorities respect the selected dependency graph. The accepted CRT
@@ -93,6 +107,88 @@ Container commands and input/tool hashes are retained with each conversion.
   Stripped input support is not claimed. All binary recovery still depends on
   DDisasm's ordinary reconstruction accuracy; a successful link is not a proof
   over untested behavior.
+
+## Experimental multi-architecture startup gates
+
+Fresh dynamic libhtp builds on AArch64/RV64 pass the 118-input ordinary corpus
+under QEMU 10.0.11. That is ground truth, **not** conversion evidence. The staged
+converter inputs contain only compiled executable/DSO bytes and explicit
+external ELF providers; their original source/objects stay outside the mount.
+
+`test_startup_multiarch.py` validates both dependency closures and rejects 35
+mutations covering ABI/interpreter mismatches, machine mixing, foreign/COPY
+relocations, callback instruction/hook changes, array tags and RV64 preinit/GP
+retargeting. The existing 29 x64 rejection cases still pass. This is an ELF-only
+test; it does not claim link, unwind, execution or full instrumentation success.
+
+Both first full attempts stopped at a DDisasm diagnostic for a unique local
+GOT target (`_DYNAMIC`), before object generation. A separate generic C++ fix
+passes four new tests and the 31-test C++ suite; the unique-local regression
+fails on the original code. Independent fresh lifts of both input executables
+are warning-free and retain liveness metadata. Later full conversions pass the
+behavior gates above; the converter's diagnostic gate remains enabled.
+Evidence and source-isolated commands are retained under
+`workers/shared-library-multiarch-20260921/`. The accepted x64 tools, artifacts
+and default Teapot behavior remain unchanged. No cross-architecture reusable
+instrumentation or speculation-budget policy change is part of this extension.
+
+The RV64 ordinary gate subsequently passed in `rv64-conversion-v5/`: all 118
+cases match status/stdout/stderr/application logs, with genuine ET_REL archive
+members and libhtp absent from final DT_NEEDED. That early result did not by
+itself establish a Teapot or cross-library-unwind pass. `test_riscv_cfi.py` checks the RV64 ET_REL CFI
+reader against the linker's decoded tables at two layouts, all 17 arithmetic
+cases, five rejection cases and a real 21-FDE reconstructed object. The reader
+does not rewrite object bytes. Fixed-width relocation semantics follow the
+[RISC-V psABI](https://riscv-non-isa.github.io/riscv-elf-psabi-doc/#_relocations).
+Unknown/variable-length forms and unresolved symbols fail closed. Nonzero SUB
+addends are explicitly unsupported because the pinned GNU ld 2.42 applies them
+with a different sign; zero-addend assembler-generated CFI is covered.
+
+An early full-Teapot attempt caught a final-link startup defect even though
+ordinary execution agreed: GNU relaxation changed the reconstructed GP initializer
+into `mv gp,gp`. The private converter now disables RV link relaxation and rechecks
+the actual final GP/preinit/_start instruction targets. The regression rejects
+that retained v5 output and mutated call pairs; accepted original/cold/warm
+executables pass. Current conversion, two-library cache and full-pipeline
+results use this corrected validator. No Teapot GP-normalization guard was weakened.
+
+### Matched controls and required frontend/instrumentation fixes
+
+The original Arm static baseline uses GCC9 whereas the selected DSO uses GCC14.
+Report comparisons therefore also use direct-link reference executables made
+from the exact existing PIC objects. Those objects remain exclusively under
+`groundtruth/` and never enter the binary-only converter. These are additional
+verification controls, not alternative conversion outputs.
+
+Required tool changes are generic: the DDisasm unique-local-GOT fallback and
+split-load/boundary fixes; Teapot RV pre-transfer insertion (`9303bf0`) and
+external AUIPC/JALR wrapper recognition (`c2cd6da`); and printer preservation
+of same-section RV conditional branches (`3fc00dd`). The last fix lets GAS
+relax only branches that need it and removes all observed RV counter deltas.
+The new printer passes 141 tests (one pre-existing Windows-only test is
+inapplicable on Linux); this adds no PE/DLL conversion support.
+
+Current multi-architecture corpus evidence:
+
+- RV: `rv64-native-branches-v1/`, all 118 ordinary/full-pipeline checks and
+  all 472 mapped report/counter comparisons pass.
+- Arm MTE: `arm64-current-mte-v1/` and
+  `arm64-matched-reference-mte-v1/report-compare-v3/`, all 118 checks and
+  all 1086 mapped report/counter comparisons pass.
+- Arm shadow: `arm64-matched-reference-shadow-v1/report-comparison-v2/`,
+  all 118 behavior checks and 117/118 report cases match. In `40-auth-basic.t`,
+  speculation reads `#` versus `?` from already-different poisoned bytes past
+  the input; only the latter reaches the base64 table load and ensuing
+  conditional, explaining two additional reports. See `arm64-shadow-trace-v1/`.
+  Raw inequality is retained, not normalized away or labeled an exact pass.
+- Frozen converter gates: 29 negative contracts, two positive/35 mutated
+  startup closures, RV CFI arithmetic/layout/rejection tests, and final-linked
+  RV startup mutation tests. Final evidence is in
+  `workers/baseline-unit-20260921/private-converter-final-gate-v1/`.
+
+These link-before results do not establish reusable per-library instrumentation
+on Arm/RV. The separate x64 reusable prototype retains the ROB-cutoff limitations
+documented below; default liveness, ROB250 and nesting-off settings are unchanged.
 
 ## Reports and the instruction-budget difference
 
