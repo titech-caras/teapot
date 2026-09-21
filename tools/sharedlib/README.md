@@ -35,6 +35,7 @@ Evidence lives under `workers/shared-library-20260921/`.
 | Two-library x64 fixture | Calls, indirect function pointers, shared mutable data, data-pointer identity, 64-byte alignment and cross-library backtrace depth 6 preserved |
 | Default shared libhtp 0.5.30, approved pinned corpus | 118/118 original dynamic runs; 118/118 ordinary monolith matches |
 | Full x64 Teapot monolith | 118/118 status/stdout/application-log/non-report-stderr matches |
+| Fresh monolith with NOP-preserving printer | 118/118 ordinary and instrumented behavior matches; all 810 mapped reports, including counters, match static baseline |
 | Rejections | 29 expected failures, before lifting or creating a monolith |
 | Ordinary cache | Warm IR/object reuse, ELF/dependency invalidation and corruption rejection; 33 additional behavior comparisons |
 | Other architectures, PIE or stripped inputs | Explicitly unsupported, not silently converted |
@@ -106,19 +107,63 @@ All 118 inputs match the multisets of:
 `function, gadget kind, report-call ordinal within that function/kind, tag,
 checkpoint-function sequence`.
 
-Including the instruction counter reduces exact per-input matches to 34/118:
+For the original `instrumented-v2` artifact, including the instruction counter
+reduces exact per-input matches to 34/118:
 724/810 individual reports have the same counter and 86/810 are exactly +3.
 The difference is in `htp_normalize_uri_path_inplace`: ordinary printing expands
 a reachable four-byte NOP into four one-byte NOPs. The freshly lifted monolith
 therefore charges four instruction-budget units instead of one. The retained
 ordinary disassemblies and normalized diff show this change; no assembly filter
 was applied to conceal it. This can affect untested paths near ROB=250, so the
-runs are **not fully report-equivalent**.
+runs are **not fully report-equivalent**. This older artifact is retained;
+the fresh validation below does not retroactively change its result.
 
 Source attribution identifies function-entry source lines and static report-call
 ordinals, not exact original gadget source instructions. Raw memory/checkpoint
 addresses are kept but are not assumed equal across layouts. No cross-ISA
 equivalence or general determinism claim is made.
+
+### Fresh NOP-preserving printer validation, September 21
+
+A generic printer fix preserves the exact bytes of each multi-byte x86 NOP,
+rather than expanding it into several one-byte instructions. It uses the
+printer's native byte directive for both ELF and MASM output. No workload names,
+assembly filters, instruction-budget policy changes or disabled passes are
+involved. A separate fresh pipeline used this printer for both reconstruction
+and instrumented assembly, retaining the accepted baseline tools and binaries.
+The fix is committed locally in gtirb-pprinter as
+`be4b787708bf4ee0e241da8cc9f013e019d6d298`. Its full Python suite passes
+**139 tests**, with **one Windows-only skip**; all three new regression tests
+pass, including 40 encoding/ISA/syntax reassembly combinations. Final evidence
+is under `workers/baseline-unit-20260921/pprinter-candidate-full-v10-20260921/`.
+The candidate was built before that commit, so the retained source hashes/diff,
+not its older embedded version string alone, identify the tested code.
+
+- Ordinary binary-only monolith: **118/118** strict behavior matches.
+- Full default instrumentation, ROB=250, nesting off, ASan linked afterwards:
+  **118/118** strict behavior matches.
+- Report multisets, using the attribution keys above **plus instruction
+  counters**, match the static baseline on **118/118 inputs / 810 reports**.
+  The old converted artifact's 86 counter differences are absent.
+- Ordinary binary SHA-256:
+  `d243da441e187812b58193c2f4a1dfb8e2efae52f3aeae342c686c4d815a05d4`.
+- Instrumented binary SHA-256:
+  `c891a763e8489b71c39e28864227f1437632b7e31c037747f84c24b299181956`.
+
+Commands, tool/source hashes, original inputs, recovered objects, assembly,
+binaries and per-input records are under
+`workers/nop-boundaries-20260921/libhtp-validation-v1/`; report mappings and
+comparisons are in its sibling `report-comparison-v1/`. The separate
+`report-comparison-ordinary-corrected-20260921/` fixes a comparison-helper path
+mistake: the original ordinary-disassembly diff accidentally used the
+instrumented binary. That mistake did not affect the report comparison. The
+corrected ordinary-function diff has only one additional trailing NOP; it is
+not a claim of byte-identical executable layout.
+
+This closes the observed link-before NOP counter difference on the tested
+corpus, not the separate liveness-dependent cutoff issue in reusable component
+instrumentation. Nor is corpus agreement proof of equivalence on untested
+inputs. Earlier timings apply to the old converted binary, not this fresh one.
 
 ## Ordinary-artifact cache, not an instrumentation cache
 

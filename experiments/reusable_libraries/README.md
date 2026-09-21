@@ -157,6 +157,15 @@ time spent on a cache hit.
   Original cache hashes remained unchanged (`cache-integrity-negative` in the
   unit worker). Neither the real cache nor accepted binaries were corrupted.
 
+The separate link-before NOP issue is now fixed in a fresh printer validation:
+`workers/nop-boundaries-20260921/libhtp-validation-v1/` passes all 118 inputs
+before and after instrumentation, and `report-comparison-v1/` matches all 810
+static-baseline reports including counters. The printer preserves multi-byte
+NOP encodings rather than turning them into several instructions. Old artifacts
+and the measurements below are unchanged. This does **not** fix reusable v3's
+liveness-dependent check placement or its 177 counter differences against the
+static baseline; no budget policy has been changed.
+
 The remaining promotion gate is report/cutoff policy, plus broader supported-
 input and architecture coverage. This is an independently reviewable prototype,
 not a default-path replacement or a claim of identical behavior on every input.
@@ -181,7 +190,8 @@ unmodified input.
 All 18 cases exit successfully, retain one injected checkpoint, preserve the
 ordinary dynamic application's log, and leave executable hashes unchanged.
 Evidence is in `rob-cutoff-probe-v1/`, independently checked in the runtime
-worker's `cutoff-audit-20260921/`. Only the listed discrete counters were tested.
+worker's corrected `cutoff-audit-v2-20260921/`. Only the listed discrete counters
+were tested.
 The static/link-before pass charges an 11-instruction block before the later
 reports, while the reusable build charges it after them. Both eventually check
 the same cost, but the report observations differ. Therefore **v3 is not a
