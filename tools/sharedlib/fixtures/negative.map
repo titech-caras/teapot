@@ -1,0 +1,4 @@
+VERSION_1 {
+    global: feature;
+    local: *;
+};
