@@ -146,6 +146,19 @@ evaluation image's older lld can produce invalid AArch64 copy relocations.
 LLVM lld 19 links the tested x64 and AArch64 objects with versions retained.
 When cross-linking, keep the target sysroot and ASan preinit object consistent.
 
+**AArch64 ASan crashes before the application starts**
+
+First test an empty program linked with the same sanitizer and target sysroot.
+On the validation host, the unmodified Debian `libasan8-arm64-cross`
+`14.2.0-19cross1` library faults in `__interception::InterceptFunction` while
+initializing: its `real_strcat` pointer is an OBJECT in read-only `.text`.
+This reproduces without Teapot. Do not make sanitizer code pages writable or
+disable interceptors to bypass it. The validation image's dynamic ASan5 and
+matching `libasan_preinit.o` work with the AArch64 shadow runtime; select a
+verified sanitizer/sysroot combination and link ASan only after rewriting.
+Keep the failing library's version/hash and the empty-program result with the
+validation evidence, rather than treating this startup failure as a rewrite bug.
+
 **Linker error `undefined reference to 'xxxyyy__dift_wrapper__'`**
 
 Teapot DIFT does not yet support this external library function.
