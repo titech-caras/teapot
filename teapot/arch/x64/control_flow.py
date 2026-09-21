@@ -128,7 +128,12 @@ class X64ControlFlowPatchesMixin:
         }:
             return True
 
-        return instruction.mnemonic.startswith("rep") and self.rep_string_kind(instruction) is None
+        kind = self.rep_string_kind(instruction)
+        if kind is not None:
+            # REPNE is only documented for comparisons. Decode the raw prefix:
+            # Capstone drops F2 on some string forms, including their REP name.
+            return kind not in {"cmps", "scas"} and 0xf2 in instruction.bytes[:-1]
+        return instruction.mnemonic.startswith("rep")
 
     @staticmethod
     def is_control_transfer_instruction(instruction) -> bool:

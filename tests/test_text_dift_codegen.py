@@ -5,6 +5,9 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
+import capstone_gt
+import gtirb
+from gtirb_rewriting import Assembler
 import llvmlite.binding as llvm
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture
@@ -12,6 +15,7 @@ from teapot.configs.runtime import SCRATCHPAD_SIZE
 from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE, RISCV64_ORIGINAL_TP_OFFSET
 from teapot.passes.text.dift.aarch64 import AArch64TextDiftPropagationLLVMPass
 from teapot.passes.text.dift.riscv64 import RISCV64TextDiftPropagationLLVMPass
+from test_live_register_preservation import make_module
 
 
 class TextDiftCodegenTests(unittest.TestCase):
@@ -19,7 +23,7 @@ class TextDiftCodegenTests(unittest.TestCase):
         return pass_type(SimpleNamespace(abi=arch.abi), None, None, arch,
                          dift_layout=SimpleNamespace(xor_mask=0))
 
-    def test_rv64gc_uses_hardware_multiply(self):
+    def test_riscv64_uses_hardware_multiply_without_compression(self):
         dift = self._pass(RISCV64Architecture(), RISCV64TextDiftPropagationLLVMPass)
         module = llvm.parse_assembly("""
             define i64 @func(i64 %a, i64 %b) {
@@ -30,7 +34,30 @@ class TextDiftCodegenTests(unittest.TestCase):
         assembly = dift.target_machine.emit_assembly(module)
         self.assertRegex(assembly, r"\bmul\b")
         self.assertNotIn("__muldi3", assembly)
-        self.assertEqual(dift.TARGET_FEATURES, "+m,+a,+f,+d,+c")
+        self.assertEqual(dift.TARGET_FEATURES, "+m,+a,+f,+d")
+
+    def test_riscv64_patch_assembler_accepts_codegen_and_call_saves(self):
+        arch = RISCV64Architecture()
+        _, module, _, _, _ = make_module(arch, gtirb.Module.ISA.ValidButUnsupported, b"\x13\0\0\0")
+        dift = self._pass(arch, RISCV64TextDiftPropagationLLVMPass)
+        # A generated call must preserve all FP registers and FCSR, even when
+        # no FP registers occur explicitly in the body.
+        body = "mul a0, a0, a1\namoadd.d a1, a0, (a2)\ncall helper\n"
+        snippet = dift._build_optimized_dift_values_patch(
+            body, dift._get_register_usage(body))(SimpleNamespace(stack_adjustment=0))
+        for number in range(32):
+            self.assertIn(f"fsd f{number},", snippet)
+            self.assertIn(f"fld f{number},", snippet)
+        assembler = Assembler(module, allow_undef_symbols=True)
+        assembler.assemble(snippet)
+        data = assembler.finalize().text_section.data
+        decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_RISCV,
+                                capstone_gt.CS_MODE_RISCV64 | capstone_gt.CS_MODE_RISCVC)
+        instructions = list(decoder.disasm(data, 0))
+        self.assertEqual(sum(inst.size for inst in instructions), len(data))
+        self.assertTrue(instructions)
+        self.assertTrue(all(inst.size == 4 for inst in instructions))
+        self.assertIn("mul", [inst.mnemonic for inst in instructions])
 
     def test_aarch64_allows_neon(self):
         dift = self._pass(AArch64Architecture(), AArch64TextDiftPropagationLLVMPass)
@@ -236,6 +263,11 @@ class TextDiftCodegenTests(unittest.TestCase):
             self.skipTest("target compiler and QEMU required")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            # File-scope ISA declarations are at the start of an MC patch
+            # transaction, but GNU as requires them before the probe setup too.
+            lines = assembly.splitlines()
+            attributes = [line for line in lines if line.strip().startswith(".attribute ")]
+            assembly = "\n".join(attributes + [line for line in lines if line not in attributes])
             (root / "probe.S").write_text(
                 assembly + '\n.section .note.GNU-stack,"",%progbits\n')
             (root / "main.c").write_text(f"""

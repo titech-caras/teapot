@@ -29,8 +29,10 @@ rewriting metadata APIs. Use the mounted forks until their reviewed revisions
 are published and pinned; the older installed image does not provide these APIs.
 
 Teapot also requires `llvmlite` for generating optimized DIFT instrumentation.
-Text DIFT uses LLVM `-O3` lowering, targeting RV64GC on RISC-V and Armv8-A
-FP/Advanced SIMD on AArch64. Generated RISC snippets preserve any FP/SIMD
+Text DIFT uses LLVM `-O3` lowering, targeting RV64IMAFD on RISC-V and Armv8-A
+FP/Advanced SIMD on AArch64. RISC-V patches declare that ISA to the assembler
+without compression, preserving the rewriter's four-byte padding alignment;
+compressed application instructions remain supported. Generated RISC snippets preserve any FP/SIMD
 registers and control state they use; this does not extend application DIFT
 tracking to vector registers. No RVV or SVE requirement is introduced.
 RISC DIFT propagation, operand capture and LLVM replay use liveness to select
@@ -98,8 +100,9 @@ sysroot is left unchanged.
   DIFT-blacklisted functions omit propagation, but retain the element loop,
   memory history and enabled checks.
   Reentrant signal-handler tag observations are not supported.
-  Noncanonical REPNE copy/load/store encodings are refused, not inferred from
-  the incomplete counter accesses reported by Capstone.
+  Noncanonical REPNE copy/load/store encodings trigger a warning and rollback
+  before transient execution, rather than aborting the rewrite. Transient REP
+  requires checkpoints enabled to enforce its iteration budget.
   Use the local printer's string-prefix preservation fix when rebuilding.
 - AArch64 GPR LDP/LDNP/LDPSW/STP/STNP use separate per-element tags in both
   common and LLVM text DIFT, including all bytes of each element. This does not

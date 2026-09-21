@@ -1,4 +1,5 @@
 from dataclasses import replace
+import warnings
 
 from capstone_gt import CS_AC_READ, CS_OP_MEM
 from gtirb_rewriting import Patch
@@ -22,6 +23,7 @@ class X64TransientRepPass(X64DiftPropagationPass):
         self.enable_checkpoints = enable_checkpoints
         self.enable_mem_policy = enable_mem_policy
         self.enable_port_policy = enable_port_policy
+        self._warned_rep_addresses = set()
         self.mem_policy = X64TransientMemOperandPoliciesPass(
             self.reg_manager, self.section, self.decoder, self.arch,
             dift_layout=self.dift_layout, enable_asan_check=enable_asan_check)
@@ -34,6 +36,17 @@ class X64TransientRepPass(X64DiftPropagationPass):
     def visit_inst(self, inst, inst_idx, inst_offset, block, function=None, live_registers=None):
         effects = self._rep_string_effects(inst)
         if effects is None:
+            return
+        if not self.enable_checkpoints:
+            raise ValueError(f"Transient REP at {inst.address:#x} requires checkpoints for a bounded iteration budget")
+        if self.arch.instruction_must_rollback(inst):
+            # The restore-point pass inserts the normal EXT_LIB rollback before
+            # this instruction. Leave its bytes intact; never expand its loop.
+            if inst.address not in self._warned_rep_addresses:
+                warnings.warn(
+                    f"Noncanonical REPNE {effects.kind.upper()} at {inst.address:#x}: "
+                    "rolling back before the instruction", RuntimeWarning)
+                self._warned_rep_addresses.add(inst.address)
             return
 
         # The loop spans both boundaries, and its implicit operands and flags
@@ -129,8 +142,7 @@ class X64TransientRepPass(X64DiftPropagationPass):
             # the real flags and restore_flags reinstates them before the string
             # opcode runs.
             asm += "cld\n"
-            if self.enable_checkpoints:
-                asm += self.arch.conditional_restore_point_patch(1)(ctx)
+            asm += self.arch.conditional_restore_point_patch(1)(ctx)
             asm += f"mov byte ptr scratchpad+{state+56}, 0\n"
             for policy in policies:
                 asm += policy(replace(

@@ -191,8 +191,11 @@ and address-size overrides are supported. Other REP forms are not string DIFT.
 `repz ret`, found in some AMD-targeted binaries, does not require tag propagation.
 An old printer can drop string prefixes, including the address size or FS/GS
 source segment. Use the local prefix-preserving printer, not a sed workaround.
-Noncanonical `REPNE` MOVS/STOS/LODS are refused: they are not the documented
-repeat forms and Capstone can omit their implicit counter accesses.
+Noncanonical `REPNE` MOVS/STOS/LODS cause a warning at their address and rollback
+before transient execution: they are not the documented repeat forms and
+Capstone can omit their implicit counter accesses. Normal instruction bytes
+remain intact. Disabling checkpoints while instrumenting transient REP is
+rejected because the element loop requires an iteration budget.
 
 Please open an issue if these warnings do lead to binaries crashing or major gadgets going undetected.
 

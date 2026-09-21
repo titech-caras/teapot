@@ -35,11 +35,11 @@ class X64RepDiftTests(unittest.TestCase):
             inst = next(self.decoder.disasm(bytes.fromhex(encoding), 0x1000))
             self.assertIsNone(self.dift._rep_string_effects(inst), inst)
 
-    def test_noncanonical_repeat_forms_are_refused(self):
+    def test_noncanonical_repeat_forms_keep_text_effects_and_require_rollback(self):
         for encoding in ("f2a5", "67f2a5", "f2a4", "f248ab", "f2ac"):
             inst = next(self.decoder.disasm(bytes.fromhex(encoding), 0x1000))
-            with self.assertRaisesRegex(ValueError, "noncanonical REPNE"):
-                self.dift._rep_string_effects(inst)
+            self.assertIsNotNone(self.dift._rep_string_effects(inst))
+            self.assertTrue(self.arch.instruction_must_rollback(inst))
 
     def _wrapped(self, patch):
         # Exercise the real all-live ABI spill path, not hand-picked scratch GPRs.

@@ -19,7 +19,9 @@ from teapot.passes.text.dift.base import (
 class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagationPass):
     EXPECTED_ARCH = "riscv64"
     TARGET_TRIPLE = "riscv64-unknown-linux-gnu"
-    TARGET_FEATURES = "+m,+a,+f,+d,+c"
+    # Keep patch instructions four bytes wide: implicit compression breaks the
+    # rewriter's padding alignment, independently of the input binary's ISA.
+    TARGET_FEATURES = "+m,+a,+f,+d"
     LLVM_CALLER_SAVED_GPRS = (
         "ra",
         "t0", "t1", "t2", "t3", "t4", "t5", "t6",
@@ -102,7 +104,10 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagatio
 
         @self.arch.constraints()
         def patch(ctx: InsertionContext):
-            asm = self.arch.load_address("tp", f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
+            # mcasm starts at RV64I. Match LLVM's features for this assembly
+            # transaction, including FP state saves around generated calls.
+            asm = '.attribute arch, "rv64imafd"\n'
+            asm += self.arch.load_address("tp", f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
             for idx, reg in enumerate(saved_regs):
                 asm += f"sd {reg}, {idx * 8}(tp)\n"
             for idx, reg in enumerate(float_regs):

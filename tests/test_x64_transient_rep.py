@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
+import warnings
 from unittest.mock import Mock
 
 import capstone_gt
@@ -17,6 +18,7 @@ from gtirb_rewriting import Pass, PassManager, Patch
 from teapot.arch.x64.architecture import X64Architecture
 from teapot.configs.runtime import ROB_LEN, SCRATCHPAD_SIZE
 from teapot.passes.transient.x64_rep import X64TransientRepPass
+from teapot.passes.transient.transient_insert_restore_points_pass import TransientInsertRestorePointsPass
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 import test_x64_rep_dift as rep_tests
 from test_live_register_preservation import make_module
@@ -35,6 +37,45 @@ class X64TransientRepTests(unittest.TestCase):
             self.assertFalse(self.arch.instruction_must_rollback(inst))
         inst = next(self.decoder.disasm(bytes.fromhex("4889c0"), 0x1000))
         self.assertEqual(self.arch.static_instruction_cost(inst), 1)
+
+    def test_rep_requires_iteration_budget(self):
+        rep = X64TransientRepPass(
+            SimpleNamespace(abi=self.arch.abi), None, None, self.arch,
+            enable_checkpoints=False)
+        for encoding in ("f3a4", "f2a4", "f2ae"):
+            with self.subTest(encoding=encoding):
+                inst = next(self.decoder.disasm(bytes.fromhex(encoding), 0x1000))
+                with self.assertRaisesRegex(ValueError, "0x1000 requires checkpoints"):
+                    rep.visit_inst(inst, 0, 0, None)
+
+    def test_noncanonical_rep_warns_once_and_uses_existing_rollback(self):
+        for encoding in ("f2a5", "67f2a5", "f2a4", "f248ab", "f2ac"):
+            with self.subTest(encoding=encoding):
+                code = bytes.fromhex(encoding)
+                ir, module, block, abi, _ = make_module(self.arch, gtirb.Module.ISA.X64, code + b"\xc3")
+                gtirb.Symbol(name="restore_checkpoint_EXT_LIB", payload=gtirb.ProxyBlock(module=module), module=module)
+                manager = LiveRegisterManager(module, abi)
+                decoder = manager.analyzer.decoder
+                rep = X64TransientRepPass(manager, block.section, decoder, self.arch)
+                passes = PassManager()
+                passes.add(TransientInsertRestorePointsPass(
+                    manager, block.section, block.section, decoder, self.arch))
+                passes.add(rep)
+                with warnings.catch_warnings(record=True) as captured:
+                    warnings.simplefilter("always")
+                    passes.run(ir)
+                    # A repeated visit must not repeat the diagnostic or expand
+                    # the instruction (no rewriting context remains here).
+                    rep.visit_inst(next(self.decoder.disasm(code, 0x1000)), 0, 0, block)
+                messages = [str(w.message) for w in captured if "Noncanonical REPNE" in str(w.message)]
+                self.assertEqual(len(messages), 1)
+                self.assertIn("0x1000", messages[0])
+                interval = next(iter(block.section.byte_intervals))
+                self.assertIn(code, bytes(interval.contents))
+                destinations = [expr.symbol.name for expr in interval.symbolic_expressions.values()
+                                if isinstance(expr, gtirb.SymAddrConst)]
+                self.assertIn("restore_checkpoint_EXT_LIB", destinations)
+                self.assertNotIn("instruction_cnt", destinations)
 
     @unittest.skipUnless(platform.machine() == "x86_64" and shutil.which("cc"),
                          "requires native x64 and C compiler")
@@ -89,7 +130,9 @@ class X64TransientRepTests(unittest.TestCase):
             root = Path(directory)
             (root / "rep.S").write_text(
                 ".intel_syntax noprefix\n.text\n" + "\n".join(functions) +
-                "\n.globl restore_checkpoint_ROB_LEN\nrestore_checkpoint_ROB_LEN:\ncld\njmp budget_stop\n" +
+                "\n.globl restore_checkpoint_ROB_LEN\nrestore_checkpoint_ROB_LEN:\n"
+                "pushfq\ntest qword ptr [rsp], 0x400\njnz bad_direction\npopfq\n"
+                "jmp budget_stop\nbad_direction:\nud2\n" +
                 '\n.section .note.GNU-stack,"",@progbits\n')
             (root / "cases.h").write_text("\n".join(declarations) +
                 "\nstatic const struct test_case cases[] = {\n" + ",\n".join(cases) + "\n};\n")

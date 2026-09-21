@@ -80,10 +80,13 @@ int main(void) {
         }
         if (test->kind != 'm' && test->kind != 's') continue;
         const unsigned rooms[] = {0, 1, 2, 3, 4, ROB_LEN - 1};
+        for (unsigned direction = 0; direction < 2; ++direction)
         for (unsigned r = 0; r < sizeof(rooms)/sizeof(*rooms); ++r) {
             unsigned room = rooms[r];
-            struct state in = {.si=test->segment ? 128 : (uintptr_t)(data+128),
-                               .di=(uintptr_t)(data+512), .cx=UINT64_MAX, .flags=0x202};
+            unsigned offset = direction ? 2048 : 128;
+            struct state in = {.si=test->segment ? offset : (uintptr_t)(data+offset),
+                               .di=(uintptr_t)(data+offset+384), .cx=UINT64_MAX,
+                               .flags=0x202 | (direction ? 0x400 : 0)};
             memcpy(data, original, 4096);
             memcpy(tags, initial_tags, 4096);
             memcpy(dift_reg_tags, initial_regs, 48);

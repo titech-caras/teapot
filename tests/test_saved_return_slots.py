@@ -42,7 +42,8 @@ class SavedReturnSlotTests(unittest.TestCase):
         module.aux_data["functionBlocks"].data[function_id] = set(blocks)
         for source, target, kind in edges:
             destination = gtirb.ProxyBlock(module=module) if target is None else blocks[target]
-            module.ir.cfg.add(gtirb.Edge(blocks[source], destination, gtirb.Edge.Label(kind)))
+            label = kind if isinstance(kind, gtirb.Edge.Label) else gtirb.Edge.Label(kind)
+            module.ir.cfg.add(gtirb.Edge(blocks[source], destination, label))
         decoder = CachedGtirbInstructionDecoder(isa)
         manager = LiveRegisterManager(module, abi, decoder, analysis_scope="block")
         manager.analyzer.analyze = Mock(side_effect=AssertionError("Unexpected Python LRA fallback"))
@@ -88,6 +89,43 @@ class SavedReturnSlotTests(unittest.TestCase):
                              [(0, 1, gtirb.Edge.Type.Branch), (0, 2, gtirb.Edge.Type.Fallthrough),
                               (1, 2, gtirb.Edge.Type.Fallthrough)])
         self.assertEqual(len(sites), 2)
+
+    def test_noreturn_call_is_not_a_return_slot_exit(self):
+        for arch, chunks in (
+            (AArch64Architecture(), ["stp x29,x30,[sp,#-16]!", "blr x0",
+                                    "ldp x29,x30,[sp],#16\nret"]),
+            (RISCV64Architecture(), ["addi sp,sp,-16\nsd ra,8(sp)", "jalr ra,a0,0",
+                                    "ld ra,8(sp)\naddi sp,sp,16\nret"]),
+        ):
+            with self.subTest(arch=arch.name):
+                sites = self.analyze(arch, chunks, [(0, 1, gtirb.Edge.Type.Branch),
+                    (0, 2, gtirb.Edge.Type.Fallthrough), (1, None, gtirb.Edge.Type.Call)])
+                self.assertEqual([site.poison for site in sites], [True, False])
+
+    def test_resolved_indirect_targets_keep_return_slot_lifetime(self):
+        indirect = gtirb.Edge.Label(gtirb.Edge.Type.Branch, direct=False)
+        for arch, chunks in (
+            (AArch64Architecture(), ["stp x29,x30,[sp,#-16]!\nbr x0",
+                                    "ldp x29,x30,[sp],#16\nret", "ldp x29,x30,[sp],#16\nret"]),
+            (RISCV64Architecture(), ["addi sp,sp,-16\nsd ra,8(sp)\njr a0",
+                                    "ld ra,8(sp)\naddi sp,sp,16\nret", "ld ra,8(sp)\naddi sp,sp,16\nret"]),
+        ):
+            with self.subTest(arch=arch.name):
+                sites = self.analyze(arch, chunks, [(0, 1, indirect), (0, 2, indirect)])
+                self.assertEqual([site.poison for site in sites], [True, False, False])
+                with self.assertRaisesRegex(UnsupportedReturnSlot, "unresolved indirect branch"):
+                    self.analyze(arch, chunks, [(0, 1, indirect), (0, None, indirect)])
+
+    def test_aarch64_small_immediates_are_not_register_reads(self):
+        arch = AArch64Architecture()
+        for immediate in (2, 3, 5):
+            with self.subTest(immediate=immediate):
+                _, _, blocks, function, decoder, _ = self.make_function(
+                    arch, [f"cmp w1, #{immediate}\nret"])
+                inst = next(iter(decoder.get_instructions(blocks[0])))
+                reads = arch.access_registers(arch.abi, inst, 0)
+                self.assertEqual(reads, {arch.abi.get_register("x1")})
+                self.assertEqual(ReturnSlotAnalysis(arch, decoder).analyze(function), ())
 
     def test_unwind_rows_are_not_an_analysis_gate(self):
         arch = RISCV64Architecture()

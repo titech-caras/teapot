@@ -79,4 +79,6 @@ class X64CheckpointPatchesMixin:
         return patch
 
     def unconditional_restore_point_patch(self):
-        return self.constraints()(lambda ctx: "jmp restore_checkpoint_EXT_LIB")
+        # Rollback enters C, including when an unsupported string operation is
+        # reached with the application's DF set. The checkpoint owns its flags.
+        return self.constraints()(lambda ctx: "cld\njmp restore_checkpoint_EXT_LIB")
