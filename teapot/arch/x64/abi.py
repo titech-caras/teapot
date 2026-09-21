@@ -34,6 +34,8 @@ class _X86_64_ELF(ConservativeRegisterAllocationMixin, _X86_64_ELF_BASE):
             scratchpad_offset += 8
 
         if constraints.clobbers_flags:
+            # LRA's flags value covers CF/PF/AF/ZF/SF/OF. This wrapper does not
+            # modify DF; patches that do (REP reporting) preserve it separately.
             prologue.append(_AsmSnippet(f"""
                 mov %rax, scratchpad+{scratchpad_offset+8}
                 lahf

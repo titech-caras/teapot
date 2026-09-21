@@ -47,7 +47,7 @@ class TransientMemOperandPoliciesPassBase(ArchSpecificPassMixin, InstVisitorPass
         if patch_info.live_registers:
             self.reg_manager.add_live_registers(
                 function, block, inst_idx, patch_info.live_registers)
-        patch = self.reg_manager.allocate_registers(
+        patch = self.allocate_registers(
             function, block, inst_idx)(patch_info.patch)
         self.insert_at(block, inst_offset, Patch.from_function(patch))
 

@@ -14,6 +14,9 @@ class X64TransientMemlogPass(TransientMemlogPassBase):
     def visit_inst(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                    block: gtirb.CodeBlock, function: Function = None,
                    live_registers: Set[Register] = None):
+        if self.arch.rep_string_kind(inst) is not None:
+            # The bounded REP loop logs each element, including backward copies.
+            return
         if inst.mnemonic in ("lea", "nop", "ret") or inst.mnemonic.startswith("j"):
             return
 
@@ -28,7 +31,7 @@ class X64TransientMemlogPass(TransientMemlogPassBase):
             return
 
         self.insert_at(block, inst_offset, Patch.from_function(
-            self.reg_manager.allocate_registers(function, block, inst_idx)(
+            self.allocate_registers(function, block, inst_idx)(
                 self._build_memlog_patch(inst, mem_operand_str, access_size,
                                          conditional=self.arch.conditional_move_suffix(inst)))))
 

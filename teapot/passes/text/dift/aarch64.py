@@ -1,10 +1,7 @@
 import re
-from dataclasses import dataclass
-from typing import Optional, Tuple
 
 from capstone_gt import CsInsn
 from gtirb_rewriting import InsertionContext
-from gtirb_rewriting.assembly import Register
 
 from teapot.configs.slots import (
     AARCH64_SHADOW_STACK_TEXT_DIFT_CAPTURE_OFFSET,
@@ -20,29 +17,10 @@ from teapot.passes.text.dift.base import (
 from teapot.utils.registers import registers_in_abi_order
 
 
-@dataclass(frozen=True)
-class AArch64TextDiftScratchPlan:
-    base_register: Optional[Register]
-    addr_reg: Register
-    tmp_reg: Register
-    saved_regs: Tuple[Register, ...]
-    stack_save_fixed_regs: bool = False
-
-
 class AArch64TextDiftPropagationLLVMPass(TextDiftLLVMBase, AArch64DiftPropagationPass):
     EXPECTED_ARCH = "aarch64"
     TARGET_TRIPLE = "aarch64-unknown-linux-gnu"
-
-    def _scratch_plan(self, function, block, inst_idx):
-        addr_reg = self.reg_manager.abi.get_register("x16")
-        tmp_reg = self.reg_manager.abi.get_register("x17")
-        return AArch64TextDiftScratchPlan(
-            None,
-            addr_reg,
-            tmp_reg,
-            (addr_reg, tmp_reg),
-            stack_save_fixed_regs=True,
-        )
+    TARGET_FEATURES = "+neon,+fp-armv8"
 
     def _get_register_usage(self, asm: str):
         regs = {}
@@ -62,19 +40,16 @@ class AArch64TextDiftPropagationLLVMPass(TextDiftLLVMBase, AArch64DiftPropagatio
 
             return empty_patch
 
-        if not isinstance(scratch_plan, AArch64TextDiftScratchPlan):
-            raise TypeError("AArch64 text DIFT capture requires an AArch64 scratch plan")
-
-        fixed_regs = scratch_plan.saved_regs
-        addr_reg = scratch_plan.addr_reg
-        tmp_reg = scratch_plan.tmp_reg
+        if scratch_plan is None:
+            scratch_plan = self._plan_scratch_registers(2)
+        addr_reg, tmp_reg = scratch_plan.registers
         saved_reg_offsets = self.arch.fixed_scratch_offsets(
-            (reg.name for reg in fixed_regs), AARCH64_SHADOW_STACK_TEXT_DIFT_CAPTURE_OFFSET)
+            scratch_plan.saved_regs, AARCH64_SHADOW_STACK_TEXT_DIFT_CAPTURE_OFFSET)
 
         @self.arch.constraints()
         def patch(ctx: InsertionContext):
             asm = self.arch.save_regs_to_shadow_stack(
-                fixed_regs,
+                scratch_plan.saved_regs,
                 frame_offset=AARCH64_SHADOW_STACK_TEXT_DIFT_CAPTURE_OFFSET,
                 preserve_sp=True,
             )
@@ -94,7 +69,7 @@ class AArch64TextDiftPropagationLLVMPass(TextDiftLLVMBase, AArch64DiftPropagatio
                 asm += f"str {addr_reg}, [{tmp_reg}]\n"
 
             asm += self.arch.restore_regs_from_shadow_stack(
-                fixed_regs,
+                scratch_plan.saved_regs,
                 frame_offset=AARCH64_SHADOW_STACK_TEXT_DIFT_CAPTURE_OFFSET,
                 preserve_sp=True,
             )
@@ -103,44 +78,78 @@ class AArch64TextDiftPropagationLLVMPass(TextDiftLLVMBase, AArch64DiftPropagatio
         return patch
 
     def _build_optimized_dift_values_patch(self, assembly: str, registers, *, scratch_plan=None):
-        if not isinstance(scratch_plan, AArch64TextDiftScratchPlan):
-            raise TypeError("AArch64 text DIFT replay requires an AArch64 scratch plan")
-
-        saved_regs = [
-            reg for reg in registers
-            if reg.name not in {"x16", "x17", "x31", "sp", "wsp", "xzr", "wzr"}
-        ]
-        fixed_regs = scratch_plan.saved_regs
+        if scratch_plan is None:
+            scratch_plan = self._plan_scratch_registers(2)
+        addr_reg, tmp_reg = scratch_plan.registers
+        save_flags = self.reg_manager.abi.flag_register() in scratch_plan.live_registers
+        clobbered_regs = list(registers)
+        # LLVM can vectorize integer tag operations. Preserve full Q registers,
+        # including the upper halves that the ordinary calling convention omits.
+        simd_regs = sorted({int(number) for number in re.findall(
+            r"\b[vqdsbh]([0-9]|[12][0-9]|3[01])\b", assembly)})
+        if re.search(r"(?m)^\s*(?:bl|blr)\s+", assembly):
+            clobbered_regs.extend(
+                self.reg_manager.abi.get_register(f"x{idx}")
+                for idx in (*range(19), 30))
+            simd_regs = list(range(32))
+        # The frontend masks track GPRs/NZCV only. Keep SIMD and FP-control
+        # preservation independent of this GPR save-elimination decision.
+        saved_regs = [reg for reg in dict.fromkeys(clobbered_regs)
+                      if reg in scratch_plan.live_registers and reg not in scratch_plan.registers
+                      and reg.name not in {"x31", "sp", "wsp", "xzr", "wzr"}]
+        simd_offset = (len(saved_regs) * 8 + 15) & -16
+        control_offset = simd_offset + len(simd_regs) * 16
+        assert control_offset + 16 <= TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT
         stack_delta = TEXT_DIFT_LLVM_STACK_SP_OFFSET - TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET
 
         @self.arch.constraints()
         def patch(ctx: InsertionContext):
             asm = self.arch.save_regs_to_shadow_stack(
-                fixed_regs,
-                save_flags=True,
+                scratch_plan.saved_regs,
+                save_flags=save_flags,
+                flag_reg=tmp_reg,
                 frame_offset=AARCH64_SHADOW_STACK_TEXT_DIFT_LLVM_OFFSET,
                 preserve_sp=True,
             )
-            asm += self.arch.load_address("x16", f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
+            asm += self.arch.load_address(addr_reg, f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
             for idx, reg in enumerate(saved_regs):
-                asm += f"str {reg}, [x16, #{idx * 8}]\n"
+                asm += f"str {reg}, [{addr_reg}, #{idx * 8}]\n"
+            for idx, reg in enumerate(simd_regs):
+                asm += f"str q{reg}, [{addr_reg}, #{simd_offset + idx * 16}]\n"
+            if simd_regs:
+                asm += f"""
+                    mrs {tmp_reg}, fpcr
+                    str {tmp_reg}, [{addr_reg}, #{control_offset}]
+                    mrs {tmp_reg}, fpsr
+                    str {tmp_reg}, [{addr_reg}, #{control_offset + 8}]
+                """
             asm += f"""
-                mov x17, sp
-                str x17, [x16, #{TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}]
-                {self.arch.add_sub_constant_from_base("add", "x17", "x16", "x17", stack_delta)}
-                mov sp, x17
+                mov {tmp_reg}, sp
+                str {tmp_reg}, [{addr_reg}, #{TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}]
+                {self.arch.add_sub_constant_from_base("add", tmp_reg, addr_reg, tmp_reg, stack_delta)}
+                mov sp, {tmp_reg}
             """
             asm += assembly.strip() + "\n"
-            asm += self.arch.load_address("x16", f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
+            asm += self.arch.load_address(addr_reg, f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
             asm += f"""
-                ldr x17, [x16, #{TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}]
-                mov sp, x17
+                ldr {tmp_reg}, [{addr_reg}, #{TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}]
+                mov sp, {tmp_reg}
             """
             for idx, reg in reversed(list(enumerate(saved_regs))):
-                asm += f"ldr {reg}, [x16, #{idx * 8}]\n"
+                asm += f"ldr {reg}, [{addr_reg}, #{idx * 8}]\n"
+            for idx, reg in enumerate(simd_regs):
+                asm += f"ldr q{reg}, [{addr_reg}, #{simd_offset + idx * 16}]\n"
+            if simd_regs:
+                asm += f"""
+                    ldr {tmp_reg}, [{addr_reg}, #{control_offset}]
+                    msr fpcr, {tmp_reg}
+                    ldr {tmp_reg}, [{addr_reg}, #{control_offset + 8}]
+                    msr fpsr, {tmp_reg}
+                """
             asm += self.arch.restore_regs_from_shadow_stack(
-                fixed_regs,
-                save_flags=True,
+                scratch_plan.saved_regs,
+                save_flags=save_flags,
+                flag_reg=tmp_reg,
                 frame_offset=AARCH64_SHADOW_STACK_TEXT_DIFT_LLVM_OFFSET,
                 preserve_sp=True,
             )

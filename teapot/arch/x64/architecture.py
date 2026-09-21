@@ -62,7 +62,18 @@ class X64Architecture(
     def create_transient_dift_pass(self, reg_manager, section, decoder, dift_layout):
         from teapot.passes.common.dift.x64 import X64DiftPropagationPass
         return X64DiftPropagationPass(
-            reg_manager, section, decoder, self, dift_layout=dift_layout, insert_memlog=True)
+            reg_manager, section, decoder, self, dift_layout=dift_layout, insert_memlog=True,
+            instrument_rep=False)
+
+    def transient_instruction_passes(self, reg_manager, section, decoder, dift_layout, options):
+        from teapot.passes.transient.x64_rep import X64TransientRepPass
+        return [X64TransientRepPass(
+            reg_manager, section, decoder, self, dift_layout=dift_layout,
+            insert_memlog=options.enable_memlog, enable_dift=options.enable_dift,
+            enable_checkpoints=options.enable_checkpoints,
+            enable_mem_policy=options.enable_gadgets and options.enable_mem_operand_gadgets,
+            enable_asan_check=options.enable_gadget_asan_check,
+            enable_port_policy=options.enable_gadgets and options.enable_port_gadgets)]
 
     def create_transient_memlog_pass(self, reg_manager, section, decoder):
         from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass

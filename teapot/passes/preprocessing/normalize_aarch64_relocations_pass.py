@@ -3,6 +3,8 @@ from capstone import CS_OP_IMM, CS_OP_MEM, CS_OP_REG
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_rewriting import Pass, RewritingContext
 
+from teapot.utils.misc import symbol_address
+
 
 class NormalizeAArch64RelocationsPass(Pass):
     """Normalize AArch64 section-relative symbolic expressions from ddisasm.
@@ -42,8 +44,8 @@ class NormalizeAArch64RelocationsPass(Pass):
                         continue
 
                     attributes = self._normalized_attributes(module, symexpr)
-                    symbol_address = self._symbol_address(symexpr.symbol)
-                    if symbol_address is None:
+                    address = symbol_address(symexpr.symbol)
+                    if address is None:
                         continue
 
                     inst = self._instructions.get(byte_interval.address + offset)
@@ -55,7 +57,7 @@ class NormalizeAArch64RelocationsPass(Pass):
                         offset,
                         inst,
                         symexpr,
-                        symbol_address,
+                        address,
                     )
                     if corrected_offset is None:
                         corrected_offset = symexpr.offset
@@ -86,13 +88,6 @@ class NormalizeAArch64RelocationsPass(Pass):
         byte_interval = getattr(referent, "byte_interval", None)
         section = getattr(byte_interval, "section", None)
         return section is not None and section.name in {".got", ".got.plt"}
-
-    @staticmethod
-    def _symbol_address(symbol):
-        referent = getattr(symbol, "referent", None)
-        if referent is None:
-            return None
-        return getattr(referent, "address", None)
 
     def _corrected_offset(self, byte_interval, offset: int, inst, symexpr: gtirb.SymAddrConst, symbol_address: int):
         if gtirb.SymbolicExpression.Attribute.LO12 in symexpr.attributes:

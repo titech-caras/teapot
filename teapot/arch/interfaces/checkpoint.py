@@ -8,6 +8,9 @@ class ArchitectureCheckpointMixin(ABC):
     def can_insert_restore_point(self, live_registers) -> bool:
         return True
 
+    def static_instruction_cost(self, instruction) -> int:
+        return 1
+
     def checkpoint_patch_uses_live_registers(self) -> bool:
         return getattr(self, "CHECKPOINT_PATCH_USES_LIVE_REGISTERS", self.uses_live_registers)
 

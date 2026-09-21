@@ -1,6 +1,6 @@
 [submodule "libcheckpoint"]
 	path = libcheckpoint
-	url = https://github.com/lin-toto/teapot-libcheckpoint
+	url = https://github.com/titech-caras/teapot-libcheckpoint
 [submodule "honggfuzz"]
 	path = honggfuzz
 	url = https://github.com/lin-toto/teapot-honggfuzz

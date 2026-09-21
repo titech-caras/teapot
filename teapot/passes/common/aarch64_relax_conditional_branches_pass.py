@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import gtirb
+from gtirb_rewriting import _auxdata_offsetmap
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_rewriting import RewritingContext
 from capstone_gt import CS_OP_IMM, CS_OP_REG
@@ -526,6 +527,7 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
             old_size = interval.size
             self._rewrite_interval_contents(interval, replacements)
             self._rewrite_interval_symbolic_expressions(interval, replacements)
+            self._rewrite_live_register_offsets(interval, replacements)
             self._rewrite_interval_blocks(interval, replacements)
             self._create_missing_skip_targets(interval, replacements)
             added_symexpr_offsets = self._add_replacement_symbolic_expressions(interval, replacements)
@@ -569,6 +571,32 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
             new_symexprs[offset + delta] = symexpr
 
         interval.symbolic_expressions = new_symexprs
+
+    @staticmethod
+    def _rewrite_live_register_offsets(interval: gtirb.ByteInterval,
+                                      replacements: List[_Replacement]) -> None:
+        # This relaxation edits bytes directly, bypassing RewritingContext's
+        # split/join hooks. Keep only masks belonging to surviving instructions.
+        masks = _auxdata_offsetmap.live_register_sets.get(interval.module)
+        if masks is None:
+            return
+        starts = [replacement.offset for replacement in replacements]
+        ends = [start + 4 for start in starts]
+        deltas = [0]
+        for replacement in replacements:
+            deltas.append(deltas[-1] + replacement.delta)
+        for block in interval.blocks:
+            if block not in masks:
+                continue
+            before_block = deltas[bisect_left(starts, block.offset)]
+            moved = {}
+            for displacement, mask in masks[block].items():
+                position = block.offset + displacement
+                index = bisect_right(ends, position)
+                if index < len(starts) and starts[index] <= position:
+                    continue
+                moved[displacement + deltas[index] - before_block] = mask
+            masks[block] = moved
 
     @staticmethod
     def _rewrite_interval_blocks(interval: gtirb.ByteInterval, replacements: List[_Replacement]) -> None:

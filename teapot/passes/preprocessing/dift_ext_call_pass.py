@@ -1,20 +1,22 @@
 from typing import Set
 
 import gtirb
+from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext
 
 from teapot.configs.blacklist import DIFT_IGNORE_LIST, DIFT_WRAPPER_FUNCTIONS, is_blacklisted_function
 from teapot.passes.mixins import VisitorPassMixin
-from teapot.utils.misc import distinguish_edges
 
 
 class DiftExtCallPass(VisitorPassMixin):
     section: gtirb.Section
     symbols_to_rename: Set[gtirb.Symbol]
 
-    def __init__(self, section: gtirb.Section, wrap_dift_calls: bool = True):
+    def __init__(self, section: gtirb.Section, decoder: GtirbInstructionDecoder,
+                 wrap_dift_calls: bool = True):
         self.section = section
+        self.decoder = decoder
         self.wrap_dift_calls = wrap_dift_calls
         self.symbols_to_rename = set()
 
@@ -32,10 +34,9 @@ class DiftExtCallPass(VisitorPassMixin):
         forwarding = symbol_forwarding.data if symbol_forwarding is not None else {}
         symbol_versions = module.aux_data.get('elfSymbolVersions')
         version_entries = symbol_versions.data[2] if symbol_versions is not None else {}
-        for sym in self.symbols_to_rename:
-            forwarded_sym: gtirb.Symbol = forwarding.get(sym, sym)
-            version_entries.pop(forwarded_sym, None)
+        for forwarded_sym in {forwarding.get(sym, sym) for sym in self.symbols_to_rename}:
             if self.wrap_dift_calls and not self.should_ignore_dift_wrapper(forwarded_sym.name):
+                version_entries.pop(forwarded_sym, None)
                 forwarded_sym.name += "__dift_wrapper__"
         super().end_module(module, functions)
 
@@ -46,14 +47,29 @@ class DiftExtCallPass(VisitorPassMixin):
         super().visit_function(function)
 
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
-        non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
-        if len(non_fallthrough_edges) == 0:
+        targets = {
+            edge.target for edge in block.outgoing_edges
+            if edge.label is not None
+            and edge.label.type in (gtirb.EdgeType.Call, gtirb.EdgeType.Branch)
+            and (isinstance(edge.target, gtirb.ProxyBlock) or edge.target.section is not self.section)
+        }
+        if not targets:
             return
 
-        if (non_fallthrough_edges[0].label.type in (gtirb.EdgeType.Call, gtirb.EdgeType.Branch) and
-                (isinstance(non_fallthrough_edges[0].target, gtirb.ProxyBlock) or
-                 non_fallthrough_edges[0].target.section.name != self.section.name)):
-            target_refs = list(non_fallthrough_edges[0].target.references)
-            if len(target_refs) > 0:
-                # is an external function call
-                self.symbols_to_rename.add(target_refs[0])
+        # A PLT block can be referenced only by a RISC-V AUIPC/LO anchor.
+        # The call relocation, not that anchor, names the external function.
+        # Inspect only the terminator: earlier expressions may be data operands.
+        last_instruction = None
+        for last_instruction in self.decoder.get_instructions(block):
+            pass
+        if last_instruction is not None:
+            offset = block.offset + last_instruction.address - block.address
+            for position in range(offset, offset + last_instruction.size):
+                expression = block.byte_interval.symbolic_expressions.get(position)
+                if isinstance(expression, gtirb.SymAddrConst):
+                    self.symbols_to_rename.add(expression.symbol)
+
+        # Other frontends use PLT aliases plus symbolForwarding. Keep all
+        # candidates; end_module filters by the forwarded callable name.
+        for target in targets:
+            self.symbols_to_rename.update(target.references)

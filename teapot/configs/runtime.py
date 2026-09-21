@@ -15,7 +15,6 @@ ASAN_TAG_STORAGES = (ASAN_TAG_STORAGE_SHADOW, ASAN_TAG_STORAGE_MTE)
 COMMON_CHECKPOINT_LIB_SYMBOLS = [
     "scratchpad",
     "old_rsp",
-    "scratchpad_rsp",
 
     "checkpoint_cnt",
     "libcheckpoint_enable",

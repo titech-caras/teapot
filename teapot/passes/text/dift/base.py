@@ -43,7 +43,7 @@ class TextDiftLLVMBase(DiftPropagationBase):
     TAG_TYPE = "i8"
     SCRATCHPAD_ELEM_TYPE = "i64"
     TARGET_TRIPLE = None
-    NATIVE_TARGET_FEATURES = ""
+    TARGET_FEATURES = ""
     ALLOCATE_INST_PATCH_REGISTERS = False
     ALLOCATE_BLOCK_PATCH_REGISTERS = False
 
@@ -62,7 +62,7 @@ class TextDiftLLVMBase(DiftPropagationBase):
         self._init_llvm_pass_manager()
         self.target_triple = None
         self.target_machine = llvm.Target.from_default_triple().create_target_machine(
-            "", self.NATIVE_TARGET_FEATURES, 3, "static"
+            "", self.TARGET_FEATURES, 3, "static"
         )
 
     def _init_llvm_target(self, target_triple: str):
@@ -72,7 +72,7 @@ class TextDiftLLVMBase(DiftPropagationBase):
         self._init_llvm_pass_manager()
         self.target_triple = target_triple
         self.target_machine = llvm.Target.from_triple(target_triple).create_target_machine(
-            opt=3, codemodel="small"
+            features=self.TARGET_FEATURES, opt=3, codemodel="small"
         )
 
     def _init_llvm_pass_manager(self):
@@ -81,39 +81,24 @@ class TextDiftLLVMBase(DiftPropagationBase):
         self.pm = llvm.create_module_pass_manager()
         pmb.populate(self.pm)
 
-    def _shutdown_llvm(self):
-        llvm.shutdown()
-
-    def _llvm_ir_template(self, *, target_triple=None, declare_memset: bool = False) -> str:
+    def _format_llvm_ir(self, body: str, *, target_triple=None) -> str:
         target = f'target triple = "{target_triple}"\n\n' if target_triple else ""
-        memset = ""
-        if declare_memset:
-            memset = """
-declare void @llvm.memset.p0i8.i64(i8* nocapture writeonly, i8, i64, i1 immarg) #2
-attributes #2 = { argmemonly nofree nounwind willreturn writeonly }
-"""
         return f"""
 {target}@dift_reg_tags = dso_local local_unnamed_addr global {self.DIFT_REG_TAGS_TYPE} zeroinitializer, align 16
 @scratchpad = dso_local local_unnamed_addr global {self.SCRATCHPAD_ARR_TYPE} zeroinitializer, align 16
 
 define dso_local void @func() local_unnamed_addr #0 {{
-__TEAPOT_LLVM_BODY__
+{body}
 
 ret void
 }}
-{memset}
+
 !0 = !{{!1}}
 !1 = distinct !{{!1, !3, !"teapot.dift.shadow"}}
 !2 = !{{!4}}
 !4 = distinct !{{!4, !3, !"teapot.runtime"}}
 !3 = distinct !{{!3, !"teapot.dift.alias"}}
         """
-
-    def _format_llvm_ir(self, body: str, *, target_triple=None, declare_memset: bool = False) -> str:
-        return self._llvm_ir_template(
-            target_triple=target_triple,
-            declare_memset=declare_memset,
-        ).replace("__TEAPOT_LLVM_BODY__", body)
 
     def _parse_and_optimize_llvm(self, ir: str):
         ir_parsed = llvm.parse_assembly(ir)
@@ -166,9 +151,6 @@ ret void
     def _add(self, type, v1, v2):
         return self._build_inst(f"add {type} {v1}, {v2}")
 
-    def _mul(self, type, v1, v2):
-        return self._build_inst(f"mul {type} {v1}, {v2}")
-
     def _store(self, type, v, ptr, *, dift_mem: bool = False):
         self.llvm_ir.append(f"store {type} {v}, {type}* {ptr}{self._alias_metadata(dift_mem)}")
 
@@ -180,11 +162,6 @@ ret void
 
     def _label(self, l):
         self.llvm_ir.append(f"{l}:")
-
-    def _memset(self, type, ptr, val, len, *, dift_mem: bool = False):
-        self.llvm_ir.append(
-            f"call void @llvm.memset.p0i8.i64({type}* {ptr}, {type} {val}, i64 {len}, i1 false)"
-            f"{self._alias_metadata(dift_mem)}")
 
     def _extract_function_asm(self, assembly: str) -> str:
         match = re.search(r"func:(.+)\.Lfunc_end0:", assembly, re.S)
@@ -211,6 +188,12 @@ ret void
 
         super().visit_code_block(block, function)
 
+        instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
+        last_inst_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
+        self._flush_dift(block, function, len(instructions) - 1, last_inst_offset)
+
+    def _flush_dift(self, block, function, inst_idx, inst_offset):
+        """Commit a batch before an instruction that observes or changes tags."""
         if len(self.llvm_ir) == 0:
             return
 
@@ -220,16 +203,13 @@ ret void
         asm = self._extract_function_asm(self.target_machine.emit_assembly(ir_parsed))
         regs_usage = self._get_register_usage(asm)
 
-        instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
-        last_inst_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
-
-        inst_idx = len(instructions) - 1
         scratch_plan = self._scratch_plan(function, block, inst_idx)
         patch = self._build_optimized_dift_values_patch(
             asm, regs_usage, scratch_plan=scratch_plan)
         if self.ALLOCATE_BLOCK_PATCH_REGISTERS:
-            patch = self.reg_manager.allocate_registers(function, block, inst_idx)(patch)
-        self.insert_at(block, last_inst_offset, Patch.from_function(patch))
+            patch = self.allocate_registers(function, block, inst_idx)(patch)
+        self.insert_at(block, inst_offset, Patch.from_function(patch))
+        self._reset()
 
     def visit_inst(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                    block: gtirb.CodeBlock, function: Function = None,
@@ -273,7 +253,7 @@ ret void
                                        conditional=conditional,
                                        scratch_plan=scratch_plan)
         if self.ALLOCATE_INST_PATCH_REGISTERS:
-            patch = self.reg_manager.allocate_registers(function, block, inst_idx)(patch)
+            patch = self.allocate_registers(function, block, inst_idx)(patch)
         self.insert_at(block, inst_offset, Patch.from_function(patch))
 
     def _instruction_effects(self, block: gtirb.CodeBlock, inst: CsInsn):
@@ -283,7 +263,8 @@ ret void
         regs_write = self._filter_ignored_registers(regs_write)
         mem_operand = self.arch.memory_operand(inst)
         if mem_operand is not None:
-            regs_read.update(self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand))
+            regs_read.update(self._filter_ignored_registers(
+                self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand)))
         mem_read = mem_operand if mem_operand is not None and self.arch.mem_operand_is_read(
             inst, mem_operand) else None
         mem_write = mem_operand if mem_operand is not None and self.arch.mem_operand_is_write(
@@ -313,7 +294,7 @@ ret void
         )
 
     def _scratch_plan(self, function: Function, block: gtirb.CodeBlock, inst_idx: int):
-        return None
+        return self._plan_scratch_registers(2, self._insertion_live_registers(function, block, inst_idx))
 
     def _build_dift_patch(self, block: gtirb.CodeBlock, inst: CsInsn, inst_offset: int,
                           regs_read: Set[Register], regs_write: Set[Register], *,
@@ -337,38 +318,59 @@ ret void
         tag = self._alloca(self.TAG_TYPE)
         self._store(self.TAG_TYPE, "0", tag)
         mem_read_addr = None
+        read_elements = self._memory_elements(inst, regs_write, mem_read)
+        write_elements = self._memory_elements(inst, regs_read, mem_write)
 
-        if not clear_dest_tags:
-            for reg in regs_read:
-                self._store(self.TAG_TYPE, self._or(
-                    self.TAG_TYPE,
-                    self._load(self.TAG_TYPE, tag),
-                    self._load(self.TAG_TYPE, self._build_gep(
-                        self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
-                        ptr_type=self.DIFT_REG_TAGS_TYPE))),
-                    tag)
+        if read_elements or write_elements:
+            mem_operand = mem_read if read_elements else mem_write
+            if not clear_dest_tags:
+                self._or_register_tags_into_tag(tag, self._filter_ignored_registers(
+                    self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand)))
+            # Snapshot before any destination tag can overwrite an address tag.
+            address_tag = self._load(self.TAG_TYPE, tag)
+            mem_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_operand)
+            for element in read_elements or write_elements:
+                self._store(self.TAG_TYPE, address_tag, tag)
+                if read_elements:
+                    if element.register is None:
+                        continue
+                    if not clear_dest_tags:
+                        self._or_shadow_mem_tag_into_tag(
+                            tag, mem_addr, offset=element.offset, size=element.read_tag_size)
+                    self._store(self.TAG_TYPE, self._load(self.TAG_TYPE, tag), self._build_gep(
+                        self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(element.register),
+                        ptr_type=self.DIFT_REG_TAGS_TYPE))
+                else:
+                    if not clear_dest_tags and element.register is not None:
+                        self._or_register_tags_into_tag(tag, (element.register,))
+                    self._store_shadow_mem_tags(
+                        self._load(self.TAG_TYPE, tag), mem_addr, element.offset, element.size)
 
-            if mem_read is not None:
-                mem_read_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_read)
-                self._or_shadow_mem_tag_into_tag(tag, mem_read_addr)
+            loaded_registers = {element.register for element in read_elements}
+            for reg in regs_write - loaded_registers:
+                self._store(self.TAG_TYPE, address_tag, self._build_gep(
+                    self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
+                    ptr_type=self.DIFT_REG_TAGS_TYPE))
+        else:
+            if not clear_dest_tags:
+                self._or_register_tags_into_tag(tag, regs_read)
 
-        loaded_tag = self._load(self.TAG_TYPE, tag)
+                if mem_read is not None:
+                    mem_read_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_read)
+                    self._or_shadow_mem_tag_into_tag(tag, mem_read_addr)
 
-        for reg in regs_write:
-            self._store(self.TAG_TYPE, loaded_tag, self._build_gep(
-                self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
-                ptr_type=self.DIFT_REG_TAGS_TYPE))
+            loaded_tag = self._load(self.TAG_TYPE, tag)
 
-        if mem_write is not None:
-            mem_addr = mem_read_addr
-            if mem_addr is None or mem_read is None or mem_write != mem_read:
-                mem_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_write)
-            for idx in range(mem_write_size):
-                byte_addr = mem_addr if idx == 0 else self._add(self.SCRATCHPAD_ELEM_TYPE, mem_addr, idx)
-                memtag_addr = self._inttoptr(self.SCRATCHPAD_ELEM_TYPE, self._xor(
-                    self.SCRATCHPAD_ELEM_TYPE, byte_addr, self.dift_layout.xor_mask
-                ), self.TAG_TYPE)
-                self._store(self.TAG_TYPE, loaded_tag, memtag_addr, dift_mem=True)
+            for reg in regs_write:
+                self._store(self.TAG_TYPE, loaded_tag, self._build_gep(
+                    self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
+                    ptr_type=self.DIFT_REG_TAGS_TYPE))
+
+            if mem_write is not None:
+                mem_addr = mem_read_addr
+                if mem_addr is None or mem_read is None or mem_write != mem_read:
+                    mem_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_write)
+                self._store_shadow_mem_tags(loaded_tag, mem_addr, 0, mem_write_size)
 
         if conditional:
             self._br(f"%dift_skip_{label_id}")
@@ -387,12 +389,30 @@ ret void
         self.scratchpad_offset += 1
         return mem_addr
 
-    def _or_shadow_mem_tag_into_tag(self, tag, mem_addr):
-        memtag_addr = self._inttoptr(self.SCRATCHPAD_ELEM_TYPE, self._xor(
-            self.SCRATCHPAD_ELEM_TYPE, mem_addr, self.dift_layout.xor_mask
-        ), self.TAG_TYPE)
-        self._store(self.TAG_TYPE, self._or(self.TAG_TYPE, self._load(self.TAG_TYPE, tag),
-                                            self._load(self.TAG_TYPE, memtag_addr, dift_mem=True)), tag)
+    def _or_register_tags_into_tag(self, tag, registers):
+        for reg in registers:
+            self._store(self.TAG_TYPE, self._or(
+                self.TAG_TYPE, self._load(self.TAG_TYPE, tag),
+                self._load(self.TAG_TYPE, self._build_gep(
+                    self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
+                    ptr_type=self.DIFT_REG_TAGS_TYPE))), tag)
+
+    def _or_shadow_mem_tag_into_tag(self, tag, mem_addr, *, offset=0, size=1):
+        for idx in range(offset, offset + size):
+            byte_addr = mem_addr if idx == 0 else self._add(self.SCRATCHPAD_ELEM_TYPE, mem_addr, idx)
+            memtag_addr = self._inttoptr(self.SCRATCHPAD_ELEM_TYPE, self._xor(
+                self.SCRATCHPAD_ELEM_TYPE, byte_addr, self.dift_layout.xor_mask
+            ), self.TAG_TYPE)
+            self._store(self.TAG_TYPE, self._or(self.TAG_TYPE, self._load(self.TAG_TYPE, tag),
+                                              self._load(self.TAG_TYPE, memtag_addr, dift_mem=True)), tag)
+
+    def _store_shadow_mem_tags(self, tag, mem_addr, offset, size):
+        for idx in range(offset, offset + size):
+            byte_addr = mem_addr if idx == 0 else self._add(self.SCRATCHPAD_ELEM_TYPE, mem_addr, idx)
+            memtag_addr = self._inttoptr(self.SCRATCHPAD_ELEM_TYPE, self._xor(
+                self.SCRATCHPAD_ELEM_TYPE, byte_addr, self.dift_layout.xor_mask
+            ), self.TAG_TYPE)
+            self._store(self.TAG_TYPE, tag, memtag_addr, dift_mem=True)
 
     def _build_store_values_patch(self, inst: CsInsn, capture_operands, scratch_plan=None,
                                   conditional: Optional[str] = None, conditional_slot: Optional[int] = None):

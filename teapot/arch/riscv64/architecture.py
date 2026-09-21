@@ -36,6 +36,12 @@ class RISCV64Architecture(
         marker_bytes = b"".join(word.to_bytes(4, "little") for word in self.MAGIC_WORDS)
         super().__init__("riscv64", True, marker_bytes, _RISCV64_ELF())
 
+    def normalize_passes(self, decoder, reg_manager):
+        from teapot.passes.preprocessing.normalize_riscv64_gp_references_pass import (
+            NormalizeRISCV64GPReferencesPass,
+        )
+        return [NormalizeRISCV64GPReferencesPass(decoder, reg_manager, self)]
+
     def preprocess_passes(self, *, text_section, transient_section,
                           text_transient_mapping, landing_pad_targets,
                           decoder):
@@ -68,7 +74,7 @@ class RISCV64Architecture(
     def relax_late_branches(self, *, module, text_section, transient_section,
                             text_transient_mapping, landing_pad_targets,
                             run_pass_manager):
-        """Drive transient jumps and resulting landing pads to a fixed point."""
+        """Drive text/transient jumps and their landing pads to a fixed point."""
         from gtirb_capstone.instructions import GtirbInstructionDecoder
         from gtirb_rewriting import PassManager
 
@@ -83,6 +89,7 @@ class RISCV64Architecture(
         for iteration in range(1, self.MAX_BRANCH_RELAXATION_ITERATIONS + 1):
             previous_landing_targets = set(landing_pad_targets)
             relax = RISCV64RelaxUnconditionalBranchesPass(
+                text_section,
                 transient_section,
                 text_transient_mapping,
                 landing_pad_targets,

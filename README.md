@@ -21,18 +21,55 @@ It also requires the following packages for interfacing with GTIRB format:
 
 `requirements.txt` pins Teapot's `gtirb-rewriting` fork because its scoped
 rewrite preparation reduces runtime and peak memory on large RV64 modules.
+The Docker image verifies this API while building. For local development, mount
+the fork at `/workspace/gtirb-rewriting`; the image's `PYTHONPATH` gives that
+checkout precedence over the installed pinned package.
+The current review changes also require the local LRA refresh/preservation and
+rewriting metadata APIs. Use the mounted forks until their reviewed revisions
+are published and pinned; the older installed image does not provide these APIs.
 
 Teapot also requires `llvmlite` for generating optimized DIFT instrumentation.
+Text DIFT uses LLVM `-O3` lowering, targeting RV64GC on RISC-V and Armv8-A
+FP/Advanced SIMD on AArch64. Generated RISC snippets preserve any FP/SIMD
+registers and control state they use; this does not extend application DIFT
+tracking to vector registers. No RVV or SVE requirement is introduced.
+RISC DIFT propagation, operand capture and LLVM replay use liveness to select
+spare GPRs and omit unnecessary saves. Live fallback registers still use the
+existing spill areas; missing liveness is all-live, and FP/SIMD saves remain.
 If the debug symbol manipulation functions are used, `pyelftools` is also required.
 
-Teapot live-register analysis uses conservative call liveness on every ISA:
-every GPR that instrumentation could allocate as scratch remains live at a
-call.  This also preserves inputs to local assembly helpers that use a private
-register convention rather than the platform ABI.  Keep this behavior until
-Teapot has a more precise cross-call analysis.
+Teapot prefers ddisasm's interprocedural `liveRegisterNames` and
+`liveRegisterSets` metadata. Known internal calls are analyzed through the CFG,
+including conditional tail calls and returns across recovered function boundaries;
+external calls use the target ABI, and unresolved indirect transfers remain
+conservative. Direct transfers to weak definitions also keep every tracked
+register live, since relinking can replace their bodies. Rewriting migrates
+masks for surviving instructions; normal and
+transient copies retain independent entries. Each rewrite round refreshes the
+analysis cache and explicitly retains masks for its state-preserving edits.
+The LRA API's default refresh instead invalidates old masks after unspecified
+edits, including potentially affected predecessors and callers, without running
+Python analysis. Inserted/replaced instructions without metadata are all-live,
+not reanalyzed in Python. Invalid individual entries are removed with a warning,
+leaving the remaining DDisasm results intact. Missing or incompatible tables produce a fallback warning;
+the Python fallback keeps all registers live at block exits and every scratch
+GPR live at calls, preserving private assembly-helper conventions.
+
+Relayout preserves unmapped integral ELF symbols as absolute values. RISC-V
+instruction anchors may be zero-size private CodeBlocks outside the function
+metadata; passes walking section blocks must ignore empty blocks.
+
+Outside a source checkout, select the configuration installed by the matching
+runtime build (adjust `/opt/teapot-runtime` to its install prefix):
+```shell
+export TEAPOT_AARCH64_SHADOW_STACK_CONFIG=/opt/teapot-runtime/include/aarch64_shadow_stack.h
+export TEAPOT_DIFT_LAYOUT_FILE=/opt/teapot-runtime/share/libcheckpoint/DiftLayoutData.cmake
+```
+These files remain owned by libcheckpoint; the Python package does not carry
+independent copies of runtime constants.
 
 See [`libcheckpoint/README.md`](libcheckpoint/README.md) for runtime
-build options, ASan/MTE tag-storage requirements, DIFT layout profiles,
+build options, shared AArch64 shadow-stack configuration, ASan/MTE tag-storage requirements, DIFT layout profiles,
 optional wrapper libraries, and architecture-specific qemu notes.
 
 Using the provided Dockerfile is an easy way to quickly test Teapot,
@@ -41,6 +78,47 @@ It also includes an isolated Ubuntu arm64 sysroot with MTE-capable glibc at
 `/opt/aarch64-mte-sysroot` and a newer static qemu runner at
 `/usr/local/bin/qemu-aarch64-mte`; the normal `/usr/aarch64-linux-gnu` cross
 sysroot is left unchanged.
+
+## Current Analysis Limits
+
+- AArch64/RV64 saved-return poisoning tracks one decoded LR/RA save and its
+  matching reloads through the CFG, independently of unwind metadata. It
+  poisons after the store and clears before each reload. Unsupported lifetimes
+  produce per-function warnings, coverage counts and a reason histogram; arbitrary pointer aliases
+  and nonlocal exits are not modeled. MTE omits return-slot poisoning rather
+  than poison neighboring data sharing its 16-byte allocation-tag granule.
+- Generic multi-byte DIFT loads currently sample the first byte's tag, not the
+  union over the entire access. Tags appearing only in later bytes can be missed.
+- x64 REP MOVS/STOS/LODS/CMPS/SCAS propagate tags in normal execution, including
+  every byte of each completed element, direction, overlap and early stopping.
+  LLVM batches flush at REP boundaries. Transient REP executes one element per
+  instruction-budget unit, checking the limit before each iteration. Each
+  executed element receives DIFT, memory history and enabled access policies;
+  this is an iteration-cost approximation, not a hardware uop model.
+  DIFT-blacklisted functions omit propagation, but retain the element loop,
+  memory history and enabled checks.
+  Reentrant signal-handler tag observations are not supported.
+  Noncanonical REPNE copy/load/store encodings are refused, not inferred from
+  the incomplete counter accesses reported by Capstone.
+  Use the local printer's string-prefix preservation fix when rebuilding.
+- AArch64 GPR LDP/LDNP/LDPSW/STP/STNP use separate per-element tags in both
+  common and LLVM text DIFT, including all bytes of each element. This does not
+  establish equivalent precision for vector or atomic-pair transfers.
+  Scalar pre/post-indexed loads and stores also keep address writeback tags
+  separate from transferred data tags, retaining first-byte load sampling.
+- RV64 GP-relative loads, stores and address calculations are normalized before
+  the transient copy, using a destination register, a conservative LRA spare,
+  or a 16-byte stack-spill frame. Later passes instrument those spill accesses.
+  Unsupported metadata and out-of-range PC-relative relocations are errors.
+  Raw copies of `gp` are also refused without symbolic metadata. Nonempty
+  `riscvUnresolvedPcrelReferences` frontend diagnostics prevent rewriting;
+  missing diagnostics produce a warning. Regenerate older inputs with the local
+  frontend to obtain this check; an absent table is not an empty checked table.
+  Unwinding through the temporary spill window is not supported. This does not
+  fix raw printer-only GP relayout or add Teapot RV32 support.
+- The allocation-free reporting runtime passes all 120 AArch64 MTE `test_fuzz`
+  inputs and all 341 `test_all` cases under QEMU. Native MTE remains separate;
+  see [runtime tests](libcheckpoint/README.md).
 
 ## Usage
 
@@ -60,6 +138,9 @@ The DIFT address-space profile is selected at instrumentation time with
 `-DTEAPOT_DIFT_LAYOUT=...`. The profile definitions live in
 `libcheckpoint/cmake/DiftLayoutData.cmake` and are shared by Teapot and the
 runtime build.
+ASan shadow checks cover every granule touched by an access, including unaligned
+crossings. Checks up to eight bytes use an unrolled path; wider accesses use a
+range loop. AArch64 MTE uses the corresponding 16-byte granule checks in software.
 
 On AArch64, Teapot ASan-style tag storage defaults to ASan shadow bytes.  The
 experimental `--aarch64-tag-storage=mte` mode stores those tags in MTE

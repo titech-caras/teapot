@@ -12,7 +12,7 @@ FROM --platform=linux/amd64 grammatech/ddisasm:latest
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV ASAN_OPTIONS detect_leaks=0:verify_asan_link_order=false
-ENV PYTHONPATH /workspace/gtirb-live-register-analysis:/workspace/teapot
+ENV PYTHONPATH /workspace/gtirb-rewriting/src:/workspace/gtirb-live-register-analysis:/workspace/teapot
 ENV AARCH64_MTE_SYSROOT /opt/aarch64-mte-sysroot
 ENV AARCH64_MTE_QEMU /usr/local/bin/qemu-aarch64-mte
 
@@ -22,6 +22,7 @@ ENV AARCH64_MTE_QEMU /usr/local/bin/qemu-aarch64-mte
 #
 #   podman run --rm -it \
 #     -v "$PWD:/workspace/teapot:Z" \
+#     -v "$HOME/gtirb-rewriting:/workspace/gtirb-rewriting:Z" \
 #     -v "$HOME/gtirb-live-register-analysis:/workspace/gtirb-live-register-analysis:Z" \
 #     teapot-eval
 
@@ -50,6 +51,12 @@ RUN /usr/local/bin/qemu-aarch64-mte --version && \
 COPY requirements.txt /tmp/teapot-requirements.txt
 
 RUN python3 -m pip install --no-cache-dir -r /tmp/teapot-requirements.txt
+
+# Guard against accidentally reusing an image with upstream's whole-module
+# rewrite preparation. The fork pinned in requirements.txt accepts a scoped
+# block set and the liveness offset table. Both dependency forks must provide
+# the metadata APIs used by Teapot before an image is suitable for evaluation.
+RUN python3 -c "import inspect; from gtirb_rewriting.prepare import prepare_for_rewriting; from gtirb_rewriting._auxdata_offsetmap import live_register_sets; from gtirb_live_register_analysis.manager import LiveRegisterManager, LIVE_REGISTER_NAMES_AUXDATA, LIVE_REGISTER_SETS_AUXDATA; assert 'blocks' in inspect.signature(prepare_for_rewriting).parameters, 'gtirb-rewriting lacks scoped preparation support'; assert 'preserve_liveness' in inspect.signature(LiveRegisterManager.refresh).parameters, 'gtirb-live-register-analysis lacks the explicit preservation contract'"
 
 RUN mkdir /workspace
 WORKDIR /workspace

@@ -4,6 +4,7 @@ from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_rewriting import Pass, Patch, RewritingContext, patch_constraints
 
 from teapot.arch.aarch64.architecture import AArch64Architecture
+from teapot.utils.misc import symbol_address
 
 
 class NormalizeAArch64StartupPass(Pass):
@@ -29,9 +30,9 @@ class NormalizeAArch64StartupPass(Pass):
             return
 
         target_values = (
-            ("x0", self._symbol_address(main_symbol), "main"),
-            ("x3", self._symbol_address(init_symbol), "__libc_csu_init"),
-            ("x4", self._symbol_address(fini_symbol), "__libc_csu_fini"),
+            ("x0", symbol_address(main_symbol), "main"),
+            ("x3", symbol_address(init_symbol), "__libc_csu_init"),
+            ("x4", symbol_address(fini_symbol), "__libc_csu_fini"),
         )
         if any(address is None for _, address, _ in target_values):
             return
@@ -62,13 +63,6 @@ class NormalizeAArch64StartupPass(Pass):
                 )),
             )
             return
-
-    @staticmethod
-    def _symbol_address(symbol):
-        referent = getattr(symbol, "referent", None)
-        if referent is None:
-            return None
-        return getattr(referent, "address", None)
 
     @staticmethod
     def _startup_symbols_patch(main: str, init: str, fini: str):

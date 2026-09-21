@@ -60,7 +60,7 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
     def _build_patch(self, inst: CsInsn, mem_operand, access_size: int, write_regs,
                      address_regs, *, reads_registers=None):
 
-        scratch_registers = 5 if self.enable_asan_check and access_size > 8 else 4
+        scratch_registers = 5 if self.enable_asan_check and access_size > 1 else 4
 
         @self.arch.constraints(scratch_registers=scratch_registers, reads_registers=reads_registers or set())
         def patch(ctx: InsertionContext):

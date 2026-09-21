@@ -27,6 +27,9 @@ class RISCV64FirstSpillMixin:
 
     @classmethod
     def save_regs_to_first_spill(cls, regs, *, offset: int = 0) -> str:
+        regs = tuple(regs)
+        if not regs:
+            return ""
         lines = [
             cls.load_address("tp", f"scratchpad+{SCRATCHPAD_FIRST_SPILL_OFFSET}"),
         ]
@@ -42,6 +45,9 @@ class RISCV64FirstSpillMixin:
 
     @classmethod
     def restore_regs_from_first_spill(cls, regs) -> str:
+        regs = tuple(regs)
+        if not regs:
+            return ""
         lines = [
             cls.load_address("tp", f"scratchpad+{SCRATCHPAD_FIRST_SPILL_OFFSET}"),
         ]

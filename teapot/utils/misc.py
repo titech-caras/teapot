@@ -20,3 +20,12 @@ def get_or_insert_symbol(insert_name: str, payload: gtirb.CfgNode, module: gtirb
         return next(payload.references)
     except StopIteration:
         return gtirb.Symbol(name=insert_name, payload=payload, module=module)
+
+
+def symbol_address(symbol: gtirb.Symbol) -> Optional[int]:
+    if symbol.value is not None:
+        return symbol.value
+    referent = symbol.referent
+    if not isinstance(referent, gtirb.ByteBlock) or referent.address is None:
+        return None
+    return referent.address + (referent.size if symbol.at_end else 0)

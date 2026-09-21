@@ -23,35 +23,33 @@ class AArch64AsanPatchesMixin:
         if tag_storage != ASAN_TAG_STORAGE_SHADOW:
             raise ValueError(f"Unsupported AArch64 tag storage: {tag_storage}")
 
-        if access_size > 8:
-            return self._shadow_check_loop_snippet(
+        if access_size > 1:
+            return self._shadow_range_check_snippet(
                 addr_reg, access_size, check_ok_label,
                 shadow_offset=shadow_offset, shadow_reg=shadow_reg,
                 scratch_reg=scratch_reg, end_reg=end_reg)
 
-        asm = f"""
+        return f"""
             lsr {scratch_reg}, {addr_reg}, #3
             {self.mov_u64(shadow_reg, shadow_offset)}
             add {scratch_reg}, {scratch_reg}, {shadow_reg}
             ldrb {shadow_reg:32}, [{scratch_reg}]
             cbz {shadow_reg:32}, {check_ok_label}
+            cmp {shadow_reg:32}, #8
+            b.hs .L__asan_shadow_check_fail{SYMBOL_SUFFIX}
+            and {scratch_reg:32}, {addr_reg:32}, #7
+            cmp {scratch_reg:32}, {shadow_reg:32}
+            b.lo {check_ok_label}
+        .L__asan_shadow_check_fail{SYMBOL_SUFFIX}:
         """
-        if access_size < 8:
-            asm += f"""
-                cmp {shadow_reg:32}, #8
-                b.hs .L__asan_shadow_check_fail{SYMBOL_SUFFIX}
-                and {scratch_reg:32}, {addr_reg:32}, #7
-                add {scratch_reg:32}, {scratch_reg:32}, #{access_size - 1}
-                cmp {scratch_reg:32}, {shadow_reg:32}
-                b.lo {check_ok_label}
-            .L__asan_shadow_check_fail{SYMBOL_SUFFIX}:
-            """
-        return asm
 
-    def _shadow_check_loop_snippet(self, addr_reg, access_size: int, check_ok_label: str, *,
+    def _shadow_range_check_snippet(self, addr_reg, access_size: int, check_ok_label: str, *,
                                    shadow_offset: int, shadow_reg, scratch_reg, end_reg) -> str:
         if end_reg is None:
-            raise ValueError("wide AArch64 ASan checks require an end_reg scratch register")
+            raise ValueError("multi-byte AArch64 ASan checks require an end_reg scratch register")
+
+        next_granule = (f"b .L__asan_shadow_check_loop{SYMBOL_SUFFIX}" if access_size > 8
+                        else f"ldrb {shadow_reg:32}, [{scratch_reg}]")
 
         return f"""
             lsr {scratch_reg}, {addr_reg}, #3
@@ -66,7 +64,7 @@ class AArch64AsanPatchesMixin:
             b.eq .L__asan_shadow_check_last{SYMBOL_SUFFIX}
             cbnz {shadow_reg:32}, .L__asan_shadow_check_fail{SYMBOL_SUFFIX}
             add {scratch_reg}, {scratch_reg}, #1
-            b .L__asan_shadow_check_loop{SYMBOL_SUFFIX}
+            {next_granule}
         .L__asan_shadow_check_last{SYMBOL_SUFFIX}:
             cbz {shadow_reg:32}, {check_ok_label}
             cmp {shadow_reg:32}, #8
@@ -168,25 +166,18 @@ class AArch64AsanPatchesMixin:
 
     def asan_stack_poison_snippet(self, addr_reg, value_reg, top_reg, *, poison: bool,
                                   shadow_offset: int, insert_memlog: bool,
-                                  tag_storage: str = ASAN_TAG_STORAGE_SHADOW) -> str:
-        if tag_storage == ASAN_TAG_STORAGE_MTE:
-            value = 0xf if poison else 0
-            memlog = self._mte_memlog_tag_snippet(addr_reg, top_reg, value_reg) if insert_memlog else ""
-            return f"""
-                mov {addr_reg}, sp
-                sub {addr_reg}, {addr_reg}, #8
-                bic {addr_reg}, {addr_reg}, #0xf
-                {memlog}
-                {self._mte_store_tag_snippet(value_reg, addr_reg, value)}
-            """
+                                  tag_storage: str = ASAN_TAG_STORAGE_SHADOW, slot=None) -> str:
         if tag_storage != ASAN_TAG_STORAGE_SHADOW:
-            raise ValueError(f"Unsupported AArch64 tag storage: {tag_storage}")
+            raise ValueError("AArch64 saved-return poisoning requires shadow tag storage")
+        if slot is None:
+            raise ValueError("AArch64 saved-return poisoning requires a verified stack slot")
 
+        base, displacement = slot
         value = 0xff if poison else 0
         memlog = self.memlog_snippet(addr_reg, top_reg, value_reg, 1) if insert_memlog else ""
         return f"""
-            mov {addr_reg}, sp
-            sub {addr_reg}, {addr_reg}, #8
+            {self.add_sub_constant_from_base('sub' if displacement < 0 else 'add',
+                                            addr_reg, base, value_reg, abs(displacement))}
             lsr {addr_reg}, {addr_reg}, #3
             {self.mov_u64(value_reg, shadow_offset)}
             add {addr_reg}, {addr_reg}, {value_reg}
@@ -196,18 +187,21 @@ class AArch64AsanPatchesMixin:
         """
 
     def asan_stack_patch(self, abi, *, poison: bool, insert_memlog: bool, shadow_offset: int,
-                         tag_storage: str = ASAN_TAG_STORAGE_SHADOW):
+                         tag_storage: str = ASAN_TAG_STORAGE_SHADOW, slot=None):
+        if slot is None:
+            raise ValueError("AArch64 saved-return poisoning requires a verified stack slot")
         scratch_count = 3 if insert_memlog else 2
 
-        @self.constraints(scratch_registers=scratch_count)
+        @self.constraints(scratch_registers=scratch_count, reads_registers={slot[0].name})
         def patch(ctx):
             addr_reg, value_reg = ctx.scratch_registers[:2]
             top_reg = ctx.scratch_registers[2] if insert_memlog else None
-            return f"""
-                {self.asan_stack_poison_snippet(
-                    addr_reg, value_reg, top_reg, poison=poison,
-                    shadow_offset=shadow_offset, insert_memlog=insert_memlog,
-                    tag_storage=tag_storage)}
-            """
+            base, displacement = slot
+            if base == abi.get_register("sp"):
+                displacement += ctx.stack_adjustment or 0
+            return self.asan_stack_poison_snippet(
+                addr_reg, value_reg, top_reg, poison=poison,
+                shadow_offset=shadow_offset, insert_memlog=insert_memlog,
+                tag_storage=tag_storage, slot=(base, displacement))
 
         return patch

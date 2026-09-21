@@ -3,6 +3,7 @@ import uuid
 import gtirb
 import copy
 from typing import Tuple
+from gtirb_rewriting import _auxdata_offsetmap
 
 from teapot.datacls.copied_section_mapping import CopiedSectionMapping
 from teapot.configs.runtime import SYMBOL_SUFFIX
@@ -106,6 +107,7 @@ def copy_section(section: gtirb.Section, name: str) \
     )
 
     code_block_copy_mapping = {}
+    live_register_sets = _auxdata_offsetmap.live_register_sets.get(section.module)
     for block in section.code_blocks:
         code_block_copy = gtirb.CodeBlock(
             size=block.size,
@@ -114,6 +116,9 @@ def copy_section(section: gtirb.Section, name: str) \
             byte_interval=byte_interval_copy
         )
         code_block_copy_mapping[block.uuid] = code_block_copy
+        if live_register_sets is not None and block in live_register_sets:
+            # Copies start equivalent, but their subsequent edits are independent.
+            live_register_sets[code_block_copy] = dict(live_register_sets[block])
 
     symbol_list = [s for s in section.module.symbols
                    if isinstance(s.referent, gtirb.CodeBlock) and s.referent.section.name == section.name]

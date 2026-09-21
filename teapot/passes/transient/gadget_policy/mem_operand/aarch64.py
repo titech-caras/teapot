@@ -6,7 +6,7 @@ from gtirb_functions import Function
 from gtirb_rewriting import InsertionContext
 from gtirb_rewriting.assembly import Register
 
-from teapot.configs.runtime import ASAN_TAG_STORAGE_MTE, SYMBOL_SUFFIX
+from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.tags import (
     TAG_ATTACKER,
     TAG_ATTACKER_INDIRECT,
@@ -55,8 +55,7 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
                      mem_symexpr: Optional[gtirb.SymbolicExpression], *,
                      reads_registers=None):
 
-        needs_end_reg = self.enable_asan_check and (
-            self.asan_tag_storage == ASAN_TAG_STORAGE_MTE or access_size > 8)
+        needs_end_reg = self.enable_asan_check and access_size > 1
         scratch_registers = 5 if needs_end_reg else 4
 
         @self.arch.constraints(

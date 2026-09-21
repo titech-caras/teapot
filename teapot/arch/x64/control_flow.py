@@ -92,7 +92,8 @@ class X64ControlFlowPatchesMixin:
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
                                     text_end_symbol: gtirb.Symbol, reads_registers=None):
-        @self.constraints(scratch_registers=2, reads_registers=reads_registers or set())
+        @self.constraints(scratch_registers=2, clobbers_flags=True,
+                          reads_registers=reads_registers or set())
         def patch(ctx):
             r1, r2 = ctx.scratch_registers
             return f"""
@@ -120,15 +121,14 @@ class X64ControlFlowPatchesMixin:
 
         return patch
 
-    @staticmethod
-    def instruction_must_rollback(instruction) -> bool:
+    def instruction_must_rollback(self, instruction) -> bool:
         if instruction.mnemonic in {
             "lfence", "mfence", "sfence", "serialize", "cpuid",
             "syscall", "sysenter",
         }:
             return True
 
-        return instruction.mnemonic.startswith("rep")
+        return instruction.mnemonic.startswith("rep") and self.rep_string_kind(instruction) is None
 
     @staticmethod
     def is_control_transfer_instruction(instruction) -> bool:

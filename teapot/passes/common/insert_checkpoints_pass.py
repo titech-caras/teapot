@@ -68,7 +68,7 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
             if not self.arch.CHECKPOINT_FIXED_REGISTERS:
                 try:
                     self.insert_at(block, conditional_jump_offset, Patch.from_function(
-                        self.reg_manager.allocate_registers(
+                        self.allocate_registers(
                             function, block, len(instructions) - 1, False)(
                             self.arch.checkpoint_patch(block.uuid))))
                 except NotEnoughFreeRegistersException:

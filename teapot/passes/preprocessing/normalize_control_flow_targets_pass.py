@@ -1,6 +1,8 @@
 import gtirb
 from gtirb_rewriting import Pass, RewritingContext
 
+from teapot.utils.misc import symbol_address
+
 
 class NormalizeControlFlowTargetsPass(Pass):
     """Anchor movable direct-control-flow expressions to their CFG target.
@@ -58,8 +60,10 @@ class NormalizeControlFlowTargetsPass(Pass):
                 if not self._is_simple_address(expression):
                     continue
 
-                expression_address = self._expression_address(expression)
-                matching_targets = targets.get(expression_address, ())
+                address = symbol_address(expression.symbol)
+                if address is None:
+                    continue
+                matching_targets = targets.get(address + expression.offset, ())
                 if len(matching_targets) != 1:
                     continue
 
@@ -108,30 +112,6 @@ class NormalizeControlFlowTargetsPass(Pass):
             isinstance(expression, gtirb.SymAddrConst)
             and expression.attributes.issubset(self._SAFE_ATTRIBUTES)
         )
-
-    @classmethod
-    def _expression_address(cls, expression):
-        symbol_address = cls._symbol_address(expression.symbol)
-        if symbol_address is None:
-            return None
-        return symbol_address + expression.offset
-
-    @staticmethod
-    def _symbol_address(symbol):
-        if symbol.value is not None:
-            return symbol.value
-
-        referent = symbol.referent
-        address = getattr(referent, "address", None)
-        if address is None:
-            return None
-        if not symbol.at_end:
-            return address
-
-        size = getattr(referent, "size", None)
-        if size is None:
-            return None
-        return address + size
 
     @staticmethod
     def _already_exact(expression, target) -> bool:

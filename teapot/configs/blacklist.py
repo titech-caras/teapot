@@ -97,7 +97,6 @@ DIFT_IGNORE_LIST = [
     "__ctype_b_loc", "__ctype_tolower_loc", "__ctype_toupper_loc",
     "abort", "__assert_fail", "exit", "__errno_location", "__xstat", "__stack_chk_fail", "__cxa_atexit",
     "gai_strerror", "__xpg_strerror_r", "mmap", "mprotect", "mlock", "madvise", "munmap",
-    "inflateInit2_", "inflateEnd",
     "crc32",
 
     "getenv",  # FIXME: whitelist only for now, needed for some experiments
@@ -135,4 +134,7 @@ DIFT_WRAPPER_FUNCTIONS = {
     "inet_pton",
     "log2",
     "inflate",
+    "inflateInit_", "inflateInit2_", "inflateEnd",
+    "inflateReset", "inflateReset2", "inflateResetKeep", "inflateCopy",
+    "inflateSetDictionary", "inflatePrime", "inflateSync",
 }

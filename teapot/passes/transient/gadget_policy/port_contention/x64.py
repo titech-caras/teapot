@@ -23,6 +23,9 @@ class X64TransientPortContentionPolicyPass(TransientPortContentionPolicyPassBase
             return None
 
     def build_patch(self, block: gtirb.CodeBlock, inst, inst_offset: int):
+        if self.arch.rep_string_kind(inst) is not None:
+            # REP comparisons are checked for every executed iteration.
+            return None
         mem_read_operand_str = None
         regs_read = []
 

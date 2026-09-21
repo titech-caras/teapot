@@ -134,3 +134,9 @@ dmypy.json
 
 # PyCharm
 .idea/
+# Local working files that must never reach a commit: CTest output, exported
+# review PDFs, Codex/Claude working notes, and WSL sidecar files.
+/Testing/
+/*.pdf
+/teapot-*.md
+*:Zone.Identifier

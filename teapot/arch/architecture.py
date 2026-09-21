@@ -42,7 +42,7 @@ class Architecture(
     def constraints(self, **kwargs):
         return patch_constraints(**kwargs)
 
-    def normalize_passes(self, decoder):
+    def normalize_passes(self, decoder, reg_manager):
         return []
 
     def preprocess_passes(self, *, text_section, transient_section,
@@ -66,6 +66,9 @@ class Architecture(
 
     def create_text_dift_pass(self, reg_manager, section, decoder, dift_layout):
         raise NotImplementedError(f"{self.name} does not define text DIFT pass")
+
+    def transient_instruction_passes(self, reg_manager, section, decoder, dift_layout, options):
+        return []
 
     def create_transient_dift_pass(self, reg_manager, section, decoder, dift_layout):
         raise NotImplementedError(f"{self.name} does not define transient DIFT pass")

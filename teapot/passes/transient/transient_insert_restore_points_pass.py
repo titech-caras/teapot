@@ -46,6 +46,8 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
         instruction_len_sum: List[int] = [0] + list(itertools.accumulate(i.size for i in instructions))
+        instruction_cost_sum = [0] + list(itertools.accumulate(
+            self.arch.static_instruction_cost(inst) for inst in instructions))
 
         unconditional_rollback_idx = self.__unconditional_rollback_at(block, instructions)
         if unconditional_rollback_idx is not None:
@@ -78,13 +80,13 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
             self.__insert_conditional_restore_point(
                 block, function, current_insertion_idx, instruction_len_sum[current_insertion_idx],
-                current_insertion_idx - last_insertion_idx)
+                instruction_cost_sum[current_insertion_idx] - instruction_cost_sum[last_insertion_idx])
             last_insertion_idx = current_insertion_idx
 
         if final_conditional_rollback_idx is not None:
             self.__insert_conditional_restore_point(
                 block, function, final_conditional_rollback_idx, instruction_len_sum[final_conditional_rollback_idx],
-                len(instructions) - last_insertion_idx)
+                instruction_cost_sum[-1] - instruction_cost_sum[last_insertion_idx])
 
     def __insert_conditional_restore_point(self, block, function, instruction_idx, instruction_offset,
                                            instruction_count):
@@ -95,7 +97,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
         patch = self.arch.conditional_restore_point_patch(instruction_count)
         if self.reg_manager is not None:
-            patch = self.reg_manager.allocate_registers(
+            patch = self.allocate_registers(
                 function, block, instruction_idx)(patch)
         self.insert_at(block, instruction_offset, Patch.from_function(patch))
 

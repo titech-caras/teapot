@@ -6,6 +6,17 @@ from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM
 
 
 class ArchitectureOperandMixin(ABC):
+    def saved_return_registers(self):
+        """SP, frame pointer and link register for explicit return-slot saves."""
+        raise NotImplementedError(self.name)
+
+    def stack_register_assignment(self, inst):
+        """An affine register assignment (destination, source, displacement)."""
+        raise NotImplementedError(self.name)
+
+    def stack_memory_access(self, inst):
+        raise NotImplementedError(self.name)
+
     @staticmethod
     def memory_operand(inst):
         return next(iter(op for op in inst.operands if op.type == CS_OP_MEM), None)

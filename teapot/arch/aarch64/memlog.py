@@ -3,7 +3,7 @@ from teapot.configs.runtime import MEMORY_HISTORY_ENTRY_SIZE, MEMORY_HISTORY_SIZ
 
 class AArch64MemlogPatchesMixin:
     def memlog_snippet(self, addr_reg, top_reg, data_reg, access_size: int, *,
-                       source_label=None, no_clobber_addr: bool = False) -> str:
+                       no_clobber_addr: bool = False) -> str:
         asm = f"""
             {self.load_address(top_reg, "memory_history_top")}
             ldr {top_reg}, [{top_reg}]
@@ -16,20 +16,20 @@ class AArch64MemlogPatchesMixin:
             asm += f"""
                 str {addr_reg}, [{top_reg}]
             """
-            for byte_idx in range(chunk_size):
+            byte_idx = 0
+            for width, suffix, register_size in (
+                    (8, "", "64"), (4, "", "32"), (2, "h", "32"), (1, "b", "32")):
+                if not chunk_size & width:
+                    continue
                 asm += f"""
-                    ldrb {data_reg:32}, [{addr_reg}, #{byte_idx}]
-                    strb {data_reg:32}, [{top_reg}, #{8 + byte_idx}]
+                    ldr{suffix} {data_reg:{register_size}}, [{addr_reg}, #{byte_idx}]
+                    str{suffix} {data_reg:{register_size}}, [{top_reg}, #{8 + byte_idx}]
                 """
+                byte_idx += width
             asm += f"""
                 mov {data_reg:32}, #{chunk_size}
                 strb {data_reg:32}, [{top_reg}, #{MEMORY_HISTORY_SIZE_OFFSET}]
             """
-            if source_label is not None:
-                asm += f"""
-                    adr {data_reg}, {source_label}
-                    str {data_reg:32}, [{top_reg}, #{MEMORY_HISTORY_SIZE_OFFSET + 1}]
-                """
             asm += f"""
                 add {top_reg}, {top_reg}, #{MEMORY_HISTORY_ENTRY_SIZE}
             """

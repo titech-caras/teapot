@@ -432,5 +432,7 @@ def install_riscv64_rewriting_compat() -> None:
     assembler._Streamer.emit_instruction = emit_instruction
     rewriting.RewritingContext.apply = apply
     rewriting.RewritingContext.insert_at = insert_at
+    # Allocation must query the same placement policy before choosing spares.
+    rewriting.RewritingContext._teapot_insert_location = staticmethod(safe_riscv64_insert_location)
     mc_utils._INDIRECT_CALL_INSTRS[gtirb.Module.ISA.ValidButUnsupported] = {"JALR"}
     rewriting_utils._teapot_riscv64_compat = True

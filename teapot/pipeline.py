@@ -3,6 +3,11 @@ from dataclasses import dataclass
 
 import gtirb
 from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_live_register_analysis import (
+    LIVE_REGISTER_NAMES_AUXDATA,
+    LIVE_REGISTER_SETS_AUXDATA,
+    LiveRegisterManager,
+)
 from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 from gtirb_rewriting import PassManager
 from gtirb_rewriting.abi import _ABIS
@@ -38,7 +43,6 @@ from teapot.preprocess.copy_section import (
 )
 from teapot.preprocess.create_guards import create_guards
 from teapot.utils.misc import distinguish_edges
-from teapot.utils.reg_analysis import LiveRegisterManagerWrapper
 
 ARCH_INFO_AUX_TYPE = "mapping<string,string>"
 AARCH64_MTE_ARCH_FEATURE = "mte"
@@ -81,18 +85,6 @@ def _restore_integral_symbol_values(symbol_values):
     # their value is relative to the thread pointer, not a module address.
     for symbol, value in symbol_values:
         symbol.value = value
-
-
-def _run_pass_manager(pass_manager: PassManager, ir: gtirb.IR, label: str):
-    print(f"[teapot] begin {label}", flush=True)
-    integral_tls_symbols = _integral_tls_symbol_values(ir.modules[0])
-    try:
-        pass_manager.run(ir)
-    finally:
-        _restore_integral_symbol_values(integral_tls_symbols)
-    CachedGtirbInstructionDecoder.cache.clear()
-    gc.collect()
-    print(f"[teapot] end {label}", flush=True)
 
 
 def _conditional_branch_block_uuids(section: gtirb.Section):
@@ -140,6 +132,7 @@ class TeapotPipeline:
         self.ir = ir
         self.dift_layout_name = dift_layout_name
         self.options = options
+        self.reg_manager = None
 
     def run(self):
         self.module = self.ir.modules[0]
@@ -154,6 +147,14 @@ class TeapotPipeline:
         self.text_section = [section for section in self.module.sections if section.name == ".text"][0]
         self.decoder = CachedGtirbInstructionDecoder(self.module.isa)
         self.abi = self.arch.register_abi(_ABIS)
+        if self.arch.uses_live_registers:
+            self.reg_manager = LiveRegisterManager(
+                self.module, self.abi, self.decoder, analysis_scope="block")
+            print(f"[teapot] live-register analysis: {self.reg_manager.analysis_source}", flush=True)
+            if self.reg_manager.analysis_source == "python":
+                # Invalid tables must not enter the rewriter's offset hooks.
+                self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
+                self.module.aux_data.pop(LIVE_REGISTER_SETS_AUXDATA, None)
 
         self._run_normalize_passes()
         self._create_instrumentation_sections()
@@ -175,17 +176,45 @@ class TeapotPipeline:
                 self.arch.relax_conditional_branches(self.module)
             finally:
                 _restore_integral_symbol_values(integral_tls_symbols)
+                self._refresh_register_analysis()
 
         if self.arch.needs_late_text_checkpoints():
             self._run_late_text_checkpoint_passes()
+
+    def _run_pass_manager(self, pass_manager: PassManager, label: str):
+        print(f"[teapot] begin {label}", flush=True)
+        integral_tls_symbols = _integral_tls_symbol_values(self.module)
+        try:
+            pass_manager.run(self.ir)
+        finally:
+            _restore_integral_symbol_values(integral_tls_symbols)
+            self._refresh_register_analysis()
+        gc.collect()
+        print(f"[teapot] end {label}", flush=True)
+
+    def _refresh_register_analysis(self):
+        if self.reg_manager is None:
+            CachedGtirbInstructionDecoder.cache.clear()
+            return
+        previous_source = self.reg_manager.analysis_source
+        # These rounds preserve application register dependencies: inserted
+        # patches save their clobbers and replacements retain original effects.
+        # A transformation changing those effects must invalidate, not opt in.
+        self.reg_manager.refresh(preserve_liveness=True)
+        source = self.reg_manager.analysis_source
+        if source != previous_source:
+            print(f"[teapot] live-register analysis: {previous_source} -> {source}", flush=True)
+        if source == "python":
+            self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
+            self.module.aux_data.pop(LIVE_REGISTER_SETS_AUXDATA, None)
 
     def _run_normalize_passes(self):
         pass_manager = PassManager()
         pass_manager.add(NormalizeDataBlockAlignmentPass())
         pass_manager.add(NormalizeControlFlowTargetsPass(self.decoder))
-        for arch_pass in self.arch.normalize_passes(self.decoder):
+        for arch_pass in self.arch.normalize_passes(self.decoder, self.reg_manager):
             pass_manager.add(arch_pass)
-        _run_pass_manager(pass_manager, self.ir, "normalize")
+        self._run_pass_manager(pass_manager, "normalize")
 
     def _create_instrumentation_sections(self):
         self.transient_section, self.transient_section_start_symbol, self.transient_section_end_symbol, \
@@ -193,9 +222,7 @@ class TeapotPipeline:
         self.text_section_start_symbol, self.text_section_end_symbol = create_section_bounds(
             self.text_section, "text")
 
-        self.reg_manager = LiveRegisterManagerWrapper(
-            self.module, self.abi, self.decoder, text_transient_mapping=self.text_transient_mapping) \
-            if self.arch.uses_live_registers else None
+        self._refresh_register_analysis()
 
         self.trampoline_section = gtirb.Section(
             name=".teapot_trampolines", flags=self.transient_section.flags, module=self.module)
@@ -241,13 +268,13 @@ class TeapotPipeline:
                 landing_pad_targets=self.landing_pad_targets,
                 decoder=self.decoder):
             pass_manager.add(arch_pass)
-        _run_pass_manager(pass_manager, self.ir, "preprocess")
+        self._run_pass_manager(pass_manager, "preprocess")
 
     def _run_dift_ext_call_passes(self):
         pass_manager = PassManager()
         if self.options.enable_dift and self.arch.supports_dift_ext_calls():
-            pass_manager.add(DiftExtCallPass(self.text_section, wrap_dift_calls=True))
-        _run_pass_manager(pass_manager, self.ir, "dift-ext-calls")
+            pass_manager.add(DiftExtCallPass(self.text_section, self.decoder, wrap_dift_calls=True))
+        self._run_pass_manager(pass_manager, "dift-ext-calls")
 
     def _run_text_passes(self):
         pass_manager = PassManager()
@@ -274,9 +301,7 @@ class TeapotPipeline:
             pass_manager.add(InsertCheckpointsPass(
                 self.reg_manager, self.text_section, self.decoder, self.arch,
                 self.checkpoint_block_uuids, self.checkpoint_spare_registers))
-        _run_pass_manager(pass_manager, self.ir, "text")
-        if self.reg_manager is not None:
-            self.reg_manager.result_cache.clear()
+        self._run_pass_manager(pass_manager, "text")
 
     def _run_transient_passes(self):
         pass_manager = PassManager()
@@ -330,7 +355,11 @@ class TeapotPipeline:
                 self.arch,
                 _conditional_branch_block_uuids(self.transient_section),
                 self.checkpoint_spare_registers))
-        _run_pass_manager(pass_manager, self.ir, "transient")
+        # Replacements must follow insertions at the same original offset.
+        for arch_pass in self.arch.transient_instruction_passes(
+                self.reg_manager, self.transient_section, self.decoder, self.dift_layout, self.options):
+            pass_manager.add(arch_pass)
+        self._run_pass_manager(pass_manager, "transient")
 
     def _run_late_text_checkpoint_passes(self):
         pass_manager = PassManager()
@@ -349,13 +378,12 @@ class TeapotPipeline:
                 landing_pad_targets=self.landing_pad_targets,
                 decoder=checkpoint_decoder):
             pass_manager.add(arch_pass)
-        _run_pass_manager(pass_manager, self.ir, "text-checkpoints")
+        self._run_pass_manager(pass_manager, "text-checkpoints")
         self.arch.relax_late_branches(
             module=self.module,
             text_section=self.text_section,
             transient_section=self.transient_section,
             text_transient_mapping=self.text_transient_mapping,
             landing_pad_targets=self.landing_pad_targets,
-            run_pass_manager=lambda manager, label: _run_pass_manager(
-                manager, self.ir, label),
+            run_pass_manager=self._run_pass_manager,
         )

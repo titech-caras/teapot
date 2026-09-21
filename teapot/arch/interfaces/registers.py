@@ -27,9 +27,7 @@ class ArchitectureRegisterMixin(ABC):
             reg_name = inst.reg_name(reg_id)
             if reg_name is None:
                 continue
-            reg = register_from_name(
-                abi, reg_name,
-                flag_name, self.zero_register_names())
+            reg = self.register_from_name(abi, reg_name, flag_name)
             if reg is not None:
                 result.add(reg)
         return result
@@ -59,10 +57,6 @@ class ArchitectureRegisterMixin(ABC):
 
     def is_stack_pointer_update(self, inst) -> bool:
         return False
-
-    @classmethod
-    def fixed_spill_registers(cls, abi, count: int):
-        return tuple(abi.get_register(name) for name in cls.fixed_scratch_registers(count))
 
     @staticmethod
     def fixed_scratch_offsets(registers, frame_offset: int = 0):

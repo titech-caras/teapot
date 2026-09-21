@@ -53,15 +53,20 @@ class AArch64ShadowStackMixin:
 
     @classmethod
     def save_regs_to_shadow_stack(cls, registers, *, save_flags: bool = False,
-                                  frame_offset: int = 0, preserve_sp: bool = False) -> str:
+                                  frame_offset: int = 0, preserve_sp: bool = False,
+                                  flag_reg=None) -> str:
+        # An explicit flag_reg must be free or included in the saved registers.
         saved_registers = list(registers)
-        if save_flags and not saved_registers:
-            saved_registers.append("x17")
+        if save_flags and flag_reg is None:
+            if not saved_registers:
+                saved_registers.append("x17")
+            flag_reg = saved_registers[-1]
+        if not saved_registers and not save_flags:
+            return ""
         lines = [cls.shadow_stack_adjust_reg("sub", "sp")]
         for idx, reg in enumerate(saved_registers):
             lines.append(f"str {reg}, [sp, #{frame_offset + idx * 8}]")
         if save_flags:
-            flag_reg = saved_registers[-1]
             lines.extend([
                 f"mrs {flag_reg}, nzcv",
                 f"str {flag_reg}, [sp, #{frame_offset + len(saved_registers) * 8}]",
@@ -72,15 +77,19 @@ class AArch64ShadowStackMixin:
 
     @classmethod
     def restore_regs_from_shadow_stack(cls, registers, *, save_flags: bool = False,
-                                       frame_offset: int = 0, preserve_sp: bool = False) -> str:
+                                       frame_offset: int = 0, preserve_sp: bool = False,
+                                       flag_reg=None) -> str:
         saved_registers = list(registers)
-        if save_flags and not saved_registers:
-            saved_registers.append("x17")
+        if save_flags and flag_reg is None:
+            if not saved_registers:
+                saved_registers.append("x17")
+            flag_reg = saved_registers[-1]
+        if not saved_registers and not save_flags:
+            return ""
         lines = []
         if preserve_sp:
             lines.append(cls.shadow_stack_adjust_reg("sub", "sp"))
         if save_flags:
-            flag_reg = saved_registers[-1]
             lines.extend([
                 f"ldr {flag_reg}, [sp, #{frame_offset + len(saved_registers) * 8}]",
                 f"msr nzcv, {flag_reg}",

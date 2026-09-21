@@ -23,6 +23,7 @@ from capstone.arm64 import (
 from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, CsInsn
 
 from teapot.utils.registers import get_register
+from teapot.datacls.stack_access import StackAccess
 
 
 _AARCH64_VECTOR_ARRANGEMENTS = {
@@ -88,8 +89,59 @@ def aarch64_atomic_read_operand_indices(mnemonic: str):
 
 
 class AArch64OperandMixin:
+    def saved_return_registers(self):
+        return tuple(self.abi.get_register(name) for name in ("sp", "x29", "x30"))
+
+    def stack_register_assignment(self, inst):
+        operands = inst.operands
+        mem = self.memory_operand(inst)
+        if mem is not None and inst.writeback:
+            base = self.register_from_name(self.abi, inst.reg_name(mem.mem.base))
+            if operands[-1].type == CS_OP_IMM:
+                return base, base, operands[-1].imm
+            if operands[-1].type == CS_OP_MEM and not mem.mem.index:
+                return base, base, mem.mem.disp
+            return None
+        if len(operands) < 2 or any(op.type != CS_OP_REG for op in operands[:2]):
+            return None
+        if any(inst.reg_name(op.reg).startswith("w") for op in operands[:2]):
+            return None
+        dst, src = (self.register_from_name(self.abi, inst.reg_name(op.reg)) for op in operands[:2])
+        if inst.mnemonic == "mov" and len(operands) == 2:
+            return dst, src, 0
+        if inst.mnemonic in {"add", "sub"} and len(operands) == 3 and operands[2].type == CS_OP_IMM:
+            immediate = operands[2]
+            if immediate.shift.type not in (0, ARM64_SFT_LSL):
+                return None
+            delta = immediate.imm << immediate.shift.value
+            return dst, src, delta if inst.mnemonic == "add" else -delta
+        return None
+
+    def stack_memory_access(self, inst):
+        mem = self.memory_operand(inst)
+        if mem is None:
+            return None
+        base = self.register_from_name(self.abi, inst.reg_name(mem.mem.base))
+        displacement = None if mem.mem.index else mem.mem.disp
+        return_offset = None
+        value_count = 2 if inst.mnemonic in {"ldp", "stp", "ldnp", "stnp"} else 1
+        if inst.mnemonic in {"ldr", "str", "ldur", "stur", "ldp", "stp", "ldnp", "stnp"}:
+            for index, operand in enumerate(inst.operands[:value_count]):
+                if operand.type == CS_OP_REG and inst.reg_name(operand.reg) in {"lr", "x30"}:
+                    return_offset = index * 8
+        return StackAccess(base, displacement, self.mem_operand_size(inst, mem), return_offset)
+
     @staticmethod
-    def aarch64_lo12_symbolic_disp(symexpr: Optional[gtirb.SymbolicExpression]) -> Optional[str]:
+    def aarch64_symbolic_disp(symexpr: Optional[gtirb.SymbolicExpression]) -> Optional[str]:
+        if isinstance(symexpr, gtirb.SymAddrAddr):
+            if symexpr.scale < 1:
+                raise ValueError("AArch64 symbolic displacement scale must be positive")
+            disp = f"({symexpr.symbol1.name}-{symexpr.symbol2.name})"
+            if symexpr.scale != 1:
+                disp = f"({disp}/{symexpr.scale})"
+            if symexpr.offset:
+                disp += f"{symexpr.offset:+d}"
+            return disp
         if not isinstance(symexpr, gtirb.SymAddrConst):
             return None
         if gtirb.SymbolicExpression.Attribute.LO12 not in symexpr.attributes:
@@ -163,13 +215,18 @@ class AArch64OperandMixin:
             return 2
         if mnemonic.startswith(("ldrsw", "ldursw")):
             return 4
+        if mnemonic == "ldpsw":
+            return 8
 
         structure_size = AArch64OperandMixin.aarch64_structure_mem_operand_size(inst)
         if structure_size:
             return structure_size
 
         reg_sizes = []
-        for op in inst.operands:
+        # Exclusive stores put a status result before the transferred values.
+        operands = inst.operands[1:] if mnemonic.startswith(
+            ("stxr", "stlxr", "stxp", "stlxp")) else inst.operands
+        for op in operands:
             if op.type != CS_OP_REG:
                 continue
             name = inst.reg_name(op.reg).lower()
@@ -184,7 +241,9 @@ class AArch64OperandMixin:
             elif name.startswith("b"):
                 reg_sizes.append(1)
 
-        if mnemonic.startswith(("ldp", "stp", "casp")) and len(reg_sizes) >= 2:
+        if mnemonic.startswith((
+                "ldp", "stp", "ldnp", "stnp", "ldxp", "ldaxp",
+                "stxp", "stlxp", "casp")) and len(reg_sizes) >= 2:
             return reg_sizes[0] + reg_sizes[1]
         if reg_sizes:
             return reg_sizes[0]
@@ -199,7 +258,7 @@ class AArch64OperandMixin:
         base = mem_operand.mem.base
         index = mem_operand.mem.index
         disp = mem_operand.mem.disp
-        symbolic_disp = self.aarch64_lo12_symbolic_disp(kwargs.get("mem_symexpr"))
+        symbolic_disp = self.aarch64_symbolic_disp(kwargs.get("mem_symexpr"))
         asm = ""
         addr_reg = get_register(abi, addr_reg)
         tmp_reg = get_register(abi, tmp_reg)

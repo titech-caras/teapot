@@ -68,7 +68,11 @@ class AArch64RegisterMixin:
                 reg = self.register_from_name(abi, inst.reg_name(operand.reg), flag_name)
                 if reg is not None:
                     result.add(reg)
-            elif getattr(operand, "mem", None) is not None:
+            elif operand.type == CS_OP_MEM:
+                # Capstone unions the operand payloads, so reading .mem on an
+                # immediate reinterprets its value as a register id. On AArch64
+                # the low ids are real registers (2 fp, 3 lr, 5 sp), which turns
+                # "cmp w1, #3" into a spurious read of the link register.
                 for reg_id in (operand.mem.base, operand.mem.index):
                     if not reg_id:
                         continue
@@ -116,10 +120,6 @@ class AArch64RegisterMixin:
     @staticmethod
     def clear_register_snippet(reg) -> str:
         return f"mov {reg:32}, wzr\n"
-
-    @staticmethod
-    def fixed_scratch_registers(count: int = 5):
-        return ("x13", "x14", "x15", "x16", "x17")[:count]
 
     @staticmethod
     def w_reg(reg: str) -> str:

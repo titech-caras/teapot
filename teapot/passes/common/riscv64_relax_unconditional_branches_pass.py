@@ -10,8 +10,9 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
     # fixed point.
     JAL_RELAX_THRESHOLD = 3 * (1 << 18)
 
-    def __init__(self, transient_section, text_transient_mapping,
+    def __init__(self, text_section, transient_section, text_transient_mapping,
                  landing_pad_targets, decoder, arch):
+        self.text_section = text_section
         self.transient_section = transient_section
         self.text_transient_mapping = text_transient_mapping
         self.landing_pad_targets = landing_pad_targets
@@ -29,7 +30,8 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
         }
         symbol_names = {symbol.name for symbol in module.symbols}
 
-        for block in list(self.transient_section.code_blocks):
+        sections = dict.fromkeys((self.text_section, self.transient_section))
+        for block in [block for section in sections for block in section.code_blocks]:
             if block.size == 0 or block.address is None or block.byte_interval is None:
                 continue
             instructions = list(self.decoder.get_instructions(block))
@@ -45,7 +47,7 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
                 continue
             target = expression.symbol.referent
             if (not isinstance(target, gtirb.CodeBlock) or target.address is None or
-                    target.section is None or target.section.name != self.transient_section.name):
+                    target.section not in sections):
                 continue
             distance = target.address + expression.offset - instruction.address
             if abs(distance) < self.JAL_RELAX_THRESHOLD:
@@ -54,9 +56,10 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
                 raise ValueError(
                     f"cannot relax RV64 jump with nonzero target offset at {instruction.address:#x}")
 
-            original_uuid = original_by_transient.get(target.uuid)
+            normal_text = target.section is not self.transient_section
+            original_uuid = None if normal_text else original_by_transient.get(target.uuid)
             landing_uuid = original_uuid if original_uuid is not None else target.uuid
-            landing_name = self.arch.landing_pad_entry_label(landing_uuid)
+            landing_name = self.arch.landing_pad_entry_label(landing_uuid, normal_text=normal_text)
             landing_name_is_new = landing_name not in symbol_names
             if landing_name_is_new:
                 gtirb.Symbol(name=landing_name, payload=target, module=module)
@@ -64,15 +67,18 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
             if original_uuid is not None:
                 self.landing_pad_targets.add(original_uuid)
             elif landing_name_is_new:
-                # Instrumentation can introduce targets that have no original
-                # .text block in the copy mapping. Give those blocks the same
-                # conditional restore entry directly; ordinary incoming paths
-                # see a clear flag and pass through transparently.
+                # Normal-text targets and new transient blocks use the same
+                # conditional restore entry. Ordinary incoming paths see a
+                # clear flag. Retain any canonical marker at the new entry,
+                # ahead of the restore code and existing instrumentation.
+                marker = target.byte_interval.contents[
+                    target.offset:target.offset + len(self.arch.nop_bytes)] == self.arch.nop_bytes
                 rewriting_ctx.insert_at(
                     target,
                     0,
                     Patch.from_function(
-                        self.arch.restore_landing_entry_patch(target.uuid)),
+                        self.arch.restore_landing_entry_patch(
+                            target.uuid, normal_text=normal_text, preserve_marker=marker)),
                 )
                 self.direct_landing_pads += 1
 

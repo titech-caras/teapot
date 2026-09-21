@@ -42,6 +42,6 @@ class TransientCoveragePass(VisitorPassMixin, RegInstAwarePassMixin):
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         patch = self.arch.coverage_patch(self.idx)
         if self.reg_manager is not None and self.arch.uses_live_registers:
-            patch = self.reg_manager.allocate_registers(function, block, 0)(patch)
+            patch = self.allocate_registers(function, block, 0)(patch)
         self.insert_at(block, 0, Patch.from_function(patch))
         self.idx += 1

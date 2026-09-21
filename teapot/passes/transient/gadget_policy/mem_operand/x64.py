@@ -24,6 +24,8 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
 
     def _build_policy_patch(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                             block: gtirb.CodeBlock, function: Function = None):
+        if self.arch.rep_string_kind(inst) is not None:
+            return None
         if inst.mnemonic in ("lea", "nop", "ret", "push", "pop", "call") or inst.mnemonic.startswith("j"):
             return None
 
@@ -55,26 +57,23 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
         return MemOperandPolicyPatch(patch, set())
 
     def _build_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
-                     conditional: Optional[str], mem_operand, write_reg: Register):
-        if access_size > 8:
-            scratch_registers = 5
-        elif access_size < 8:
-            scratch_registers = 4
-        else:
-            scratch_registers = 3
+                     conditional: Optional[str], mem_operand, write_reg: Optional[Register] = None,
+                     queued_tag_operand=None, label_key="mem_operand_policy"):
+        scratch_registers = (5 if access_size > 1 else 4) if self.enable_asan_check else 3
         addr_regs = self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand)
+        # A string load can feed memory or a comparison instead of a GPR. Its
+        # per-element queue is consumed by the REP propagation kernel.
+        queue_tags = {
+            tag: (self.arch.dift_queue_reg_tag_snippet(None, None, tag, write_reg)
+                  if write_reg is not None else f"or byte ptr {queued_tag_operand}, {tag}\n")
+            for tag in (TAG_SECRET_INDIRECT, TAG_SECRET, TAG_ATTACKER_INDIRECT)
+        }
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
-            if access_size > 8:
-                r1, r2, r3, r4, r5 = ctx.scratch_registers
-            elif access_size < 8:
-                r1, r2, r3, r4 = ctx.scratch_registers
-                r5 = None
-            else:
-                r1, r2, r3 = ctx.scratch_registers
-                r4 = None
-                r5 = None
+            r1, r2, r3 = ctx.scratch_registers[:3]
+            r4 = ctx.scratch_registers[3] if scratch_registers > 3 else None
+            r5 = ctx.scratch_registers[4] if scratch_registers > 4 else None
 
             asm = self.arch.effective_address_snippet(r2, mem_operand_str, r3)
             asm += self.arch.clear_register_snippet(r1)
@@ -82,33 +81,34 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
             for reg in addr_regs:
                 asm += self.arch.dift_or_reg_tag_snippet(r1, None, reg)
 
-            done_label = f".L__mem_operand_policy_done{SYMBOL_SUFFIX}"
+            label = f".L__{label_key}{SYMBOL_SUFFIX}"
+            done_label = f"{label}_done"
             asm += f"""
                 test {r1:8l}, {TAG_SECRET | TAG_SECRET_INDIRECT}
-                jz .L__attacker_tags_check{SYMBOL_SUFFIX}
+                jz {label}_attacker_tags_check
                 {self.arch.report_gadget_snippet("KASPER_CACHE", addr_reg=r2, tag_reg=r1)}
 
-            .L__attacker_tags_check{SYMBOL_SUFFIX}:
+            {label}_attacker_tags_check:
                 test {r1:8l}, {TAG_ATTACKER_INDIRECT}
-                jz .L__asan_check{SYMBOL_SUFFIX}
+                jz {label}_asan_check
                 {self.arch.report_gadget_snippet("KASPER_MDS", addr_reg=r2, tag_reg=r1)}
-                {self.arch.dift_queue_reg_tag_snippet(None, None, TAG_SECRET_INDIRECT, write_reg)}
+                {queue_tags[TAG_SECRET_INDIRECT]}
 
-            .L__asan_check{SYMBOL_SUFFIX}:
+            {label}_asan_check:
                 {self.arch.asan_check_snippet(
                     r2, access_size, done_label,
                     shadow_offset=self.dift_layout.asan_shadow_offset,
                     shadow_reg=r3, scratch_reg=r4, end_reg=r5)
                  if self.enable_asan_check else f"jmp {done_label}"}
-            .L__asan_check_fail{SYMBOL_SUFFIX}:
+            {label}_asan_check_fail:
                 test {r1:8l}, {TAG_ATTACKER}
-                jz .L__asan_check_fail_non_attacker{SYMBOL_SUFFIX}
-            .L__asan_check_fail_attacker{SYMBOL_SUFFIX}:
+                jz {label}_asan_check_fail_non_attacker
+            {label}_asan_check_fail_attacker:
                 {self.arch.report_gadget_snippet("KASPER_MDS", addr_reg=r2, tag_reg=r1)}
-                {self.arch.dift_queue_reg_tag_snippet(None, None, TAG_SECRET, write_reg)}
+                {queue_tags[TAG_SECRET]}
                 jmp {done_label}
-            .L__asan_check_fail_non_attacker{SYMBOL_SUFFIX}:
-                {self.arch.dift_queue_reg_tag_snippet(None, None, TAG_ATTACKER_INDIRECT, write_reg)}
+            {label}_asan_check_fail_non_attacker:
+                {queue_tags[TAG_ATTACKER_INDIRECT]}
             {done_label}:
                 nop
             """

@@ -123,10 +123,12 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
             self.insert_at(block, 0, Patch.from_function(
                 self._indirect_transform_target_patch(
                     indbr_transform_target_symbol,
-                    function, block, 0, block.uuid)))
+                    function, *self.insertion_register_location(block, 0), block.uuid)))
 
         if (len(fallthrough_edges) > 0 and
                 any(e.label.type == gtirb.cfg.Edge.Type.Call for e in fallthrough_edges[0].source.outgoing_edges)):
+            # This insertion is in the caller, before the successor's AUIPC.
+            # Its allocation must use the unadjusted successor-entry state.
             transient_target = self.text_transient_mapping.code_blocks_map[block.uuid]
             ret_transform_target_symbol = self._transform_target_symbol(
                 ".L__ret_transform_target_" + function.get_name() + "_",
@@ -139,10 +141,8 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                     self._indirect_transform_target_patch(
                         ret_transform_target_symbol,
                         function,
-                        fallthrough_edges[0].source,
-                        max(
-                            len(list(self.decoder.get_instructions(fallthrough_edges[0].source))) - 1,
-                            0),
+                        block,
+                        0,
                         block.uuid)))
 
     def _transform_target_symbol(self, prefix: str, block: gtirb.CodeBlock, transient_target: gtirb.CodeBlock):

@@ -155,9 +155,3 @@ class CreateTrampolinesPass(VisitorPassMixin):
                 payload=counter_block,
                 module=self.module
             )
-
-            '''edges = [
-                gtirb.Edge(block, trampoline_target_payload, gtirb.EdgeLabel(gtirb.EdgeType.Branch, conditional=True)),
-                gtirb.Edge(block, branch_edge.target, gtirb.EdgeLabel(gtirb.EdgeType.Branch, conditional=True)),
-            ]
-            block.ir.cfg.update(edges)'''

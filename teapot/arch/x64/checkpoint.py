@@ -7,6 +7,10 @@ from teapot.utils.misc import generate_distinct_label_name
 
 
 class X64CheckpointPatchesMixin:
+    def static_instruction_cost(self, instruction) -> int:
+        # The transient REP loop charges each executed element separately.
+        return 0 if self.rep_string_kind(instruction) is not None else 1
+
     def can_insert_restore_point(self, live_registers) -> bool:
         return live_registers is None or "rflags" not in (r.name for r in live_registers)
 

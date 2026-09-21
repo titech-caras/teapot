@@ -4,12 +4,13 @@ from itertools import count
 from typing import Optional, Set
 
 import gtirb
-from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM, CS_OP_REG, CsInsn
+from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, CsInsn
 from gtirb_rewriting.assembly import Register
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.slots import SCRATCHPAD_FIRST_SPILL_OFFSET
 from teapot.utils.registers import get_register, register_from_name
+from teapot.datacls.stack_access import StackAccess
 
 
 _RISCV64_LOAD_MNEMONICS = {"lb", "lh", "lw", "ld", "lbu", "lhu", "lwu", "flw", "fld"}
@@ -67,6 +68,42 @@ class Riscv64FallbackMemOperand:
 
 
 class RISCV64OperandMixin:
+    def saved_return_registers(self):
+        return tuple(self.abi.get_register(name) for name in ("sp", "s0", "ra"))
+
+    def stack_register_assignment(self, inst):
+        operands = inst.operands
+        if not operands or operands[0].type != CS_OP_REG:
+            return None
+        dst = self.register_from_name(self.abi, inst.reg_name(operands[0].reg))
+        if inst.mnemonic in {"mv", "c.mv"} and len(operands) == 2 and operands[1].type == CS_OP_REG:
+            return dst, self.register_from_name(self.abi, inst.reg_name(operands[1].reg)), 0
+        if (inst.mnemonic in {"addi", "c.addi4spn"} and len(operands) == 3 and
+                operands[1].type == CS_OP_REG and operands[2].type == CS_OP_IMM):
+            # Without the type check on operand 1, Capstone's operand union
+            # would reinterpret an immediate as a register id and fabricate a
+            # frame assignment that was never written.
+            return dst, self.register_from_name(self.abi, inst.reg_name(operands[1].reg)), operands[2].imm
+        if inst.mnemonic in {"c.addi", "c.addi16sp"} and len(operands) == 2 and operands[1].type == CS_OP_IMM:
+            return dst, dst, operands[1].imm
+        return None
+
+    def stack_memory_access(self, inst):
+        mem = self.memory_operand(inst)
+        if mem is None:
+            return None
+        if isinstance(mem, Riscv64FallbackMemOperand):
+            base = self.register_from_name(self.abi, mem.base_name)
+            displacement = mem.disp
+        else:
+            base = self.register_from_name(self.abi, inst.reg_name(mem.mem.base))
+            displacement = mem.mem.disp
+        return_offset = None
+        if inst.mnemonic in {"ld", "sd", "c.ld", "c.sd", "c.ldsp", "c.sdsp"}:
+            if inst.operands[0].type == CS_OP_REG and inst.reg_name(inst.operands[0].reg) == "ra":
+                return_offset = 0
+        return StackAccess(base, displacement, self.mem_operand_size(inst, mem), return_offset)
+
     @staticmethod
     def operand_symbolic_expression(block: gtirb.CodeBlock, inst, operand,
                                     inst_offset: int = None):

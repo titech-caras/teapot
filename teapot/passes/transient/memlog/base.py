@@ -49,7 +49,7 @@ class TransientMemlogPassBase(ArchSpecificPassMixin, InstVisitorPassMixin):
         patch = self._build_patch(
             inst, mem_operand, access_size, mem_symexpr=mem_symexpr,
             reads_registers={reg.name for reg in regs_read})
-        patch = self.reg_manager.allocate_registers(function, block, inst_idx)(patch)
+        patch = self.allocate_registers(function, block, inst_idx)(patch)
         self.insert_at(block, inst_offset, Patch.from_function(patch))
 
     def _build_patch(self, inst: CsInsn, mem_operand, access_size: int, *,

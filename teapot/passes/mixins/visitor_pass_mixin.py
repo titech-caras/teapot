@@ -39,8 +39,44 @@ class VisitorPassMixin(Pass):
         arch = getattr(self, "arch", None)
         decoder = getattr(self, "decoder", None)
         if arch is not None and decoder is not None:
-            offset = arch.adjust_insertion_offset(block, offset, list(decoder.get_instructions(block)))
+            instructions = (self._current_instructions
+                            if block is getattr(self, "_current_block", None)
+                            else list(decoder.get_instructions(block)))
+            offset = arch.adjust_insertion_offset(block, offset, instructions)
         self.rewriting_ctx.insert_at(block, offset, patch)
+
+    def insertion_register_location(self, block: gtirb.CodeBlock, instruction_idx: int):
+        instructions = (self._current_instructions
+                        if block is getattr(self, "_current_block", None)
+                        else list(self.decoder.get_instructions(block)))
+        if not 0 <= instruction_idx < len(instructions):
+            return block, len(instructions)
+        offset = instructions[instruction_idx].address - instructions[0].address
+        adjusted_offset = self.arch.adjust_insertion_offset(block, offset, instructions)
+        # Compatibility code can move a patch into another block, or across a
+        # complete HI/LO pair after the architecture's entry adjustment.
+        resolver = getattr(type(self.rewriting_ctx), "_teapot_insert_location", None)
+        adjusted_block, adjusted_offset = (resolver(block, adjusted_offset) if resolver is not None
+                                           else (block, adjusted_offset))
+        if adjusted_block is block and adjusted_offset == offset:
+            return block, instruction_idx
+        if adjusted_block is not block:
+            instructions = list(self.decoder.get_instructions(adjusted_block))
+        adjusted_idx = next((idx for idx, inst in enumerate(instructions)
+                             if inst.address - instructions[0].address == adjusted_offset), len(instructions))
+        return adjusted_block, adjusted_idx
+
+    def allocate_registers(self, function: Function, block: gtirb.CodeBlock,
+                           instruction_idx: int, allow_fallback: bool = True):
+        adjusted_block, adjusted_idx = self.insertion_register_location(block, instruction_idx)
+        if adjusted_block is not block or adjusted_idx != instruction_idx:
+            # Placement can move after an AUIPC. Keep both the actual boundary
+            # state and any operand/capture requirements recorded at the source.
+            self.reg_manager.add_live_registers(
+                function, adjusted_block, adjusted_idx,
+                self.reg_manager.live_registers(function, block, instruction_idx))
+        return self.reg_manager.allocate_registers(
+            function, adjusted_block, adjusted_idx, allow_fallback)
 
     def visit_functions(self, functions, section: gtirb.Section = None):
         if section is None:
@@ -88,7 +124,9 @@ class InstVisitorPassMixin(VisitorPassMixin, RegInstAwarePassMixin):
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
         previous_instructions = getattr(self, "_current_instructions", None)
+        previous_block = getattr(self, "_current_block", None)
         self._current_instructions = instructions
+        self._current_block = block
         inst_offset = 0
         try:
             for inst_idx, inst in enumerate(instructions):
@@ -99,6 +137,7 @@ class InstVisitorPassMixin(VisitorPassMixin, RegInstAwarePassMixin):
                 inst_offset += inst.size
         finally:
             self._current_instructions = previous_instructions
+            self._current_block = previous_block
 
     def visit_inst(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                    block: gtirb.CodeBlock, function: Function = None,

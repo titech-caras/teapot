@@ -6,7 +6,7 @@ from teapot.configs.runtime import MEMORY_HISTORY_ENTRY_SIZE, MEMORY_HISTORY_SIZ
 class X64MemlogPatchesMixin:
     @staticmethod
     def memlog_snippet(addr_reg: Register, top_reg: Register, data_reg: Register, access_size: int, *,
-                       source_label=None, no_clobber_addr: bool = False):
+                       no_clobber_addr: bool = False):
         asm = f"mov {top_reg}, [memory_history_top]\n"
 
         if no_clobber_addr:
@@ -20,11 +20,17 @@ class X64MemlogPatchesMixin:
             asm += f"""
                 mov [{top_reg}], {addr_reg}
             """
-            for byte_idx in range(chunk_size):
+            byte_idx = 0
+            for width, operand_size, register_size in (
+                    (8, "qword", "64"), (4, "dword", "32"),
+                    (2, "word", "16"), (1, "byte", "8l")):
+                if not chunk_size & width:
+                    continue
                 asm += f"""
-                    mov {data_reg:8l}, byte ptr [{addr_reg} + {byte_idx}]
-                    mov byte ptr [{top_reg} + {8 + byte_idx}], {data_reg:8l}
+                    mov {data_reg:{register_size}}, {operand_size} ptr [{addr_reg} + {byte_idx}]
+                    mov {operand_size} ptr [{top_reg} + {8 + byte_idx}], {data_reg:{register_size}}
                 """
+                byte_idx += width
             asm += f"""
                 mov byte ptr [{top_reg} + {MEMORY_HISTORY_SIZE_OFFSET}], {chunk_size}
                 lea {top_reg}, [{top_reg} + {MEMORY_HISTORY_ENTRY_SIZE}]

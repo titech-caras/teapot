@@ -27,7 +27,7 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
     # otherwise backend store combining can introduce XMM temporaries that the
     # GPR allocator cannot substitute or preserve.  The DIFT IR is integer and
     # pointer-only, so disabling SIMD changes only its lowering strategy.
-    NATIVE_TARGET_FEATURES = (
+    TARGET_FEATURES = (
         "-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-sse4a,"
         "-avx,-avx2,-avx512f"
     )
@@ -44,8 +44,15 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
         assert not self.insert_memlog
         self._init_llvm_native()
 
-    def __del__(self):
-        self._shutdown_llvm()
+    def visit_inst(self, inst, inst_idx, inst_offset, block, function=None, live_registers=None):
+        effects = self._rep_string_effects(inst)
+        if effects is not None:
+            # REP observes tag state between LLVM batches; its shared tag loop
+            # runs after the original instruction, using the completed count.
+            self._flush_dift(block, function, inst_idx, inst_offset)
+            self._insert_rep_dift(effects, inst, inst_idx, inst_offset, block, function)
+            return
+        super().visit_inst(inst, inst_idx, inst_offset, block, function, live_registers)
 
     def _instruction_effects(self, block: gtirb.CodeBlock, inst: CsInsn):
         effects = self._x64_instruction_effects(block, inst)

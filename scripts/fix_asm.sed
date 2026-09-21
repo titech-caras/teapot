@@ -16,4 +16,3 @@
 }
 /^__guard_start__teapot__:/i .globl __guard_start__teapot__
 /^__guard_end__teapot__:/i .globl __guard_end__teapot__
-s/^\.symver/#\.symver/

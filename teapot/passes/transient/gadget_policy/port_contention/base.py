@@ -47,7 +47,7 @@ class TransientPortContentionPolicyPassBase(ArchSpecificPassMixin, VisitorPassMi
 
         patch, regs_read = patch_info
         self.reg_manager.add_live_registers(function, block, predicate_idx, regs_read)
-        patch = self.reg_manager.allocate_registers(function, block, predicate_idx)(patch)
+        patch = self.allocate_registers(function, block, predicate_idx)(patch)
         self.insert_at(block, inst_offset, Patch.from_function(patch))
 
     def _conditional_branch_instructions(self, block: gtirb.CodeBlock):

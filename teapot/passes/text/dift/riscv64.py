@@ -19,6 +19,7 @@ from teapot.passes.text.dift.base import (
 class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagationPass):
     EXPECTED_ARCH = "riscv64"
     TARGET_TRIPLE = "riscv64-unknown-linux-gnu"
+    TARGET_FEATURES = "+m,+a,+f,+d,+c"
     LLVM_CALLER_SAVED_GPRS = (
         "ra",
         "t0", "t1", "t2", "t3", "t4", "t5", "t6",
@@ -34,12 +35,7 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagatio
             if normalized != "zero":
                 regs[normalized] = self.reg_manager.abi.register_from_name(normalized)
 
-        # LLVM targets the baseline RV64 ISA here, so operations such as a
-        # 64-bit multiply may be lowered to a libgcc call (for example,
-        # __muldi3).  Registers that the callee clobbers are implicit in the
-        # assembly and therefore absent from the scan above.  The generated
-        # snippet is inlined into application code, so preserve every
-        # caller-saved GPR whenever it contains a call.
+        # Libcall clobbers are implicit and absent from the assembly scan.
         if re.search(r"(?m)^\s*call\s+", asm):
             for name in self.LLVM_CALLER_SAVED_GPRS:
                 reg = self.reg_manager.abi.register_from_name(name)
@@ -55,63 +51,84 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagatio
 
             return empty_patch
 
-        fixed_regs = self.arch.fixed_spill_registers(self.reg_manager.abi, 2)
+        if scratch_plan is None:
+            scratch_plan = self._plan_scratch_registers(2)
+        addr_reg, tmp_reg = scratch_plan.registers
         saved_reg_offsets = {
             reg.name: SCRATCHPAD_FIRST_SPILL_OFFSET + idx * 8
-            for idx, reg in enumerate(fixed_regs)
+            for idx, reg in enumerate(scratch_plan.saved_regs)
         }
 
         @self.arch.constraints()
         def patch(ctx: InsertionContext):
-            asm = self.arch.save_regs_to_first_spill(fixed_regs)
+            asm = self.arch.save_regs_to_first_spill(scratch_plan.saved_regs)
             for scratchpad_idx, mem_operand, mem_symexpr in capture_operands:
                 asm += self.arch.mem_operand_address_snippet(
                     self.reg_manager.abi,
                     inst,
-                    "t0",
-                    "t1",
+                    addr_reg,
+                    tmp_reg,
                     mem_operand,
                     ctx.stack_adjustment,
                     mem_symexpr=mem_symexpr,
                     saved_reg_offsets=saved_reg_offsets,
                 )
-                asm += self.arch.load_address("t1", f"scratchpad+{scratchpad_idx * 8}")
-                asm += f"sd {fixed_regs[0]}, 0({fixed_regs[1]})\n"
-            asm += self.arch.restore_regs_from_first_spill(fixed_regs)
+                asm += self.arch.load_address(tmp_reg, f"scratchpad+{scratchpad_idx * 8}")
+                asm += f"sd {addr_reg}, 0({tmp_reg})\n"
+            asm += self.arch.restore_regs_from_first_spill(scratch_plan.saved_regs)
             return asm
 
         return patch
 
     def _build_optimized_dift_values_patch(self, assembly: str, registers, *, scratch_plan=None):
+        if scratch_plan is None:
+            scratch_plan = self._plan_scratch_registers(2)
         saved_regs = []
-        primary_scratch = self.arch.fixed_spill_registers(self.reg_manager.abi, 1)[0]
+        primary_scratch = scratch_plan.registers[0]
         for reg in (primary_scratch, *registers):
-            if reg.name in {"zero", "sp", "tp"} or reg in saved_regs:
+            if (reg.name in {"zero", "sp", "tp"} or reg in saved_regs
+                    or reg not in scratch_plan.live_registers):
                 continue
             saved_regs.append(reg)
         stack_delta = TEXT_DIFT_LLVM_STACK_SP_OFFSET - TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET
+        float_regs = sorted(set(re.findall(
+            r"\b(?:f[ts](?:[0-9]|1[01])|fa[0-7]|f(?:[0-9]|[12][0-9]|3[01]))\b",
+            assembly)))
+        if re.search(r"(?m)^\s*call\s+", assembly):
+            float_regs = [f"f{idx}" for idx in range(32)]
+        float_offset = len(saved_regs) * 8
+        control_offset = float_offset + len(float_regs) * 8
+        assert control_offset + 8 <= TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT
 
         @self.arch.constraints()
         def patch(ctx: InsertionContext):
             asm = self.arch.load_address("tp", f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
             for idx, reg in enumerate(saved_regs):
                 asm += f"sd {reg}, {idx * 8}(tp)\n"
+            for idx, reg in enumerate(float_regs):
+                asm += f"fsd {reg}, {float_offset + idx * 8}(tp)\n"
+            if float_regs:
+                asm += f"frcsr {primary_scratch}\nsd {primary_scratch}, {control_offset}(tp)\n"
             asm += f"""
-                li t0, {TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}
-                add t0, tp, t0
-                sd sp, 0(t0)
-                li t0, {stack_delta}
-                add sp, tp, t0
+                li {primary_scratch}, {TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}
+                add {primary_scratch}, tp, {primary_scratch}
+                sd sp, 0({primary_scratch})
+                li {primary_scratch}, {stack_delta}
+                add sp, tp, {primary_scratch}
                 {self.arch.load_address("tp", f"scratchpad+{RISCV64_ORIGINAL_TP_OFFSET}")}
                 ld tp, 0(tp)
             """
             asm += assembly.strip() + "\n"
             asm += self.arch.load_address("tp", f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
             asm += f"""
-                li t0, {TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}
-                add t0, tp, t0
-                ld sp, 0(t0)
+                li {primary_scratch}, {TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}
+                add {primary_scratch}, tp, {primary_scratch}
+                ld sp, 0({primary_scratch})
             """
+            for idx, reg in enumerate(float_regs):
+                asm += f"fld {reg}, {float_offset + idx * 8}(tp)\n"
+            if float_regs:
+                asm += f"ld {primary_scratch}, {control_offset}(tp)\nfscsr {primary_scratch}\n"
             for idx, reg in reversed(list(enumerate(saved_regs))):
                 asm += f"ld {reg}, {idx * 8}(tp)\n"
             asm += f"""

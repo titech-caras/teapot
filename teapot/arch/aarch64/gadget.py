@@ -25,6 +25,8 @@ class AArch64GadgetPatchesMixin:
         report_call_label = f".L__report_gadget_call_{next(_REPORT_LABEL_COUNTER)}{SYMBOL_SUFFIX}"
         args_symbol = f"scratchpad+{SCRATCHPAD_SIZE - 512}"
 
+        # Reporting replaces the labeled instruction with one NOP. Materialize
+        # the target first so branch relaxation cannot widen that patch site.
         return f"""
             {self.load_address(stack_reg, args_symbol)}
             str {addr_reg}, [{stack_reg}, #8]
@@ -32,8 +34,9 @@ class AArch64GadgetPatchesMixin:
             str x30, [{stack_reg}, #24]
             {self.load_address(temp_reg, report_call_label)}
             str {temp_reg}, [{stack_reg}]
+            {self.load_address(temp_reg, f"report_gadget_aarch64_preserve_{gadget_type}")}
         {report_call_label}:
-            bl report_gadget_aarch64_preserve_{gadget_type}
+            blr {temp_reg}
             {self.load_address(stack_reg, args_symbol)}
             ldr x30, [{stack_reg}, #24]
         """

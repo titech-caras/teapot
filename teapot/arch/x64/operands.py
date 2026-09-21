@@ -8,6 +8,23 @@ from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
 
 
 class X64OperandMixin:
+    @staticmethod
+    def rep_string_kind(inst):
+        # String instructions have a one-byte opcode and no encoded operands.
+        # Capstone drops F2 from prefix[] on noncanonical MOVSD string forms;
+        # inspect the bytes without confusing these with SSE MOVSD/CMPSD.
+        kind = {0xa4: "movs", 0xa5: "movs", 0xaa: "stos", 0xab: "stos",
+                0xac: "lods", 0xad: "lods", 0xa6: "cmps", 0xa7: "cmps",
+                0xae: "scas", 0xaf: "scas"}.get(inst.opcode[0])
+        if kind and any(prefix in (0xf2, 0xf3) for prefix in inst.bytes[:-1]):
+            # REPNE is documented only for comparisons. In other string forms
+            # even Capstone's implicit counter accesses can be missing, making
+            # both frontend and fallback liveness unsafe to rely on.
+            if kind not in {"cmps", "scas"} and 0xf2 in inst.bytes[:-1]:
+                raise ValueError(f"Unsupported noncanonical REPNE {kind.upper()} at {inst.address:#x}")
+            return kind
+        return None
+
     # Capstone 5 reports the memory destination of the four rotate families as
     # read-only, even though these forms update it in place.  Keep this narrow:
     # comparisons and tests also have a first, read-only memory operand.

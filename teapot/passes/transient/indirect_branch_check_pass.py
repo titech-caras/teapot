@@ -59,7 +59,7 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
             self.text_section_start_symbol, self.text_section_end_symbol,
             reads_registers={reg.name for reg in operand_registers})
         if self.reg_manager is not None and self.arch.uses_live_registers:
-            patch = self.reg_manager.allocate_registers(
+            patch = self.allocate_registers(
                 function, block, len(instructions) - 1)(patch)
         self.insert_at(block, sum(inst.size for inst in instructions[:-1]), Patch.from_function(patch))
 

@@ -43,7 +43,3 @@ class RISCV64RegisterMixin:
     @staticmethod
     def clear_register_snippet(reg) -> str:
         return f"li {reg}, 0\n"
-
-    @staticmethod
-    def fixed_scratch_registers(count: int = 4):
-        return ("t0", "t1", "t2", "t3")[:count]

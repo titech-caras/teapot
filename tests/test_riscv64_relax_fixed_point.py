@@ -152,6 +152,49 @@ class RISCV64RelaxFixedPointTests(unittest.TestCase):
                     run_pass_manager=run_pass_manager,
                 )
 
+    def test_normal_text_preserves_target_marker_and_transient_pad(self):
+        for marked in (False, True):
+            with self.subTest(marked=marked):
+                ir, module, text, jump_a, jump_b = build_layout_growth_case()
+                text.name = ".text"
+                target_symbol = next(module.symbols_named("target_b"))
+                target = target_symbol.referent
+                if marked:
+                    target.byte_interval.contents = (
+                        target.byte_interval.contents[:target.offset] + self.arch.nop_bytes)
+                    target.byte_interval.size = target.offset + len(self.arch.nop_bytes)
+                    target.size = len(self.arch.nop_bytes)
+                predecessor = next(b for b in text.code_blocks if b.offset == 124)
+                module.ir.cfg.add(gtirb.Edge(
+                    predecessor, target, gtirb.Edge.Label(gtirb.Edge.Type.Fallthrough)))
+
+                transient = gtirb.Section(name=".teapot_transient", flags=text.flags, module=module)
+                transient_interval = gtirb.ByteInterval(
+                    address=0x800000, contents=b"\x13\x00\x00\x00", section=transient)
+                transient_target = gtirb.CodeBlock(size=4, byte_interval=transient_interval)
+                transient_pad = gtirb.Symbol(
+                    name=self.arch.landing_pad_entry_label(target.uuid),
+                    payload=transient_target, module=module)
+                mapping = CopiedSectionMapping({target.uuid: transient_target}, {}, {})
+
+                with mock.patch.object(RISCV64RelaxUnconditionalBranchesPass,
+                                       "JAL_RELAX_THRESHOLD", 128):
+                    adjusted = self.arch.relax_late_branches(
+                        module=module, text_section=text, transient_section=transient,
+                        text_transient_mapping=mapping, landing_pad_targets={target.uuid},
+                        run_pass_manager=lambda manager, label: manager.run(ir))
+                self.assertGreater(sum(adjusted), 0)
+                self.assertEqual(adjusted[-1], 0)
+                self.assertIs(transient_pad.referent.section, transient)
+                self.assertIs(target_symbol.referent.section, text)
+                new_target = target_symbol.referent
+                prefix = new_target.byte_interval.contents[
+                    new_target.offset:new_target.offset + len(self.arch.nop_bytes)]
+                self.assertEqual(prefix == self.arch.nop_bytes, marked)
+                decoder = GtirbInstructionDecoder(module.isa)
+                for jump in (jump_a, jump_b):
+                    self.assertNotIn(list(decoder.get_instructions(jump))[-1].mnemonic, {"j", "c.j"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,20 +13,20 @@ class RISCV64DiftPropagationPass(DiftPropagationBase):
 
     def _build_patch(self, inst, regs_read: Set[Register], regs_write: Set[Register], *,
                      clear_dest_tags: bool, mem_read, mem_write, mem_write_size: int,
-                     mem_symexpr=None):
-        fixed_regs = self.arch.fixed_spill_registers(self.reg_manager.abi, 4 if self.insert_memlog else 3)
+                     mem_symexpr=None, live_registers=None):
+        scratch_plan = self._plan_scratch_registers(4 if self.insert_memlog else 3, live_registers)
         saved_reg_offsets = {
             reg.name: SCRATCHPAD_FIRST_SPILL_OFFSET + idx * 8
-            for idx, reg in enumerate(fixed_regs)
+            for idx, reg in enumerate(scratch_plan.saved_regs)
         }
 
         @self.arch.constraints()
         def patch(ctx: InsertionContext):
-            tag_reg, addr_reg, tmp_reg = fixed_regs[:3]
-            memlog_data_reg = fixed_regs[3] if self.insert_memlog else None
+            tag_reg, addr_reg, tmp_reg = scratch_plan.registers[:3]
+            memlog_data_reg = scratch_plan.registers[3] if self.insert_memlog else None
             done_label = f".L__dift_done{SYMBOL_SUFFIX}"
 
-            asm = self.arch.save_regs_to_first_spill(fixed_regs)
+            asm = self.arch.save_regs_to_first_spill(scratch_plan.saved_regs)
             asm += "\n" + self.arch.clear_register_snippet(tag_reg)
             if not clear_dest_tags:
                 for reg in regs_read:
@@ -54,8 +54,10 @@ class RISCV64DiftPropagationPass(DiftPropagationBase):
                 for idx in range(mem_write_size):
                     if idx:
                         asm += f"addi {addr_reg}, {addr_reg}, 1\n"
-                    if self.insert_memlog:
-                        asm += self.arch.memlog_snippet(addr_reg, tmp_reg, memlog_data_reg, 1)
+                    if self.insert_memlog and idx % 8 == 0:
+                        asm += self.arch.memlog_snippet(
+                            addr_reg, tmp_reg, memlog_data_reg, min(8, mem_write_size - idx),
+                            no_clobber_addr=True)
                     asm += f"sb {tag_reg}, 0({addr_reg})\n"
 
             if mem_read is not None:
@@ -65,7 +67,7 @@ class RISCV64DiftPropagationPass(DiftPropagationBase):
             {done_label}:
                 nop
             """
-            asm += self.arch.restore_regs_from_first_spill(fixed_regs)
+            asm += self.arch.restore_regs_from_first_spill(scratch_plan.saved_regs)
             return asm
 
         return patch
