@@ -255,8 +255,17 @@ def install_riscv64_rewriting_compat() -> None:
         if not isinstance(symbolic, gtirb.SymAddrConst):
             return False
 
+        # The caller also verifies an AUIPC/JALR instruction pair. A lifted
+        # call or tail call can have separate PCREL HI/LO expressions instead
+        # of one CALL/PLT expression. It is still a control transfer: moving
+        # instrumentation after its LO (as for a data-address pair) can place
+        # a rollback or indirect-target check after the transfer it protects.
         return (
             gtirb.SymbolicExpression.Attribute.PLT in symbolic.attributes or
+            {
+                gtirb.SymbolicExpression.Attribute.HI,
+                gtirb.SymbolicExpression.Attribute.PCREL,
+            }.issubset(symbolic.attributes) or
             not any(
                 attr in symbolic.attributes
                 for attr in (
@@ -366,8 +375,8 @@ def install_riscv64_rewriting_compat() -> None:
             return block, safe_riscv64_insert_offset(block, offset)
 
         # ddisasm may represent a direct RISC-V call as two adjacent blocks:
-        # the AUIPC block owns the call relocation and the JALR block owns the
-        # CFG call edge.  An insertion at the start of the JALR block is still
+        # the AUIPC block owns the call/high relocation and the JALR block owns
+        # the CFG call/branch edge. An insertion at the start of the JALR block is still
         # inside the architectural call pair.  Redirect it to immediately
         # before the AUIPC, otherwise the pretty-printer's call pseudo-op and
         # suppressed JALR are separated and the JALR is emitted a second time.
