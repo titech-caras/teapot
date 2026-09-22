@@ -32,11 +32,13 @@ def main():
                "/eval/sources/gtirb-rewriting-2c0308e/src:"
                "/eval/workers/baseline-unit-20260921/venv-system/lib/python3.8/site-packages",
                "-e", "PATH=/hostbin:/eval/workers/baseline-unit-20260921:"
-               "/eval/workers/root/baseline-20260921/frontend/install/bin:"
+               "/eval/workers/ddisasm-symbol-identity-20260922/build-v1/build/bin:"
+               "/eval/workers/printer-cli-errors-20260922/gates-v1/install/bin:"
                "/eval/shared-build/install/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-               "-e", "LD_LIBRARY_PATH=/eval/workers/root/baseline-20260921/frontend/install/lib:"
+               "-e", "LD_LIBRARY_PATH=/eval/workers/printer-cli-errors-20260922/gates-v1/install/lib:"
+               "/eval/workers/root/baseline-20260921/frontend/install/lib:"
                "/eval/shared-build/install/lib",
-               "-e", "PPRINTER_PATH=/eval/workers/root/baseline-20260921/frontend/install/bin/gtirb-pprinter"]
+               "-e", "PPRINTER_PATH=/eval/workers/printer-cli-errors-20260922/gates-v1/install/bin/gtirb-pprinter"]
     for emulator in ("qemu-aarch64", "qemu-riscv64", "qemu-riscv32"):
         command += ["-v", "/usr/bin/" + emulator + ":/hostbin/" + emulator + ":ro"]
     command += ["-w", "/teapot", image, "/usr/bin/python3", "-m"]
@@ -49,10 +51,8 @@ def main():
     (output / "stdout").write_text(result.stdout)
     (output / "stderr").write_text(result.stderr)
     hashes = {str(path.relative_to(teapot)): hashlib.sha256(path.read_bytes()).hexdigest()
-              for path in (teapot / "tests/test_indirect_target_policy.py",
-                           teapot / "teapot/arch/x64/control_flow.py",
-                           teapot / "teapot/arch/aarch64/control_flow.py",
-                           teapot / "teapot/arch/riscv64/control_flow.py")}
+              for directory in (teapot / "teapot", teapot / "tests")
+              for path in sorted(directory.rglob("*.py"))}
     (output / "result.json").write_text(json.dumps({"status": result.returncode,
                                                    "source_sha256": hashes}, indent=2) + "\n")
     print(result.stdout, end="")

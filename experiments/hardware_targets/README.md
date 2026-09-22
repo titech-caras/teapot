@@ -1,4 +1,11 @@
-# Hardware target identification: rejected replacement, reproducible probes
+# Hardware target identification: probes and opt-in experiment
+
+**2026-09-22 update:** the user approved replacing the first marker word and
+requested an AArch64-only experiment. This private worktree now contains the
+opt-in backend documented in [BTI.md](BTI.md). Software remains the default;
+production sources are unchanged. The September 21 discussion below is retained
+as historical evidence about a literal, unchanged-marker replacement, not a
+current blocker on the approved design.
 
 Status (2026-09-21): **no production hardware backend is enabled or added**.
 Software remains the default and only implemented target-identification policy;

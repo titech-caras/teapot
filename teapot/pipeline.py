@@ -124,6 +124,7 @@ class InstrumentationOptions:
     enable_port_gadgets: bool = True
     enable_gadget_asan_check: bool = True
     aarch64_tag_storage: str = ASAN_TAG_STORAGE_SHADOW
+    target_identification: str = "software"
 
 
 class TeapotPipeline:
@@ -142,6 +143,14 @@ class TeapotPipeline:
     def run(self):
         self.module = self.ir.modules[0]
         self.arch = get_arch(self.module)
+        if self.options.target_identification != "software":
+            if self.options.target_identification != "aarch64-bti" or self.arch.name != "aarch64":
+                raise ValueError("the experimental BTI backend requires AArch64")
+            if not all((self.options.enable_indirect_transform, self.options.enable_indirect_check,
+                        self.options.enable_checkpoints)):
+                raise ValueError("BTI requires target transformation, checking and checkpoints")
+            from teapot.arch.aarch64.bti import AArch64BTIArchitecture
+            self.arch = AArch64BTIArchitecture()
         if self.linked_component is not None:
             if len(self.ir.modules) != 1 or self.arch.name != "x64":
                 raise ValueError("separate component rewriting currently requires one x64 module")
@@ -197,6 +206,8 @@ class TeapotPipeline:
 
         if self.arch.needs_late_text_checkpoints():
             self._run_late_text_checkpoint_passes()
+        if self.options.target_identification == "aarch64-bti":
+            self.arch.finalize_bti_layout(self)
 
     def _run_pass_manager(self, pass_manager: PassManager, label: str):
         print(f"[teapot] begin {label}", flush=True)

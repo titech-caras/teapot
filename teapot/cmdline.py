@@ -13,6 +13,8 @@ from teapot.utils.serialization import compact_for_pprinter
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--target-identification", choices=("software", "aarch64-bti"),
+                        default="software", help="Experimental BTI requires its matching runtime and linker script.")
     parser.add_argument("input", nargs="?")
     parser.add_argument("output", nargs="?")
     parser.add_argument(
@@ -140,6 +142,7 @@ def main():
         enable_gadget_asan_check=not args.disable_gadget_asan_check,
         enable_nested_speculation=args.enable_nested_speculation,
         aarch64_tag_storage=args.aarch64_tag_storage,
+        target_identification=args.target_identification,
     )
     pipeline = TeapotPipeline(ir, args.dift_layout, options)
     pipeline.run()

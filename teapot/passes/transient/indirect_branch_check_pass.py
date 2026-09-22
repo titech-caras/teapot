@@ -54,7 +54,14 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
         if self.reg_manager is not None and self.arch.uses_live_registers:
             self.reg_manager.add_live_registers(function, block, len(instructions) - 1, operand_registers)
 
-        patch = self.arch.indirect_branch_check_patch(
+        checker = self.arch.indirect_branch_check_patch
+        if (getattr(self.arch, "uses_bti_landing_checks", False) and
+                last_inst.mnemonic.lower() in ("br", "blr") and
+                edge.label.type != gtirb.cfg.Edge.Type.Return):
+            checker = self.arch.indirect_branch_hardware_check_patch
+        # RET and any instruction not proved to set BTYPE retain the complete
+        # software predicate. Hardware landing checks do not protect returns.
+        patch = checker(
             operand_str, self.transient_section_start_symbol, self.transient_section_end_symbol,
             self.text_section_start_symbol, self.text_section_end_symbol,
             reads_registers={reg.name for reg in operand_registers})
