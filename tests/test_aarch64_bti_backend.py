@@ -12,7 +12,7 @@ from teapot.arch import AArch64Architecture, X64Architecture
 from teapot.arch.aarch64.bti import AArch64BTIArchitecture
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.passes.transient.indirect_branch_check_pass import TransientIndirectBranchCheckDestPass
-from test_live_register_preservation import make_module
+from test_live_register_preservation import make_module, symbol_references
 
 
 class AArch64BTIBackendTests(unittest.TestCase):
@@ -85,7 +85,11 @@ class AArch64BTIBackendTests(unittest.TestCase):
         for suffix in ('text_start', 'text_end', 'transient_start', 'transient_end'):
             alias = next(module.symbols_named('__teapot_bti_' + suffix))
             self.assertEqual(module.aux_data['elfSymbolInfo'].data[alias][2], 'GLOBAL')
-        self.assertTrue(any(module.symbols_named('libcheckpoint_enable_aarch64_bti')))
+        # The BTI build calls its own runtime entry point, after the marker, and not the ordinary one.
+        calls = symbol_references(pipeline.text_section)
+        self.assertIn('libcheckpoint_enable_aarch64_bti', calls)
+        self.assertGreaterEqual(min(calls['libcheckpoint_enable_aarch64_bti']), entry.address + 8)
+        self.assertNotIn('libcheckpoint_enable', calls)
 
     def test_non_arm_and_disabled_required_checks_are_rejected(self):
         ir, _, _, _, _ = make_module(X64Architecture(), gtirb.Module.ISA.X64, b'\xc3')

@@ -54,6 +54,19 @@ def make_module(arch, isa, contents):
     return ir, module, block, abi, registers
 
 
+def symbol_references(section):
+    """Addresses of the symbolic expressions in *section*, by the name of the symbol they refer to.
+
+    Emitted code refers to a runtime symbol through these; the symbol itself exists as soon as
+    ImportSymbolsPass has run, whether or not anything uses it."""
+    references = {}
+    for interval in section.byte_intervals:
+        for offset, expression in interval.symbolic_expressions.items():
+            if isinstance(expression, gtirb.SymAddrConst):
+                references.setdefault(expression.symbol.name, []).append(interval.address + offset)
+    return references
+
+
 class LiveRegisterPreservationTests(unittest.TestCase):
     def test_refresh_reports_source_transitions(self):
         ir, module, _, abi, _ = make_module(

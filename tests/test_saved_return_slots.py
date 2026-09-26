@@ -18,7 +18,7 @@ from teapot.arch import AArch64Architecture, RISCV64Architecture
 from teapot.passes.common.asan_stack_pass import AsanStackPass
 from teapot.passes.common.return_slot_analysis import ReturnSlotAnalysis, UnsupportedReturnSlot
 from teapot.passes.preprocessing.import_symbols_pass import ImportSymbolsPass
-from test_live_register_preservation import make_module
+from test_live_register_preservation import make_module, symbol_references
 
 
 class SavedReturnSlotTests(unittest.TestCase):
@@ -219,7 +219,7 @@ class SavedReturnSlotTests(unittest.TestCase):
                         self.assertEqual(bytes(blocks[0].byte_interval.contents), original)
                     else:
                         self.assertEqual(stack_pass.coverage["instrumented"], 1)
-                        self.assertTrue(any(symbol.name == "memory_history_top" for symbol in module.symbols))
+                        self.assertIn("memory_history_top", symbol_references(blocks[0].section))
 
     def test_poison_clear_and_rollback_change_only_the_saved_slot_tag(self):
         targets = (
