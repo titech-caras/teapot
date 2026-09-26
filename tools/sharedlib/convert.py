@@ -51,7 +51,10 @@ ARCHITECTURES = {
 # branch displacements vary; their actual targets are checked separately. This
 # is deliberately a narrow startup contract, not a function-name heuristic.
 CRT_PATTERNS = {
-    'frame_dummy': 'f3 0f 1e fa e9 ?? ?? ?? ?? 0f 1f 80 00 00 00 00',
+    # Its unconditional tail jump ends the callback. The following function's
+    # alignment padding varies with compiler/linker flags and is unreachable
+    # from this entry; the jump destination is still validated below.
+    'frame_dummy': 'f3 0f 1e fa e9 ?? ?? ?? ??',
     'register_tm_clones': '48 8d 3d ?? ?? ?? ?? 48 8d 35 ?? ?? ?? ?? 48 29 fe 48 89 f0 48 c1 ee 3f 48 c1 f8 03 48 01 c6 48 d1 fe 74 14 48 8b 05 ?? ?? ?? ?? 48 85 c0 74 08 ff e0 66 0f 1f 44 00 00 c3 0f 1f 80 00 00 00 00',
     'deregister_tm_clones': '48 8d 3d ?? ?? ?? ?? 48 8d 05 ?? ?? ?? ?? 48 39 f8 74 15 48 8b 05 ?? ?? ?? ?? 48 85 c0 74 09 ff e0 0f 1f 80 00 00 00 00 c3 0f 1f 80 00 00 00 00',
     '__do_global_dtors_aux': 'f3 0f 1e fa 80 3d ?? ?? ?? ?? 00 75 2b 55 48 83 3d ?? ?? ?? ?? 00 48 89 e5 74 0c 48 8b 3d ?? ?? ?? ?? e8 ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 5d c3 0f 1f 00 c3 0f 1f 80 00 00 00 00',
