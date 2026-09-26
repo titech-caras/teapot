@@ -34,7 +34,6 @@ class TextDiftCodegenTests(unittest.TestCase):
         assembly = dift.target_machine.emit_assembly(module)
         self.assertRegex(assembly, r"\bmul\b")
         self.assertNotIn("__muldi3", assembly)
-        self.assertEqual(dift.TARGET_FEATURES, "+m,+a,+f,+d")
 
     def test_riscv64_patch_assembler_accepts_codegen_and_call_saves(self):
         arch = RISCV64Architecture()

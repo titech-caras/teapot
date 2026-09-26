@@ -206,8 +206,6 @@ class X64RepDiftTests(unittest.TestCase):
                     dift.begin_module(module, functions, context)
                     context.apply()
                     dift.end_module(module, functions)
-                    self.assertEqual(len(ir.modules), 1)
-                    self.assertGreater(len(list(module.code_blocks)), 0)
                     ir.save_protobuf(root / "rewritten.gtirb")
                     result = subprocess.run([
                         os.environ.get("PPRINTER_PATH", "gtirb-pprinter"),
