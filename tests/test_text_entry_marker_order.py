@@ -8,6 +8,8 @@ from unittest.mock import Mock
 import gtirb
 from capstone_gt import CS_OP_IMM, CS_OP_MEM
 from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_functions import Function
+from gtirb_rewriting import RewritingContext, patch_constraints
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
 from teapot.datacls.dift_layout import get_dift_layout
@@ -19,6 +21,38 @@ from test_live_register_preservation import make_module
 
 
 class TextEntryMarkerOrderTests(unittest.TestCase):
+    def test_required_riscv_entry_marker_precedes_complete_pc_relative_pair(self):
+        arch = RISCV64Architecture()
+        # AUIPC t0; ADDI t1,t0,4; RET, with the same HI/LO pair as a lifted entry.
+        _, module, block, _, _ = make_module(
+            arch, gtirb.Module.ISA.ValidButUnsupported,
+            bytes.fromhex('970200001383420067800000'))
+        entry = next(module.symbols_named('test_function'))
+        target = gtirb.Symbol(name='data_target', payload=0x2000, module=module)
+        attrs = gtirb.SymbolicExpression.Attribute
+        interval = block.byte_interval
+        interval.symbolic_expressions[0] = gtirb.SymAddrConst(0, target, {attrs.PCREL, attrs.HI})
+        interval.symbolic_expressions[4] = gtirb.SymAddrConst(0, entry, {attrs.PCREL, attrs.LO})
+        functions = list(Function.build_functions(module))
+        ctx = RewritingContext(module, functions)
+        visitor = TextIndirectBranchTransformPass(
+            block.section, SimpleNamespace(code_blocks_map={block.uuid: block}),
+            GtirbInstructionDecoder(module.isa), arch,
+            required_target_symbols=('test_function',))
+        marker = patch_constraints()(lambda _ctx: 'addi zero, zero, 276\naddi zero, zero, 1300')
+        visitor._indirect_transform_target_patch = Mock(return_value=marker)
+        with redirect_stdout(io.StringIO()):
+            visitor.begin_module(module, functions, ctx)
+            ctx.apply()
+        # Register allocation must see the true entry state, not the state
+        # after AUIPC or after its low-half consumer.
+        call = visitor._indirect_transform_target_patch.call_args.args
+        self.assertIs(call[2], block)
+        self.assertEqual(call[3], 0)
+        actual = entry.referent
+        self.assertEqual(actual.byte_interval.contents[actual.offset:actual.offset + 8], arch.nop_bytes)
+        self.assertEqual(sorted(interval.symbolic_expressions), [8, 12])
+
     def rewrite(self, name, arch=None):
         arch = arch or X64Architecture()
         isa, contents = {

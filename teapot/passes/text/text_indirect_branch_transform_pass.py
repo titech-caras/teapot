@@ -113,7 +113,8 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
         non_fallthrough_edges, fallthrough_edges = distinguish_edges(incoming_edges)
         # FIXME: this thing clobbers flags!
 
-        if (any(symbol.name in self.required_target_symbols for symbol in block.references) or
+        required_entry = any(symbol.name in self.required_target_symbols for symbol in block.references)
+        if (required_entry or
                 len(incoming_edges) == 0 or  # Sometimes GTIRB doesn't detect indirect branches
                 any(e.label.type in (gtirb.cfg.Edge.Type.Call, gtirb.cfg.Edge.Type.Branch) and
                     not e.label.direct for e in non_fallthrough_edges)):
@@ -123,10 +124,24 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                 ".L__indbr_transform_target_" + function.get_name() + "_",
                 block,
                 transient_target)
-            self.insert_at(block, 0, Patch.from_function(
+            if required_entry:
+                # A cross-component target must begin with the marker, before
+                # any application instruction. In particular, do not apply the
+                # usual RISC-V adjustment that moves a patch after AUIPC/LO.
+                # Inserting before the complete pair is safe; inserting into
+                # a split call pair is not an independently callable entry.
+                resolver = getattr(type(self.rewriting_ctx), "_teapot_insert_location", None)
+                if resolver is not None and resolver(block, 0) != (block, 0):
+                    raise ValueError("exported entry lies inside a protected instruction pair")
+                location = (block, 0)
+                insert = self.rewriting_ctx.insert_at
+            else:
+                location = self.insertion_register_location(block, 0)
+                insert = self.insert_at
+            insert(block, 0, Patch.from_function(
                 self._indirect_transform_target_patch(
                     indbr_transform_target_symbol,
-                    function, *self.insertion_register_location(block, 0), block.uuid)))
+                    function, *location, block.uuid)))
 
         if (len(fallthrough_edges) > 0 and
                 any(e.label.type == gtirb.cfg.Edge.Type.Call for e in fallthrough_edges[0].source.outgoing_edges)):
