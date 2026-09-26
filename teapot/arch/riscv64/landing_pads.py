@@ -10,29 +10,9 @@ from teapot.utils.misc import generate_distinct_label_name
 
 class RISCV64LandingPadPatchesMixin:
     @staticmethod
-    def landing_pad_skip_label(block_uuid: UUID) -> str:
-        return generate_distinct_label_name(".L__rv64_skip_restore_landing_", block_uuid)
-
-    @staticmethod
-    def landing_pad_no_restore_label(block_uuid: UUID) -> str:
-        return generate_distinct_label_name(".L__rv64_no_restore_landing_", block_uuid)
-
-    @staticmethod
     def landing_pad_entry_label(block_uuid: UUID, *, normal_text: bool = False) -> str:
         prefix = ".L__rv64_text_restore_landing_" if normal_text else ".L__rv64_restore_landing_"
         return generate_distinct_label_name(prefix, block_uuid)
-
-    def restore_landing_pad_patch(self, block_uuid: UUID, target_symbol_name: str):
-        @self.constraints()
-        def patch(ctx):
-            return f"""
-                {self.load_address("t0", f"scratchpad+{RISCV64_LANDING_RESTORE_FLAG_OFFSET}")}
-                sd zero, 0(t0)
-                {self.restore_regs_from_first_spill(self.FIRST_SPILL_T0_T1)}
-                j {target_symbol_name}
-            """
-
-        return patch
 
     def restore_landing_entry_patch(self, block_uuid: UUID, *, normal_text: bool = False,
                                     preserve_marker: bool = False):

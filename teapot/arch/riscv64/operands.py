@@ -7,7 +7,6 @@ from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, C
 from gtirb_rewriting.assembly import Register
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
-from teapot.configs.slots import SCRATCHPAD_FIRST_SPILL_OFFSET
 from teapot.utils.registers import get_register, register_from_name
 from teapot.datacls.stack_access import StackAccess
 
@@ -199,18 +198,6 @@ class RISCV64OperandMixin:
             if reg is not None:
                 regs.add(reg)
         return regs
-
-    @classmethod
-    def mem_operand_register_names(cls, abi, inst: CsInsn, *operands) -> Set[str]:
-        scratch_names = {reg.name.lower() for reg in abi._scratch_registers()}
-        result = set()
-        for operand in operands:
-            result.update(
-                reg.name
-                for reg in cls.registers_from_mem_operand(abi, inst, operand)
-                if reg.name.lower() in scratch_names
-            )
-        return result
 
     @staticmethod
     def riscv64_mem_operand_size(inst: CsInsn) -> int:

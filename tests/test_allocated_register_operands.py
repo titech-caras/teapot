@@ -118,9 +118,6 @@ class AllocatedRegisterOperandTests(unittest.TestCase):
                         patch = memlog._build_memlog_patch(inst, text, width)
                     else:
                         patch = memlog._build_patch(inst, operand, width)
-                        if arch.name == "riscv64":
-                            address_names = arch.mem_operand_register_names(arch.abi, inst, operand)
-                            self.assertTrue(all(isinstance(name, str) for name in address_names))
                     output = patch(SimpleNamespace(scratch_registers=regs, stack_adjustment=0))
                     self.assertTrue(self.assemble(arch, module, output).text_section.data)
 

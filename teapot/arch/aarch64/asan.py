@@ -1,9 +1,6 @@
 from teapot.configs.runtime import (
     ASAN_TAG_STORAGE_MTE,
     ASAN_TAG_STORAGE_SHADOW,
-    MEMORY_HISTORY_ENTRY_SIZE,
-    MEMORY_HISTORY_MTE_TAG_SIZE,
-    MEMORY_HISTORY_SIZE_OFFSET,
     SYMBOL_SUFFIX,
 )
 
@@ -83,30 +80,6 @@ class AArch64AsanPatchesMixin:
             {AArch64AsanPatchesMixin.MTE_ARCH_DIRECTIVE}
             ldg {tag_reg}, [{addr_reg}]
             ubfx {tag_reg}, {tag_reg}, #56, #4
-        """
-
-    @staticmethod
-    def _mte_store_tag_snippet(tag_reg, addr_reg, value: int) -> str:
-        return f"""
-            {AArch64AsanPatchesMixin.MTE_ARCH_DIRECTIVE}
-            mov {tag_reg}, #{value & 0xf}
-            lsl {tag_reg}, {tag_reg}, #56
-            orr {tag_reg}, {addr_reg}, {tag_reg}
-            stg {tag_reg}, [{addr_reg}]
-        """
-
-    def _mte_memlog_tag_snippet(self, addr_reg, top_reg, data_reg) -> str:
-        return f"""
-            {self.load_address(top_reg, "memory_history_top")}
-            ldr {top_reg}, [{top_reg}]
-            str {addr_reg}, [{top_reg}]
-            {self._mte_load_tag_snippet(data_reg, addr_reg)}
-            strb {data_reg:32}, [{top_reg}, #8]
-            mov {data_reg:32}, #{MEMORY_HISTORY_MTE_TAG_SIZE}
-            strb {data_reg:32}, [{top_reg}, #{MEMORY_HISTORY_SIZE_OFFSET}]
-            add {top_reg}, {top_reg}, #{MEMORY_HISTORY_ENTRY_SIZE}
-            {self.load_address(data_reg, "memory_history_top")}
-            str {top_reg}, [{data_reg}]
         """
 
     def _mte_check_snippet(self, addr_reg, access_size: int, check_ok_label: str, *,
