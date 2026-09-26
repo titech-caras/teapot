@@ -12,6 +12,22 @@ from teapot.passes.preprocessing.dift_ext_call_pass import DiftExtCallPass
 
 
 class DiftExtCallVersionTests(unittest.TestCase):
+    def test_signal_runtime_wrappers_do_not_depend_on_dift(self):
+        for wrap_dift in (False, True):
+            for name in ("signal", "sigaction"):
+                with self.subTest(wrap_dift=wrap_dift, name=name):
+                    module = gtirb.Module(name="signal-call")
+                    section = gtirb.Section(name=".text", module=module)
+                    symbol = gtirb.Symbol(name=name, module=module)
+                    versions = {symbol: (2, False)}
+                    _auxdata.elf_symbol_versions.set(module, ({}, {}, versions))
+                    transform = DiftExtCallPass(section, None, wrap_dift_calls=wrap_dift)
+                    transform.begin_module(module, [], None)
+                    transform.symbols_to_rename.add(symbol)
+                    transform.end_module(module, [])
+                    self.assertEqual(symbol.name, name + "__teapot_wrapper__")
+                    self.assertNotIn(symbol, versions)
+
     def test_call_relocation_takes_precedence_over_plt_anchor(self):
         for arch, isa, contents, expression_offset in (
             (X64Architecture(), gtirb.Module.ISA.X64, "488d0500000000e800000000", 8),

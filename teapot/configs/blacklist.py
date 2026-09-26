@@ -104,6 +104,12 @@ DIFT_IGNORE_LIST = [
     "sprintf", "__isoc99_sscanf", "__isoc23_strtol",  # FIXME: these should actually be tainted
 ]
 
+# These preserve rollback's fault handlers, independently of DIFT being enabled.
+RUNTIME_WRAPPER_FUNCTIONS = {
+    "signal": "signal__teapot_wrapper__",
+    "sigaction": "sigaction__teapot_wrapper__",
+}
+
 DIFT_WRAPPER_FUNCTIONS = {
     "read",
     "fread",

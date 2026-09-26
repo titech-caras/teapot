@@ -312,8 +312,9 @@ class TeapotPipeline:
 
     def _run_dift_ext_call_passes(self):
         pass_manager = PassManager()
-        if self.options.enable_dift and self.arch.supports_dift_ext_calls():
-            pass_manager.add(DiftExtCallPass(self.text_section, self.decoder, wrap_dift_calls=True))
+        pass_manager.add(DiftExtCallPass(
+            self.text_section, self.decoder,
+            wrap_dift_calls=self.options.enable_dift and self.arch.supports_dift_ext_calls()))
         self._run_pass_manager(pass_manager, "dift-ext-calls")
 
     def _run_text_passes(self):
