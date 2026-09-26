@@ -32,7 +32,7 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
         self.visit_functions(functions, self.transient_section)
 
     def visit_function(self, function: Function):
-        if self.reg_manager is not None and self.arch.uses_live_registers:
+        if self.reg_manager is not None:
             self.reg_manager.analyze(function)
         VisitorPassMixin.visit_function(self, function)
 
@@ -51,7 +51,7 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
         operand_registers = set()
         if self.reg_manager is not None:
             operand_registers = self.arch.registers_in_operand_string(self.reg_manager.abi, operand_str)
-        if self.reg_manager is not None and self.arch.uses_live_registers:
+        if self.reg_manager is not None:
             self.reg_manager.add_live_registers(function, block, len(instructions) - 1, operand_registers)
 
         checker = self.arch.indirect_branch_check_patch
@@ -65,7 +65,7 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
             operand_str, self.transient_section_start_symbol, self.transient_section_end_symbol,
             self.text_section_start_symbol, self.text_section_end_symbol,
             reads_registers={reg.name for reg in operand_registers})
-        if self.reg_manager is not None and self.arch.uses_live_registers:
+        if self.reg_manager is not None:
             patch = self.allocate_registers(
                 function, block, len(instructions) - 1)(patch)
         self.insert_at(block, sum(inst.size for inst in instructions[:-1]), Patch.from_function(patch))

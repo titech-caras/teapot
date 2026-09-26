@@ -11,12 +11,6 @@ class ArchitectureCheckpointMixin(ABC):
     def static_instruction_cost(self, instruction) -> int:
         return 1
 
-    def checkpoint_patch_uses_live_registers(self) -> bool:
-        return getattr(self, "CHECKPOINT_PATCH_USES_LIVE_REGISTERS", self.uses_live_registers)
-
-    def restore_point_patch_uses_live_registers(self) -> bool:
-        return getattr(self, "RESTORE_POINT_PATCH_USES_LIVE_REGISTERS", self.uses_live_registers)
-
     def checkpoint_spare_registers(self, abi, live_registers):
         fixed_registers = set(self.CHECKPOINT_FIXED_REGISTERS)
         return tuple(

@@ -14,8 +14,6 @@ from teapot.utils.misc import generate_distinct_label_name
 
 class AArch64CheckpointPatchesMixin:
     CHECKPOINT_FIXED_REGISTERS = ("x16", "x17")
-    CHECKPOINT_PATCH_USES_LIVE_REGISTERS = True
-    RESTORE_POINT_PATCH_USES_LIVE_REGISTERS = True
 
     @staticmethod
     def _checkpoint_source_offset(register: str) -> int:

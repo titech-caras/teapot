@@ -79,7 +79,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         self.visit_functions(functions, self.transient_section)
 
     def visit_function(self, function: Function):
-        if self.reg_manager is not None and self.arch.restore_point_patch_uses_live_registers():
+        if self.reg_manager is not None:
             self.reg_manager.analyze(function)
         VisitorPassMixin.visit_function(self, function)
 
@@ -130,11 +130,6 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def __insert_conditional_restore_point(self, block, function, instruction_idx, instruction_offset,
                                            instruction_count):
-        if not self.arch.restore_point_patch_uses_live_registers():
-            self.insert_at(block, instruction_offset, Patch.from_function(
-                self.arch.conditional_restore_point_patch(instruction_count)))
-            return
-
         patch = self.arch.conditional_restore_point_patch(instruction_count)
         if self.reg_manager is not None:
             patch = self.allocate_registers(
@@ -143,7 +138,7 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def __can_insert_restore_point(self, function, block, instruction_idx) -> bool:
         live_registers = self.reg_manager.live_registers(function, block, instruction_idx) \
-            if self.reg_manager is not None and self.arch.restore_point_patch_uses_live_registers() else None
+            if self.reg_manager is not None else None
         return self.arch.can_insert_restore_point(live_registers)
 
     def __unconditional_rollback_at(self, block: gtirb.CodeBlock, instructions: List[CsInsn]):

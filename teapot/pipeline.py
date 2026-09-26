@@ -168,24 +168,23 @@ class TeapotPipeline:
         self.text_section = [section for section in self.module.sections if section.name == ".text"][0]
         self.decoder = CachedGtirbInstructionDecoder(self.module.isa)
         self.abi = self.arch.register_abi(_ABIS)
-        if self.arch.uses_live_registers:
-            self.reg_manager = LiveRegisterManager(
-                self.module, self.abi, self.decoder, analysis_scope="block")
-            print(f"[teapot] live-register analysis: {self.reg_manager.analysis_source}", flush=True)
-            if self.reg_manager.analysis_source == "python":
-                # Invalid tables must not enter the rewriter's offset hooks.
-                self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
-                self.module.aux_data.pop(LIVE_REGISTER_SETS_AUXDATA, None)
-            if self.linked_component is not None:
-                if self.reg_manager.analysis_source != "ddisasm":
-                    raise ValueError("component prototype requires validated DDisasm liveness metadata")
-                # A standalone ELF is analyzed at ABI boundaries. Preserve its
-                # masks, including genuinely live arguments/results; do not
-                # replace them with the liveness of a particular linked caller
-                # or force every register live. Missing masks remain all-live
-                # in LiveRegisterManager, as for ordinary instrumentation.
-                print("[teapot] component liveness: standalone DDisasm ABI masks; "
-                      "missing masks remain all-live", flush=True)
+        self.reg_manager = LiveRegisterManager(
+            self.module, self.abi, self.decoder, analysis_scope="block")
+        print(f"[teapot] live-register analysis: {self.reg_manager.analysis_source}", flush=True)
+        if self.reg_manager.analysis_source == "python":
+            # Invalid tables must not enter the rewriter's offset hooks.
+            self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
+            self.module.aux_data.pop(LIVE_REGISTER_SETS_AUXDATA, None)
+        if self.linked_component is not None:
+            if self.reg_manager.analysis_source != "ddisasm":
+                raise ValueError("component prototype requires validated DDisasm liveness metadata")
+            # A standalone ELF is analyzed at ABI boundaries. Preserve its
+            # masks, including genuinely live arguments/results; do not
+            # replace them with the liveness of a particular linked caller
+            # or force every register live. Missing masks remain all-live
+            # in LiveRegisterManager, as for ordinary instrumentation.
+            print("[teapot] component liveness: standalone DDisasm ABI masks; "
+                  "missing masks remain all-live", flush=True)
 
         self._run_normalize_passes()
         self._create_instrumentation_sections()

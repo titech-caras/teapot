@@ -31,7 +31,6 @@ class Architecture(
         ArchitectureAsanMixin,
         ABC):
     name: str
-    uses_live_registers: bool
     nop_bytes: bytes
     abi: Any
 

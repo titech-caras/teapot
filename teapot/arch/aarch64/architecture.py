@@ -50,7 +50,7 @@ class AArch64Architecture(
 
     def __init__(self):
         marker_bytes = b"".join(word.to_bytes(4, "little") for word in self.MAGIC_WORDS)
-        super().__init__("aarch64", True, marker_bytes, _ARM64_ELF())
+        super().__init__("aarch64", marker_bytes, _ARM64_ELF())
 
     def normalize_passes(self, decoder, reg_manager):
         from teapot.passes.preprocessing.normalize_aarch64_relocations_pass import (

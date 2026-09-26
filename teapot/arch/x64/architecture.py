@@ -30,7 +30,7 @@ class X64Architecture(
 
     def __init__(self):
         marker_bytes = b"".join(word.to_bytes(4, "little") for word in self.MAGIC_WORDS)
-        super().__init__("x64", True, marker_bytes, _X86_64_ELF())
+        super().__init__("x64", marker_bytes, _X86_64_ELF())
 
     def constraints(self, **kwargs):
         return patch_constraints(x86_syntax=X86Syntax.INTEL, **kwargs)

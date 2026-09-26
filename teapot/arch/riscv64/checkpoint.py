@@ -13,8 +13,6 @@ from teapot.utils.misc import generate_distinct_label_name
 
 class RISCV64CheckpointPatchesMixin:
     CHECKPOINT_FIXED_REGISTERS = ("t0", "t1")
-    CHECKPOINT_PATCH_USES_LIVE_REGISTERS = True
-    RESTORE_POINT_PATCH_USES_LIVE_REGISTERS = True
 
     def _checkpoint_source_offset(self, register: str) -> int:
         register_number = int(self.x_register_name(self.abi.get_register(register))[1:])

@@ -45,7 +45,7 @@ class CreateTrampolinesPass(VisitorPassMixin):
         if is_blacklisted_function(function):
             return
 
-        if self.reg_manager is not None and self.arch.checkpoint_patch_uses_live_registers():
+        if self.reg_manager is not None:
             self.reg_manager.analyze(function)
         super().visit_function(function)
 
@@ -99,7 +99,7 @@ class CreateTrampolinesPass(VisitorPassMixin):
             instruction_idx = max(len(instructions) - 1, 0)
 
             spare_registers = ()
-            if self.reg_manager is not None and self.arch.checkpoint_patch_uses_live_registers():
+            if self.reg_manager is not None:
                 spare_registers = self.arch.checkpoint_spare_registers(
                     self.reg_manager.abi,
                     self.reg_manager.live_registers(function, block, instruction_idx))

@@ -38,7 +38,7 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         if is_blacklisted_function(function):
             return
 
-        if self.reg_manager is not None and self.arch.checkpoint_patch_uses_live_registers():
+        if self.reg_manager is not None:
             self.reg_manager.analyze(function)
         super().visit_function(function)
 
