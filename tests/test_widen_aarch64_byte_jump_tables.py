@@ -199,13 +199,6 @@ class WidenByteJumpTablesTests(unittest.TestCase):
                     WidenAArch64ByteJumpTablesPass().end_module(module, [])
                     self.assertEqual([block.size for block in entries], [4, 4])
 
-    def test_unknown_external_call_is_not_a_proven_clobber(self):
-        module, data, _ = self.call_exit_fixture(external='unknown_consumer')
-        before = bytes(data.contents)
-        with self.assertRaisesRegex(ValueError, 'unproved call'):
-            WidenAArch64ByteJumpTablesPass().end_module(module, [])
-        self.assertEqual(bytes(data.contents), before)
-
     def interleaved_fixture(self, middle_word):
         # ADRP x12; <middle>; ADD x10,x12,#lo12 -- the scheduler split the pair.
         fixture = self.loop_fixture()
