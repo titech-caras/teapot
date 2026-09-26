@@ -54,8 +54,6 @@ void _start(void) {
             cls.run_command(['aarch64-linux-gnu-gcc', *cls.flags, '-x', 'assembler', cls.root / (variant + '.S'),
                              '-o', cls.root / variant])
         cls.run_command(['ddisasm', cls.root / 'marked', '--ir', cls.root / 'linked.gtirb', '-j', '1'])
-        if Path('/out').is_dir():
-            shutil.copytree(cls.root, '/out/native-fixture')
 
     @classmethod
     def tearDownClass(cls):
