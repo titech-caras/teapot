@@ -18,8 +18,15 @@ SCHEMA = 'mapping<UUID,tuple<string,string>>'
 def function_fingerprint(module, function):
     members = module.aux_data['functionBlocks'].data[function]
     entries = module.aux_data['functionEntries'].data[function]
+    if not entries or any(block.address is None for block in members | entries):
+        raise ValueError('pointer-return ABI evidence requires addressed function blocks')
+    # Relayout may uniformly move an unchanged function when lifecycle arrays
+    # are added. Its ABI does not depend on that absolute address. Keep every
+    # block's entry-relative placement, identity, size and bytes in the proof;
+    # body edits or independent block movement must still invalidate it.
+    origin = min(block.address for block in entries)
     value = {'function': str(function), 'entries': sorted(str(b.uuid) for b in entries),
-             'blocks': sorted((str(b.uuid), b.address, b.size, bytes(b.contents).hex()) for b in members)}
+             'blocks': sorted((str(b.uuid), b.address - origin, b.size, bytes(b.contents).hex()) for b in members)}
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 

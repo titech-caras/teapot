@@ -263,6 +263,25 @@ class WidenByteJumpTablesTests(unittest.TestCase):
             WidenAArch64ByteJumpTablesPass().end_module(module, [])
         self.assertEqual((bytes(data.contents), bytes(setup.byte_interval.contents)), before)
 
+    def test_pointer_signature_survives_uniform_function_relocation(self):
+        from teapot.utils.return_abi import has_pointer_return_contract
+        module, setup, _, _ = self.pointer_return_fixture()
+        function = next(iter(module.aux_data['functionBlocks'].data))
+        setup.byte_interval.address += 0x100000
+        self.assertTrue(has_pointer_return_contract(module, function))
+
+    def test_pointer_signature_rejects_independent_block_relocation(self):
+        from teapot.utils.return_abi import has_pointer_return_contract
+        module, setup, _, _ = self.pointer_return_fixture()
+        function = next(iter(module.aux_data['functionBlocks'].data))
+        block = next(b for b in module.aux_data['functionBlocks'].data[function] if b is not setup)
+        relocated = gtirb.ByteInterval(address=block.address + 0x100000,
+                                      contents=bytes(block.contents), section=block.section)
+        block.byte_interval = relocated
+        block.offset = 0
+        with self.assertRaisesRegex(ValueError, 'stale pointer-return ABI'):
+            has_pointer_return_contract(module, function)
+
     def test_recovered_target_gets_serializable_local_symbol(self):
         ir, module, _, _, _, data, _, cases, _ = self.loop_fixture()
         del data.symbolic_expressions[1]
