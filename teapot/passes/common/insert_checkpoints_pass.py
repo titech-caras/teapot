@@ -7,7 +7,6 @@ from gtirb_capstone.instructions import GtirbInstructionDecoder
 from capstone import CsInsn
 from typing import List, Optional, Set
 from uuid import UUID
-import functools
 
 from teapot.arch.architecture import Architecture
 from teapot.passes.mixins import VisitorPassMixin, RegInstAwarePassMixin
@@ -48,7 +47,7 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
         if conditional_branch_edge(block) is not None:
             instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
-            conditional_jump_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
+            conditional_jump_offset = sum(i.size for i in instructions[:-1])
             if conditional_jump_offset > block.size:
                 insts = ", ".join(
                     f"0x{inst.address:x}:{inst.mnemonic} {inst.op_str}({inst.size})"

@@ -1,4 +1,3 @@
-import functools
 import re
 from dataclasses import dataclass
 from typing import Any, List, Optional, Set
@@ -240,7 +239,7 @@ attributes #0 = {{ "no-builtins" }}
         super().visit_code_block(block, function)
 
         instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
-        last_inst_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
+        last_inst_offset = sum(i.size for i in instructions[:-1])
         self._flush_dift(block, function, len(instructions) - 1, last_inst_offset)
 
     def _flush_dift(self, block, function, inst_idx, inst_offset):
