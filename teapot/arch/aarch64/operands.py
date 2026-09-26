@@ -1,47 +1,39 @@
 from typing import Optional
 
 import gtirb
-from capstone.arm64 import (
-    ARM64_EXT_SXTW,
-    ARM64_EXT_UXTW,
-    ARM64_SFT_LSL,
-    ARM64_VAS_16B,
-    ARM64_VAS_1B,
-    ARM64_VAS_1D,
-    ARM64_VAS_1H,
-    ARM64_VAS_1Q,
-    ARM64_VAS_1S,
-    ARM64_VAS_2D,
-    ARM64_VAS_2H,
-    ARM64_VAS_2S,
-    ARM64_VAS_4B,
-    ARM64_VAS_4H,
-    ARM64_VAS_4S,
-    ARM64_VAS_8B,
-    ARM64_VAS_8H,
-)
 from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, CsInsn
+
+try:
+    from capstone.aarch64 import AARCH64_EXT_SXTW, AARCH64_EXT_UXTW, AARCH64_SFT_LSL
+    _CAPSTONE5_ARRANGEMENTS = None
+except ImportError:  # Capstone 5, until Capstone 6 is required
+    from capstone import arm64 as _arm64
+    AARCH64_EXT_SXTW, AARCH64_EXT_UXTW, AARCH64_SFT_LSL = (
+        _arm64.ARM64_EXT_SXTW, _arm64.ARM64_EXT_UXTW, _arm64.ARM64_SFT_LSL)
+    _CAPSTONE5_ARRANGEMENTS = {
+        getattr(_arm64, "ARM64_VAS_" + name): arrangement for name, arrangement in {
+            "16B": (16, 1), "8B": (8, 1), "4B": (4, 1), "1B": (1, 1),
+            "8H": (8, 2), "4H": (4, 2), "2H": (2, 2), "1H": (1, 2),
+            "4S": (4, 4), "2S": (2, 4), "1S": (1, 4),
+            "2D": (2, 8), "1D": (1, 8), "1Q": (1, 16),
+        }.items()
+    }
 
 from teapot.utils.registers import get_register
 from teapot.datacls.stack_access import StackAccess
 
 
-_AARCH64_VECTOR_ARRANGEMENTS = {
-    ARM64_VAS_16B: (16, 1),
-    ARM64_VAS_8B: (8, 1),
-    ARM64_VAS_4B: (4, 1),
-    ARM64_VAS_1B: (1, 1),
-    ARM64_VAS_8H: (8, 2),
-    ARM64_VAS_4H: (4, 2),
-    ARM64_VAS_2H: (2, 2),
-    ARM64_VAS_1H: (1, 2),
-    ARM64_VAS_4S: (4, 4),
-    ARM64_VAS_2S: (2, 4),
-    ARM64_VAS_1S: (1, 4),
-    ARM64_VAS_2D: (2, 8),
-    ARM64_VAS_1D: (1, 8),
-    ARM64_VAS_1Q: (1, 16),
-}
+def _vector_arrangement(vas):
+    """(lanes, element bytes) of a vector arrangement, or None.
+
+    Capstone 6 encodes it as ``(lane count << 8) | element bits``; a single indexed element such as
+    ``v1.s[1]`` has no lane count and counts as one lane."""
+    if _CAPSTONE5_ARRANGEMENTS is not None:
+        return _CAPSTONE5_ARRANGEMENTS.get(vas)
+    element_bits = vas & 0xff
+    if element_bits not in (8, 16, 32, 64, 128):
+        return None
+    return (vas >> 8) or 1, element_bits // 8
 
 
 _ATOMIC_FETCH_MNEMONIC_PREFIXES = (
@@ -111,7 +103,7 @@ class AArch64OperandMixin:
             return dst, src, 0
         if inst.mnemonic in {"add", "sub"} and len(operands) == 3 and operands[2].type == CS_OP_IMM:
             immediate = operands[2]
-            if immediate.shift.type not in (0, ARM64_SFT_LSL):
+            if immediate.shift.type not in (0, AARCH64_SFT_LSL):
                 return None
             delta = immediate.imm << immediate.shift.value
             return dst, src, delta if inst.mnemonic == "add" else -delta
@@ -187,7 +179,7 @@ class AArch64OperandMixin:
             if not name.startswith("v"):
                 continue
 
-            arrangement = _AARCH64_VECTOR_ARRANGEMENTS.get(getattr(operand, "vas", 0))
+            arrangement = _vector_arrangement(getattr(operand, "vas", 0))
             if arrangement is None:
                 return 0
             lanes, element_size = arrangement
@@ -304,15 +296,15 @@ class AArch64OperandMixin:
             asm = load_original_reg(reg_id, tmp_reg)
 
             extension = getattr(mem_operand, "ext", 0)
-            if extension == ARM64_EXT_UXTW:
+            if extension == AARCH64_EXT_UXTW:
                 asm += f"mov {tmp_reg:32}, {tmp_reg:32}\n"
-            elif extension == ARM64_EXT_SXTW:
+            elif extension == AARCH64_EXT_SXTW:
                 asm += f"sxtw {tmp_reg}, {tmp_reg:32}\n"
             elif raw_reg_name.startswith("w"):
                 asm += f"mov {tmp_reg:32}, {tmp_reg:32}\n"
 
             shift = getattr(mem_operand, "shift", None)
-            if shift is not None and shift.type == ARM64_SFT_LSL and shift.value:
+            if shift is not None and shift.type == AARCH64_SFT_LSL and shift.value:
                 asm += f"lsl {tmp_reg}, {tmp_reg}, #{shift.value}\n"
 
             asm += f"add {addr_reg}, {addr_reg}, {tmp_reg}\n"
