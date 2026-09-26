@@ -61,6 +61,11 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                     return False
                 symbol = forwarding.get(expression.symbol, expression.symbol)
                 names.add(symbol.name)
+        if edge.label.direct and names:
+            # The instruction's relocation identifies the callee. Incidental
+            # labels on its PLT block (for example RISC-V PCREL anchors) are
+            # not additional possible targets and must not veto that binding.
+            return names <= self.linked_function_symbols
         names.update(forwarding.get(symbol, symbol).name for symbol in edge.target.references)
         return bool(names) and names <= self.linked_function_symbols
 
