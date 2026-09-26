@@ -6,6 +6,15 @@ import gtirb
 
 
 class ArchitectureControlFlowMixin(ABC):
+    def direct_transfer_expression(self, block, instructions):
+        """An authoritative relocation for a multi-instruction direct transfer.
+
+        None leaves recognition to the final instruction and CFG symbols.
+        Implementations must prove the instruction pair, not scan unrelated
+        earlier data-address materializations for a convenient symbol.
+        """
+        return None
+
     def skipped_text_restore_guard_patch(self):
         """Restore before executing a text block skipped by target transforms.
 

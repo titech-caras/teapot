@@ -9,6 +9,41 @@ from teapot.utils.misc import generate_distinct_label_name
 
 
 class RISCV64ControlFlowPatchesMixin:
+    def direct_transfer_expression(self, block, instructions):
+        # R_RISCV_CALL[_PLT] belongs to AUIPC, not the following JALR.
+        # DDisasm may also represent the same pair with PCREL HI/LO.
+        if len(instructions) < 2:
+            return None
+        hi, lo = instructions[-2:]
+        if hi.size != 4 or lo.size != 4 or hi.address + 4 != lo.address:
+            return None
+        interval = block.byte_interval
+        offset = block.offset + hi.address - block.address
+        words = interval.contents[offset:offset + 8]
+        if len(words) != 8:
+            return None
+        upper = int.from_bytes(words[:4], 'little')
+        lower = int.from_bytes(words[4:], 'little')
+        source = (upper >> 7) & 31
+        if (upper & 127 != 0x17 or lower & 0x707f != 0x67 or
+                source == 0 or source != (lower >> 15) & 31):
+            return None
+        expression = interval.symbolic_expressions.get(offset)
+        if not isinstance(expression, gtirb.SymAddrConst):
+            return None
+        attrs = gtirb.SymbolicExpression.Attribute
+        low_expression = interval.symbolic_expressions.get(offset + 4)
+        if expression.attributes in (set(), {attrs.PLT}):
+            return expression if low_expression is None else None
+        if (expression.attributes == {attrs.PCREL, attrs.HI} and
+                isinstance(low_expression, gtirb.SymAddrConst) and
+                low_expression.attributes == {attrs.PCREL, attrs.LO} and
+                low_expression.offset == 0 and low_expression.symbol.value is None and
+                low_expression.symbol.referent is not None and
+                low_expression.symbol.referent.address == hi.address):
+            return expression
+        return None
+
     def skipped_text_restore_guard_patch(self):
         """Guard untransformed text using only a temporary stack slot."""
         return self.constraints()(lambda ctx: f"""

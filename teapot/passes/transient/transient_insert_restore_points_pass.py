@@ -42,6 +42,13 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
             return False
         forwarding_aux = block.module.aux_data.get("symbolForwarding")
         forwarding = forwarding_aux.data if forwarding_aux is not None else {}
+        if edge.label.direct:
+            expression = self.arch.direct_transfer_expression(block, instructions)
+            if expression is not None:
+                # A direct pair's relocation names the real callee. Its CFG
+                # destination may instead carry a local PLT/PCREL-anchor name.
+                symbol = forwarding.get(expression.symbol, expression.symbol)
+                return expression.offset == 0 and symbol.name in self.linked_function_symbols
         last = instructions[-1]
         offset = block.offset + last.address - block.address
         names = set()

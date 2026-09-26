@@ -6,6 +6,7 @@ from unittest.mock import patch
 import gtirb
 
 from teapot.arch.x64.architecture import X64Architecture
+from teapot.arch.riscv64.architecture import RISCV64Architecture
 from teapot.datacls.linked_component import LinkedComponent
 from teapot.passes.transient.transient_insert_restore_points_pass import TransientInsertRestorePointsPass
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
@@ -70,6 +71,46 @@ class LinkedComponentTests(unittest.TestCase):
     def test_unknown_and_data_symbols_are_not_named_code_providers(self):
         self.assertFalse(self.target("puts"))
         self.assertFalse(self.target("dispatch_pointer"))
+
+    def riscv_target(self, name='provider', offset=0, low_word=0x000080e7,
+                     direct=True, split_relocation=False, wrong_anchor=False):
+        module = self.module()
+        section = gtirb.Section(name='.text', module=module)
+        words = (0x00000097).to_bytes(4, 'little') + low_word.to_bytes(4, 'little')
+        interval = gtirb.ByteInterval(address=0x1000, contents=words, section=section)
+        block = gtirb.CodeBlock(size=8, byte_interval=interval)
+        plt = gtirb.Section(name='.plt', module=module)
+        target_interval = gtirb.ByteInterval(address=0x2000, contents=bytes(16), section=plt)
+        destination = gtirb.CodeBlock(size=16, byte_interval=target_interval)
+        gtirb.Symbol(name='.L_pcrel_2000', payload=destination, module=module)
+        symbol = gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
+        attrs = gtirb.SymbolicExpression.Attribute
+        interval.symbolic_expressions[0] = gtirb.SymAddrConst(
+            offset, symbol, {attrs.PCREL, attrs.HI} if split_relocation else {attrs.PLT})
+        if split_relocation:
+            anchor = gtirb.Symbol(name='.L_pcrel_1000',
+                                  payload=destination if wrong_anchor else block, module=module)
+            interval.symbolic_expressions[4] = gtirb.SymAddrConst(0, anchor, {attrs.PCREL, attrs.LO})
+        edge = gtirb.Edge(block, destination, gtirb.Edge.Label(type=gtirb.EdgeType.Call, direct=direct))
+        instructions = [SimpleNamespace(address=0x1000 + n, size=4) for n in (0, 4)]
+        visitor = TransientInsertRestorePointsPass(None, section, section, None, RISCV64Architecture(),
+                                                  linked_function_symbols={'provider'})
+        return visitor._targets_linked_component(block, instructions, edge)
+
+    def test_riscv_call_relocation_on_auipc_names_selected_provider(self):
+        self.assertTrue(self.riscv_target())
+        self.assertTrue(self.riscv_target(split_relocation=True))
+
+    def test_riscv_pair_requires_matching_registers_and_call_instruction(self):
+        self.assertFalse(self.riscv_target(low_word=0x000280e7))  # JALR ra,t0,0
+        self.assertFalse(self.riscv_target(low_word=0x0000b083))  # LD ra,0(ra)
+        self.assertFalse(self.riscv_target(direct=False))
+        self.assertFalse(self.riscv_target(split_relocation=True, wrong_anchor=True))
+
+    def test_riscv_pair_does_not_admit_external_or_interior_targets(self):
+        self.assertFalse(self.riscv_target(name='puts'))
+        self.assertFalse(self.riscv_target(offset=8))
+        self.assertFalse(self.riscv_target(offset=-4, split_relocation=True))
 
     def test_coverage_keeps_default_immediate_and_relocates_only_opt_in_index(self):
         arch = X64Architecture()
