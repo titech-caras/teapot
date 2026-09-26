@@ -67,7 +67,7 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                             self.arch.checkpoint_patch(block.uuid))))
                 except NotEnoughFreeRegistersException:
                     self.insert_at(block, conditional_jump_offset, Patch.from_function(
-                        self.arch.checkpoint_patch(block.uuid, False)))
+                        self.arch.checkpoint_patch(block.uuid, use_scratch_registers=False)))
                 return
 
             self.insert_at(block, conditional_jump_offset, Patch.from_function(

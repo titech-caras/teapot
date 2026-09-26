@@ -14,7 +14,7 @@ class X64CheckpointPatchesMixin:
     def can_insert_restore_point(self, live_registers) -> bool:
         return live_registers is None or "rflags" not in (r.name for r in live_registers)
 
-    def checkpoint_patch(self, block_uuid: UUID, use_scratch_registers: bool = True):
+    def checkpoint_patch(self, block_uuid: UUID, *, use_scratch_registers: bool = True):
         @self.constraints(scratch_registers=1 if use_scratch_registers else 0)
         def patch(ctx: InsertionContext):
             r = ctx.scratch_registers[0] if use_scratch_registers else "rax"
