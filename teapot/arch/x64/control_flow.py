@@ -124,7 +124,7 @@ class X64ControlFlowPatchesMixin:
     def instruction_must_rollback(self, instruction) -> bool:
         if instruction.mnemonic in {
             "lfence", "mfence", "sfence", "serialize", "cpuid",
-            "syscall", "sysenter",
+            "syscall", "sysenter", "int3", "int1", "int",
         }:
             return True
 
