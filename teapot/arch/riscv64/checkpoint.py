@@ -77,7 +77,9 @@ class RISCV64CheckpointPatchesMixin:
             sd a0, 0(sp)
             sd a1, 8(sp)
             sd ra, 16(sp)
+            sd a2, 24(sp)
             {self.call_symbol("libcheckpoint_enable")}
+            ld a2, 24(sp)
             ld ra, 16(sp)
             ld a1, 8(sp)
             ld a0, 0(sp)

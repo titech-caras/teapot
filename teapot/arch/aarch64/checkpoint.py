@@ -76,9 +76,9 @@ class AArch64CheckpointPatchesMixin:
     def init_library_patch(self):
         return self.constraints()(lambda ctx: """
             stp x0, x1, [sp, #-32]!
-            str x30, [sp, #16]
+            stp x2, x30, [sp, #16]
             bl libcheckpoint_enable
-            ldr x30, [sp, #16]
+            ldp x2, x30, [sp, #16]
             ldp x0, x1, [sp], #32
         """)
 
