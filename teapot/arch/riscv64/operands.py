@@ -1,5 +1,4 @@
 import re
-from dataclasses import dataclass
 from itertools import count
 from typing import Optional, Set
 
@@ -18,10 +17,6 @@ _RISCV64_STORE_MNEMONICS = {"sb", "sh", "sw", "sd", "fsw", "fsd"}
 _RISCV64_COMPRESSED_LOAD_MNEMONICS = {"c.lw", "c.ld", "c.lwsp", "c.ldsp", "c.flw", "c.fld", "c.flwsp", "c.fldsp"}
 _RISCV64_COMPRESSED_STORE_MNEMONICS = {"c.sw", "c.sd", "c.swsp", "c.sdsp", "c.fsw", "c.fsd", "c.fswsp", "c.fsdsp"}
 _RISCV64_BRANCH_MNEMONICS = {"beq", "bne", "blt", "bge", "bltu", "bgeu", "beqz", "bnez"}
-_RISCV64_READ_WRITE_OPERAND0_MNEMONICS = {
-    "c.add", "c.addi", "c.addi16sp", "c.addiw", "c.and", "c.andi",
-    "c.or", "c.slli", "c.srai", "c.srli", "c.sub", "c.subw", "c.xor",
-}
 _RISCV64_ATOMIC_MEMORY_MNEMONIC_RE = re.compile(
     r"^(amo(?:add|and|maxu?|minu?|or|swap|xor)|lr|sc)\.([wd])"
     r"(?:\.(?:aqrl|aq|rl))?$"
@@ -32,10 +27,10 @@ _PCREL_ADDRESS_LABEL_COUNTER = count()
 def riscv64_atomic_memory_access(mnemonic: str):
     """Return the memory access kind and width for an A-extension operation.
 
-    The RISC-V decoder used by Teapot represents the address in LR/SC and AMO
-    instructions as an ordinary register operand rather than ``CS_OP_MEM``.
-    Keep the architectural classification here so all consumers (memlog,
-    DIFT, memory checks, and register liveness) see the same memory operation.
+    Capstone reports the LR/SC and AMO address as a memory operand but gives
+    RISC-V memory operands no size. Keep the architectural classification
+    here so all consumers (memlog, DIFT, memory checks) see the same memory
+    operation.
     """
     match = _RISCV64_ATOMIC_MEMORY_MNEMONIC_RE.fullmatch(mnemonic.lower())
     if match is None:
@@ -45,26 +40,6 @@ def riscv64_atomic_memory_access(mnemonic: str):
     kind = "amo" if operation.startswith("amo") else operation
     width = 4 if match.group(2) == "w" else 8
     return kind, width
-
-
-def riscv64_atomic_read_operand_indices(mnemonic: str):
-    access = riscv64_atomic_memory_access(mnemonic)
-    if access is None:
-        return ()
-    kind, _ = access
-    if kind == "lr":
-        return (1,)
-    return (1, 2)
-
-
-def riscv64_atomic_written_operand_indices(mnemonic: str):
-    return (0,) if riscv64_atomic_memory_access(mnemonic) is not None else ()
-
-
-@dataclass(frozen=True)
-class Riscv64FallbackMemOperand:
-    base_name: str
-    disp: int
 
 
 class RISCV64OperandMixin:
@@ -97,9 +72,7 @@ class RISCV64OperandMixin:
 
     @staticmethod
     def mem_operand_base_name(inst, operand) -> Optional[str]:
-        """Base register of a memory operand: Capstone's MEM operand or Teapot's fallback operand."""
-        if isinstance(operand, Riscv64FallbackMemOperand):
-            return operand.base_name
+        """Base register of a memory operand."""
         return inst.reg_name(operand.mem.base) if operand.mem.base else None
 
     def stack_memory_access(self, inst):
@@ -107,7 +80,7 @@ class RISCV64OperandMixin:
         if mem is None:
             return None
         base = self.register_from_name(self.abi, self.mem_operand_base_name(inst, mem))
-        displacement = mem.disp if isinstance(mem, Riscv64FallbackMemOperand) else mem.mem.disp
+        displacement = mem.mem.disp
         return_offset = None
         if inst.mnemonic in {"ld", "sd", "c.ld", "c.sd", "c.ldsp", "c.sdsp"}:
             if inst.operands[0].type == CS_OP_REG and inst.reg_name(inst.operands[0].reg) == "ra":
@@ -221,84 +194,10 @@ class RISCV64OperandMixin:
     def is_branch_mnemonic(cls, mnemonic: str) -> bool:
         return cls.bare_mnemonic(mnemonic) in _RISCV64_BRANCH_MNEMONICS
 
-    @classmethod
-    def fallback_mem_operand(cls, inst: CsInsn) -> Optional[Riscv64FallbackMemOperand]:
-        mnemonic = inst.mnemonic.lower()
-        atomic_access = riscv64_atomic_memory_access(mnemonic)
-        if not (
-                cls.is_load_mnemonic(mnemonic) or
-                cls.is_store_mnemonic(mnemonic) or
-                atomic_access is not None):
-            return None
-
-        if atomic_access is not None:
-            match = re.search(r"\(([^(),\s]+)\)\s*$", inst.op_str)
-            if match is None:
-                return None
-            return Riscv64FallbackMemOperand(match.group(1), 0)
-
-        match = re.search(r"(^|,\s*)(-?(?:0x[0-9a-fA-F]+|\d+))\(([^()]+)\)\s*$", inst.op_str)
-        if match is None:
-            return None
-
-        return Riscv64FallbackMemOperand(match.group(3).strip(), int(match.group(2), 0))
-
-    @classmethod
-    def fallback_access_regs(cls, abi, inst: CsInsn, acc_type: int,
-                             flag_name: Optional[str]) -> Set[Register]:
-        mnemonic = inst.mnemonic.lower()
-        atomic_access = riscv64_atomic_memory_access(mnemonic)
-        is_store = cls.is_store_mnemonic(mnemonic)
-        is_branch = cls.is_branch_mnemonic(mnemonic)
-        read_write_operand0 = mnemonic in _RISCV64_READ_WRITE_OPERAND0_MNEMONICS
-        result = set()
-
-        for idx, operand in enumerate(inst.operands):
-            if operand.type == CS_OP_MEM:
-                if acc_type == 0 and operand.mem.base:
-                    reg = register_from_name(abi, inst.reg_name(operand.mem.base), flag_name, ("zero",))
-                    if reg is not None:
-                        result.add(reg)
-                continue
-
-            if operand.type != CS_OP_REG:
-                continue
-
-            access = getattr(operand, "access", 0)
-            if access:
-                if not (access & (CS_AC_READ if acc_type == 0 else CS_AC_WRITE)):
-                    continue
-            elif atomic_access is not None:
-                operand_indices = (
-                    riscv64_atomic_read_operand_indices(mnemonic)
-                    if acc_type == 0 else
-                    riscv64_atomic_written_operand_indices(mnemonic)
-                )
-                if idx not in operand_indices:
-                    continue
-            elif acc_type == 1:
-                if is_store or is_branch or idx != 0:
-                    continue
-            elif not is_store and not is_branch and idx == 0 and not read_write_operand0:
-                continue
-
-            reg = register_from_name(abi, inst.reg_name(operand.reg), flag_name, ("zero",))
-            if reg is not None:
-                result.add(reg)
-
-        return result
-
     @staticmethod
-    def fallback_register_from_mem_operand(abi, inst: CsInsn, operand,
-                                           flag_name: Optional[str] = None) -> Set[Register]:
+    def registers_from_mem_operand(abi, inst: CsInsn, operand,
+                                   flag_name: Optional[str] = None) -> Set[Register]:
         regs = set()
-
-        if isinstance(operand, Riscv64FallbackMemOperand):
-            reg = register_from_name(abi, operand.base_name, flag_name, ("zero",))
-            if reg is not None:
-                regs.add(reg)
-            return regs
-
         if operand is None or getattr(operand, "type", None) != CS_OP_MEM:
             return regs
 
@@ -317,7 +216,7 @@ class RISCV64OperandMixin:
         for operand in operands:
             result.update(
                 reg.name
-                for reg in cls.fallback_register_from_mem_operand(abi, inst, operand)
+                for reg in cls.registers_from_mem_operand(abi, inst, operand)
                 if reg.name.lower() in scratch_names
             )
         return result
@@ -340,10 +239,9 @@ class RISCV64OperandMixin:
             return 8
         return 8
 
-    @classmethod
-    def memory_operand(cls, inst):
-        return next(iter(op for op in inst.operands if op.type == CS_OP_MEM), None) \
-            or cls.fallback_mem_operand(inst)
+    @staticmethod
+    def memory_operand(inst):
+        return next((op for op in inst.operands if op.type == CS_OP_MEM), None)
 
     def mem_operand_address_snippet(self, abi, inst, addr_reg, tmp_reg, mem_operand,
                                     stack_adjustment: int = 0, **kwargs) -> str:
@@ -387,16 +285,6 @@ class RISCV64OperandMixin:
                 """
             return f"mv {addr_reg}, {get_register(abi, base_name)}\n" if base_name else f"li {addr_reg}, 0\n"
 
-        if isinstance(mem_operand, Riscv64FallbackMemOperand):
-            base_name = mem_operand.base_name
-            asm = load_original_reg(base_name)
-            disp = mem_operand.disp + (
-                stack_adjustment
-                if abi.normalize_register_name(base_name) == "sp" else 0)
-            if disp:
-                asm += self.add_constant_from_base(addr_reg, addr_reg, tmp_reg, disp)
-            return asm
-
         base = mem_operand.mem.base
         base_name = inst.reg_name(base) if base else None
         disp = mem_operand.mem.disp + (
@@ -411,7 +299,7 @@ class RISCV64OperandMixin:
         if flag_name is None:
             flag_register = abi.flag_register()
             flag_name = flag_register.name if flag_register is not None else None
-        return self.fallback_register_from_mem_operand(abi, inst, operand, flag_name)
+        return self.registers_from_mem_operand(abi, inst, operand, flag_name)
 
     def mem_operand_address_tag_registers(self, abi, inst, operand, *,
                                           block: Optional[gtirb.CodeBlock] = None,

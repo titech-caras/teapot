@@ -22,14 +22,6 @@ class RISCV64RegisterMixin:
 
         raise KeyError(f"No RISC-V x-register name for {reg}")
 
-    def access_registers(self, abi, inst, acc_type: int) -> Set:
-        flag_register = abi.flag_register()
-        flag_name = flag_register.name if flag_register is not None else None
-        return (
-            super().access_registers(abi, inst, acc_type) |
-            self.fallback_access_regs(abi, inst, acc_type, flag_name)
-        )
-
     @staticmethod
     def is_stack_pointer_update(inst) -> bool:
         mnemonic = inst.mnemonic.lower()
