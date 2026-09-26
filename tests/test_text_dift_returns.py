@@ -47,12 +47,12 @@ func:
         dift = self._pass(X64Architecture(), X64TextDiftPropagationLLVMPass)
         body = dift._extract_function_asm("""
 func:
-    cmpb $0, condition(%rip)
+    cmpb $0, dift_reg_tags(%rip)
     jne .LBB0_cold
 .LBB0_exit:
     retq
 .LBB0_cold:
-    movb $1, visited(%rip)
+    movb $1, dift_reg_tags+1(%rip)
     jmp .LBB0_exit
 .Lfunc_end0:
     .size func, .Lfunc_end0-func
@@ -72,7 +72,9 @@ probe:
     .section .note.GNU-stack,"",@progbits
 """)
             (root / "main.c").write_text("""
-unsigned char condition, visited, epilogue;
+unsigned char dift_reg_tags[48], epilogue;
+#define condition dift_reg_tags[0]
+#define visited dift_reg_tags[1]
 extern void probe(void);
 int main(void) {
     for (condition = 0; condition < 2; ++condition) {

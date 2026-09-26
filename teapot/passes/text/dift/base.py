@@ -94,6 +94,8 @@ define dso_local void @func() local_unnamed_addr #0 {{
 ret void
 }}
 
+attributes #0 = {{ "no-builtins" }}
+
 !0 = !{{!1}}
 !1 = distinct !{{!1, !3, !"teapot.dift.shadow"}}
 !2 = !{{!4}}
@@ -165,17 +167,19 @@ ret void
         self.llvm_ir.append(f"{l}:")
 
     def _extract_function_asm(self, assembly: str) -> str:
-        match = re.search(r"func:(.+)\.Lfunc_end0:", assembly, re.S)
+        match = re.search(r"^func:[^\n]*\n(.*?)^\.Lfunc_end0:", assembly, re.S | re.M)
         if match is None:
             raise ValueError("Could not find LLVM generated func body")
         body = match[1].strip()
         lines = []
         for line in body.splitlines():
-            stripped = line.strip()
+            # AArch64 '#' prefixes immediates; the other targets use it for
+            # comments. Labels may carry LLVM basic-block comments too.
+            stripped = line.split("//" if self.arch.name == "aarch64" else "#", 1)[0].strip()
             if not stripped:
                 continue
             if stripped.endswith(":"):
-                lines.append(line)
+                lines.append(stripped)
                 continue
             if stripped.startswith("."):
                 continue
@@ -186,12 +190,49 @@ ret void
                 assert self.ASM_RETURN_BRANCH is not None
                 lines.append(f"{self.ASM_RETURN_BRANCH} .Lfunc_end0")
             else:
-                lines.append(line)
+                lines.append(stripped)
         # Only the final return may become fallthrough to the patch epilogue.
         if lines and lines[-1] == f"{self.ASM_RETURN_BRANCH} .Lfunc_end0":
             lines.pop()
         lines.append(".Lfunc_end0:")
+        self._validate_function_asm(lines)
         return "\n".join(lines)
+
+    def _validate_function_asm(self, lines):
+        """Replay patches are self-contained, except for their two globals.
+
+        Calling an intercepted libc helper on protected tag storage is not
+        valid instrumentation. Likewise, LLVM's out-of-function constant pools
+        are discarded by extraction and must never become unresolved symbols.
+        """
+        symbols = {line[:-1] for line in lines if line.endswith(":")}
+        symbols.update({"dift_reg_tags", "scratchpad"})
+        if self.arch.name == "x64":
+            registers = r"%[a-z][a-z0-9]*"
+            modifiers = set()
+        elif self.arch.name == "aarch64":
+            registers = r"\b(?:[xwqdsbh]\d+|v\d+(?:\.[0-9]*[bhsdq])?|sp|wsp|xzr|wzr)\b"
+            modifiers = {"lo12", "lsl", "lsr", "asr", "ror", "uxtb", "uxth", "uxtw", "uxtx",
+                         "sxtb", "sxth", "sxtw", "sxtx", "eq", "ne", "cs", "hs", "cc", "lo",
+                         "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al", "nv"}
+        else:
+            registers = r"\b(?:zero|ra|sp|gp|tp|[ast]\d+|[xf]\d+|f[ast]\d+)\b"
+            modifiers = {"hi", "lo", "pcrel_hi", "pcrel_lo", "rne", "rtz", "rdn", "rup", "rmm", "dyn"}
+        for line in lines:
+            if line.endswith(":"):
+                continue
+            parts = line.split(None, 1)
+            mnemonic = parts[0]
+            if mnemonic in {"call", "callq", "lcall", "bl", "blr", "tail", "jal", "jalr", "c.jal", "c.jalr"}:
+                raise ValueError(f"LLVM DIFT replay contains a call: {line}")
+            if len(parts) == 1:
+                continue
+            operands = re.sub(registers, "", parts[1])
+            operands = re.sub(r"(?<![\w.])(?:0x[0-9a-fA-F]+|\d+)(?![\w.])", "", operands)
+            for token in re.findall(r"[A-Za-z_.$][A-Za-z0-9_.$]*", operands):
+                # '$' by itself is x64's immediate marker, not a symbol.
+                if token != "$" and token.lstrip("$") not in symbols | modifiers:
+                    raise ValueError(f"LLVM DIFT replay references an outside symbol {token}: {line}")
 
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         self._reset()
