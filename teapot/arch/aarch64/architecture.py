@@ -59,10 +59,16 @@ class AArch64Architecture(
         from teapot.passes.preprocessing.normalize_aarch64_startup_pass import (
             NormalizeAArch64StartupPass,
         )
+        from teapot.passes.preprocessing.widen_aarch64_byte_jump_tables_pass import (
+            WidenAArch64ByteJumpTablesPass,
+        )
 
         passes = [NormalizeAArch64RelocationsPass(decoder)]
         if self.needs_startup_normalization():
             passes.append(NormalizeAArch64StartupPass(decoder))
+        # Widen only after all ordinary relocation normalization has applied;
+        # original encoded page offsets must not overwrite moved data labels.
+        passes.append(WidenAArch64ByteJumpTablesPass())
         return passes
 
     def relax_conditional_branches(self, module) -> None:

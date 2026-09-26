@@ -152,5 +152,91 @@ void _start(void) {
             with self.assertRaisesRegex(ValueError, 'ABI function endpoint'):
                 annotate_assembly(assembly, self.manifest)
 
+    def test_debug_bound_table_survives_normalization_and_large_growth(self):
+        from gtirb_rewriting._modify.edit import edit_byte_interval
+        from gtirb_rewriting.abi import _ABIS
+        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from teapot.arch.aarch64.architecture import AArch64Architecture
+        from teapot.pipeline import TeapotPipeline
+        from teapot.passes.preprocessing.widen_aarch64_byte_jump_tables_pass import WidenAArch64ByteJumpTablesPass
+
+        with tempfile.TemporaryDirectory(prefix='typed-table-') as directory:
+            root = Path(directory)
+            source = root / 'fixture.c'
+            source.write_text(r'''
+int selected[2];
+__attribute__((noinline, noclone)) void *pointer_switch(unsigned index) {
+    register void *result __asm__("x0");
+    __asm__ volatile(
+        "mov w8,w0\n"
+        "adrp x1,pointer_table\n"
+        "add x1,x1,:lo12:pointer_table\n"
+        "cmp w8,#1\n"
+        "b.hi pointer_case0\n"
+        "ldrb w9,[x1,w8,uxtw]\n"
+        "adr x11,pointer_case0\n"
+        "add x9,x11,w9,sxtb #2\n"
+        "br x9\n"
+        "pointer_case0:\n"
+        "adrp x0,selected\n"
+        "add x0,x0,:lo12:selected\n"
+        "b pointer_return\n"
+        "pointer_case1:\n"
+        "adrp x0,selected\n"
+        "add x0,x0,:lo12:selected\n"
+        "add x0,x0,#4\n"
+        "pointer_return:\n"
+        ".pushsection .rodata\n"
+        ".type pointer_table,%%object\n"
+        "pointer_table: .byte 0,(pointer_case1-pointer_case0)/4\n"
+        ".size pointer_table,.-pointer_table\n"
+        ".popsection\n"
+        : "=r"(result) : "0"((unsigned long)index) : "x1", "x8", "x9", "x11", "cc");
+    return result;
+}
+void _start(void) {
+    long failed = pointer_switch(0) != &selected[0] || pointer_switch(1) != &selected[1]
+                  || pointer_switch(2) != &selected[0];
+    register long status __asm__("x0") = failed;
+    register long call __asm__("x8") = 93;
+    __asm__ volatile("svc #0" : "+r"(status) : "r"(call) : "memory");
+    __builtin_unreachable();
+}
+''')
+            self.run_command(['aarch64-linux-gnu-gcc', *self.flags, '-O1', '-g', source,
+                              '-o', root / 'original'])
+            self.run_command(['ddisasm', root / 'original', '--ir', root / 'original.gtirb', '-j', '1'])
+            manifest = produce(root / 'original', root / 'original.gtirb')
+            self.assertEqual({r['name'] for r in manifest['records']}, {'pointer_switch'})
+            printer = os.environ.get('PPRINTER_PATH', 'gtirb-pprinter')
+            self.run_command([printer, '--ir', root / 'original.gtirb', '--asm', root / 'plain.S'])
+            (root / 'marked.S').write_text(annotate_assembly((root / 'plain.S').read_text(), manifest))
+            self.run_command(['aarch64-linux-gnu-gcc', *self.flags, '-x', 'assembler', root / 'marked.S',
+                              '-o', root / 'marked'])
+            self.run_command(['ddisasm', root / 'marked', '--ir', root / 'linked.gtirb', '-j', '1'])
+            ir = gtirb.IR.load_protobuf(root / 'linked.gtirb')
+            module = ir.modules[0]
+            with self.assertRaisesRegex(ValueError, 'return value'):
+                WidenAArch64ByteJumpTablesPass().end_module(module, [])
+            bind(root / 'marked', manifest, ir)
+            pipeline = TeapotPipeline(ir)
+            pipeline.module = module
+            pipeline.arch = AArch64Architecture()
+            pipeline.arch.install_decoder_compat()
+            pipeline.arch.install_rewriting_compat()
+            pipeline.abi = pipeline.arch.register_abi(_ABIS)
+            pipeline.decoder = CachedGtirbInstructionDecoder(module.isa)
+            pipeline._run_normalize_passes()
+            self.assertNotIn(POINTER_RETURNS, module.aux_data)
+            block = next(module.symbols_named('pointer_case0')).referent
+            edit_byte_interval(block.byte_interval, block.offset + 4, 0, bytes.fromhex('1f2003d5') * 512)
+            ir.save_protobuf(root / 'grown.gtirb')
+            self.run_command([printer, '--ir', root / 'grown.gtirb', '--asm', root / 'grown.S'])
+            self.run_command(['aarch64-linux-gnu-gcc', *self.flags, '-x', 'assembler', root / 'grown.S',
+                              '-o', root / 'grown'])
+            for variant in ('original', 'marked', 'grown'):
+                self.run_command(['qemu-aarch64', root / variant])
+
+
 if __name__ == '__main__':
     unittest.main()
