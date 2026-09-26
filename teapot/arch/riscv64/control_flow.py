@@ -3,6 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 import gtirb
+from gtirb_live_register_analysis.arch.riscv64 import riscv64_link_register
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.utils.misc import generate_distinct_label_name
@@ -241,7 +242,7 @@ class RISCV64ControlFlowPatchesMixin:
         )
 
     def indirect_branch_operand(self, edge_type, last_inst, block: gtirb.CodeBlock = None) -> Optional[str]:
-        if edge_type == gtirb.cfg.Edge.Type.Return or last_inst.mnemonic == "ret":
+        if edge_type == gtirb.cfg.Edge.Type.Return or self.is_return_instruction(last_inst):
             return "ra"
 
         operands = [operand.strip() for operand in last_inst.op_str.split(",") if operand.strip()]
@@ -265,6 +266,25 @@ class RISCV64ControlFlowPatchesMixin:
             "ecall", "ebreak", "fence", "fence.i", "sfence.vma",
             "wfi", "sret", "mret", "uret",
         }
+
+    @staticmethod
+    def is_return_instruction(instruction) -> bool:
+        """ret/c.jr ra (Capstone 5) or `jalr zero, 0(ra)` (Capstone 6's real form)."""
+        operands = instruction.operands
+        if instruction.mnemonic == "ret":
+            return True
+        if instruction.mnemonic in {"c.jr", "jr"}:
+            return len(operands) == 1 and instruction.reg_name(operands[0].reg) == "ra"
+        return (instruction.mnemonic == "jalr" and len(operands) == 3 and
+                riscv64_link_register(instruction) == "zero" and
+                instruction.reg_name(operands[1].reg) == "ra" and operands[2].imm == 0)
+
+    @staticmethod
+    def is_unconditional_jump(instruction) -> bool:
+        """A direct jump without a link: j/c.j (Capstone 5) or `jal zero, target` (Capstone 6)."""
+        if instruction.mnemonic in {"j", "c.j"}:
+            return True
+        return instruction.mnemonic == "jal" and riscv64_link_register(instruction) == "zero"
 
     def is_control_transfer_instruction(self, instruction) -> bool:
         mnemonic = instruction.mnemonic

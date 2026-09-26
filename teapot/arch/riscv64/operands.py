@@ -88,16 +88,19 @@ class RISCV64OperandMixin:
             return dst, dst, operands[1].imm
         return None
 
+    @staticmethod
+    def mem_operand_base_name(inst, operand) -> Optional[str]:
+        """Base register of a memory operand: Capstone's MEM operand or Teapot's fallback operand."""
+        if isinstance(operand, Riscv64FallbackMemOperand):
+            return operand.base_name
+        return inst.reg_name(operand.mem.base) if operand.mem.base else None
+
     def stack_memory_access(self, inst):
         mem = self.memory_operand(inst)
         if mem is None:
             return None
-        if isinstance(mem, Riscv64FallbackMemOperand):
-            base = self.register_from_name(self.abi, mem.base_name)
-            displacement = mem.disp
-        else:
-            base = self.register_from_name(self.abi, inst.reg_name(mem.mem.base))
-            displacement = mem.mem.disp
+        base = self.register_from_name(self.abi, self.mem_operand_base_name(inst, mem))
+        displacement = mem.disp if isinstance(mem, Riscv64FallbackMemOperand) else mem.mem.disp
         return_offset = None
         if inst.mnemonic in {"ld", "sd", "c.ld", "c.sd", "c.ldsp", "c.sdsp"}:
             if inst.operands[0].type == CS_OP_REG and inst.reg_name(inst.operands[0].reg) == "ra":

@@ -31,8 +31,19 @@ def aarch64_decoder() -> capstone.Cs:
 
 
 def configure_riscv64(decoder: capstone.Cs) -> capstone.Cs:
-    """Set the detail options Teapot relies on for a RISC-V decoder and return it."""
-    decoder.detail = True
+    """Real, uncompressed RISC-V instructions with complete details under Capstone 6.
+
+    Capstone 6's alias details drop the link register of `jal`, `jalr` and `ret` from the operands, the
+    register accesses and the call group; the uncompressed real form lists every operand. A compressed
+    instruction keeps its 2-byte size. gtirb-live-register-analysis configures its decoder the same way.
+    Capstone 5 has neither option and is left as is.
+    """
+    syntax = getattr(capstone, "CS_OPT_SYNTAX_UNCOMPRESSED_REAL", None)
+    if syntax is None:
+        decoder.detail = True
+        return decoder
+    decoder.syntax = syntax
+    decoder.option(capstone.CS_OPT_DETAIL, capstone.CS_OPT_ON | capstone.CS_OPT_DETAIL_UNCOMPRESSED_REAL)
     return decoder
 
 

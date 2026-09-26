@@ -1,6 +1,7 @@
 from typing import Iterable, List, Optional, Tuple
 
 from gtirb_live_register_analysis.abi import _RISCV64_ELF as _RISCV64_ELF_BASE
+from gtirb_live_register_analysis.arch.riscv64 import riscv64_is_call
 from gtirb_rewriting.abi import _PatchRegisterAllocation
 from gtirb_rewriting.assembly import Constraints, Register, _AsmSnippet
 
@@ -34,7 +35,7 @@ class _RISCV64_ELF(ConservativeRegisterAllocationMixin, _RISCV64_ELF_BASE):
         return set()
 
     def is_call_instruction(self, instruction):
-        return instruction.mnemonic in ("call", "jal", "jalr", "c.jal", "c.jalr")
+        return riscv64_is_call(instruction)
 
     @staticmethod
     def _load_address(reg: Register, symbol: str) -> str:

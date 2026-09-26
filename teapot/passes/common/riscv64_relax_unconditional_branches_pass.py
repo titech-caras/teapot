@@ -38,7 +38,7 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
             if not instructions:
                 continue
             instruction = instructions[-1]
-            if instruction.mnemonic not in {"j", "c.j"}:
+            if not self.arch.is_unconditional_jump(instruction):
                 continue
 
             byte_interval_offset = block.offset + instruction.address - block.address

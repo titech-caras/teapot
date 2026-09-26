@@ -28,7 +28,7 @@ class RISCV64AtomicOperandTests(unittest.TestCase):
                 operand = self.arch.memory_operand(inst)
 
                 self.assertEqual(inst.mnemonic, mnemonic)
-                self.assertEqual(operand.base_name, base)
+                self.assertEqual(self.arch.mem_operand_base_name(inst, operand), base)
                 self.assertEqual(self.arch.mem_operand_size(inst, operand), width)
                 self.assertEqual(
                     self.arch.mem_operand_is_read(inst, operand), reads_memory)
