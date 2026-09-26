@@ -8,6 +8,19 @@ from teapot.datacls.dift_layout import DiftLayout, LAYOUTS, DEFAULT_LAYOUTS
 
 
 class DiftLayoutRangesTest(unittest.TestCase):
+    def test_native_secondary_allocations_have_high_mapping_headroom(self):
+        # Shared objects, allocator reservations, and large mmap-backed objects
+        # need more than the top 256 MiB. Reserve room for these application
+        # mappings as well as their disjoint DIFT tags (checked below).
+        for name, user_end in (("aarch64-vma39", 1 << 39),
+                               ("aarch64-vma48", 1 << 48),
+                               ("riscv64-sv39", 1 << 38)):
+            layout = LAYOUTS[name]
+            for distance in (512 << 20, 2 << 30):
+                with self.subTest(layout=name, distance=distance):
+                    address = user_end - distance
+                    self.assertTrue(any(lo <= address < hi for lo, hi in layout.app_ranges))
+
     def test_x64_default_covers_modern_asan_heap(self):
         self.assertEqual(DEFAULT_LAYOUTS["x64"], "x64-la48-asan-new")
         layout = LAYOUTS[DEFAULT_LAYOUTS["x64"]]
