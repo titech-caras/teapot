@@ -1,6 +1,8 @@
 """The opt-in backend omits marker loads only for BTI-checked transfers."""
 from contextlib import redirect_stdout
 import io
+from pathlib import Path
+import re
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -17,8 +19,13 @@ from test_live_register_preservation import make_module, symbol_references
 
 class AArch64BTIBackendTests(unittest.TestCase):
     def test_marker_replaces_first_word_only_in_opt_in_architecture(self):
-        self.assertEqual(AArch64Architecture.MAGIC_WORDS, (0xd280229f, 0xd280a29f))
-        self.assertEqual(AArch64BTIArchitecture.MAGIC_WORDS, (0xd50324df, 0xd280a29f))
+        # The runtime recognises a BTI target by the words it defines in aarch64_bti.c.
+        source = (Path(__file__).resolve().parents[1] / 'libcheckpoint/src/aarch64_bti.c').read_text()
+        runtime = {name: int(value, 16) for name, value in re.findall(
+            r'^#define (BTI_JC|SECOND_MAGIC) UINT32_C\((0x[0-9a-f]+)\)$', source, re.MULTILINE)}
+        self.assertEqual(AArch64BTIArchitecture.MAGIC_WORDS, (runtime['BTI_JC'], runtime['SECOND_MAGIC']))
+        self.assertEqual(AArch64Architecture.MAGIC_WORDS[1], runtime['SECOND_MAGIC'])
+        self.assertNotEqual(AArch64Architecture.MAGIC_WORDS[0], runtime['BTI_JC'])
         self.assertEqual(InstrumentationOptions().target_identification, 'software')
 
     def test_fast_path_retains_four_bounds_and_removes_marker_loads(self):
