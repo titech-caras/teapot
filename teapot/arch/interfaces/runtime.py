@@ -7,7 +7,6 @@ class ArchitectureRuntimeMixin(ABC):
     NEEDS_STARTUP_NORMALIZATION = False
     RUN_TEXT_PASSES_BEFORE_TRANSIENT = False
     SUPPORTS_DIFT_EXT_CALLS = True
-    TEXT_CHECKPOINTS_IN_MAIN_TEXT_PASS = True
     NEEDS_LATE_TEXT_CHECKPOINTS = False
     NEEDS_CONDITIONAL_BRANCH_RELAX = False
 
@@ -31,9 +30,6 @@ class ArchitectureRuntimeMixin(ABC):
 
     def supports_dift_ext_calls(self) -> bool:
         return self.SUPPORTS_DIFT_EXT_CALLS
-
-    def text_checkpoints_in_main_text_pass(self) -> bool:
-        return self.TEXT_CHECKPOINTS_IN_MAIN_TEXT_PASS
 
     def needs_late_text_checkpoints(self) -> bool:
         return self.NEEDS_LATE_TEXT_CHECKPOINTS

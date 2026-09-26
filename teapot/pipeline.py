@@ -349,7 +349,10 @@ class TeapotPipeline:
         if self.options.enable_dift:
             pass_manager.add(self.arch.create_text_dift_pass(
                 self.reg_manager, self.text_section, self.decoder, self.dift_layout))
-        if self.options.enable_checkpoints and self.arch.text_checkpoints_in_main_text_pass():
+        # Register checkpoints while offsets still identify application branches: once RISC-V
+        # target guards split blocks, an original UUID can belong to a guard's checkpoint_cnt
+        # branch inside its first-spill lifetime.
+        if self.options.enable_checkpoints:
             pass_manager.add(InsertCheckpointsPass(
                 self.reg_manager, self.text_section, self.decoder, self.arch,
                 self.checkpoint_block_uuids, self.checkpoint_spare_registers))
@@ -418,15 +421,9 @@ class TeapotPipeline:
 
     def _run_late_text_checkpoint_passes(self):
         pass_manager = PassManager()
-        # This pass visits each eligible block once and does not run live-register
-        # analysis, so caching the expanded text disassembly only raises the peak
-        # during rewrite application.
+        # These passes run no live-register analysis, so caching the expanded text
+        # disassembly would only raise the peak during rewrite application.
         checkpoint_decoder = GtirbInstructionDecoder(self.module.isa)
-        if (self.options.enable_checkpoints and
-                not self.arch.text_checkpoints_in_main_text_pass()):
-            pass_manager.add(InsertCheckpointsPass(
-                None, self.text_section, checkpoint_decoder, self.arch,
-                self.checkpoint_block_uuids, self.checkpoint_spare_registers))
         for arch_pass in self.arch.late_text_checkpoint_passes(
                 text_section=self.text_section,
                 transient_section=self.transient_section,
