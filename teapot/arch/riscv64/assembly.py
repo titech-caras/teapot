@@ -9,7 +9,8 @@ class RISCV64AssemblyMixin:
     @classmethod
     def add_constant_from_base(cls, dst_reg, base_reg, tmp_reg, value: int) -> str:
         if value == 0:
-            return "" if dst_reg == base_reg else f"mv {dst_reg}, {base_reg}\n"
+            # By name: the base may be an allocated Register or, from a jalr operand, a plain name.
+            return "" if f"{dst_reg}" == f"{base_reg}" else f"mv {dst_reg}, {base_reg}\n"
         if -2048 <= value <= 2047:
             return f"addi {dst_reg}, {base_reg}, {value}\n"
         if tmp_reg is None:

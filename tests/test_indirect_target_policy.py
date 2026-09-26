@@ -174,9 +174,15 @@ int main(void) {
                       "x0", ("x8", "x9", "x10"), "mov w0,")
 
     def test_riscv64_exact_target_policy(self):
-        self._execute(RISCV64Architecture(), "riscv64-linux-gnu-gcc",
-                      ["qemu-riscv64", "-L", "/usr/riscv64-linux-gnu"],
-                      "a0", ("t3", "t4", "t5"), "li a0,")
+        # The rewriter hands the patch Register objects, and Capstone 6 prints `jr a0` as
+        # `jalr zero, 0(a0)`; a return keeps the bare `ra`.
+        arch = RISCV64Architecture()
+        scratch = tuple(arch.abi.get_register(name) for name in ("t3", "t4", "t5"))
+        for operand in ("a0", "0(a0)"):
+            with self.subTest(operand=operand):
+                self._execute(arch, "riscv64-linux-gnu-gcc",
+                              ["qemu-riscv64", "-L", "/usr/riscv64-linux-gnu"],
+                              operand, scratch, "li a0,")
 
     def test_returns_still_have_software_operands(self):
         edge = gtirb.cfg.Edge.Type.Return
