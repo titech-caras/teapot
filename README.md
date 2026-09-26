@@ -79,6 +79,9 @@ optional wrapper libraries, and architecture-specific qemu notes.
 
 Using the provided Dockerfile is an easy way to quickly test Teapot,
 which contains all the necessary dependencies.
+The image builds the pinned frontend from source and applies the two small
+GTIRB/libehp patches kept in this repository. See [docker/README.md](docker/README.md)
+for build options and local source contexts for unpublished commits.
 It also includes an isolated Ubuntu arm64 sysroot with MTE-capable glibc at
 `/opt/aarch64-mte-sysroot` and a newer static qemu runner at
 `/usr/local/bin/qemu-aarch64-mte`; the normal `/usr/aarch64-linux-gnu` cross

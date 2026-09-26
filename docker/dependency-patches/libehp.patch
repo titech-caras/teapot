@@ -1,0 +1,30 @@
+diff --git a/src/ehp.cpp b/src/ehp.cpp
+index 74c33ca..101e16f 100644
+--- a/src/ehp.cpp
++++ b/src/ehp.cpp
+@@ -815,6 +815,12 @@ bool eh_program_insn_t<ptrsize>::parse_insn(
+ 				case DW_CFA_nop:
+ 				case DW_CFA_remember_state:
+ 				case DW_CFA_restore_state:
++				// Operand-free GNU/SPARC window-save opcode.  AArch64 reuses
++				// the same value (0x2d) for DW_CFA_AARCH64_negate_ra_state.
++				// Preserve it as a one-byte instruction; decode() intentionally
++				// exposes it as an unhandled instruction so ddisasm emits the
++				// original byte through .cfi_escape.
++				case DW_CFA_GNU_window_save:
+ 					break;
+ 
+ 				// takes single uleb128
+@@ -928,7 +934,6 @@ bool eh_program_insn_t<ptrsize>::parse_insn(
+ 				case DW_CFA_MIPS_advance_loc8:
+ 
+ 				/* GNU extensions */
+-				case DW_CFA_GNU_window_save:
+ 				case DW_CFA_GNU_negative_offset_extended:
+ 				default:
+ 					// Unhandled opcode cannot xform this eh-frame
+@@ -2118,4 +2123,3 @@ unique_ptr<const EHFrameParser_t> EHFrameParser_t::factory(
+ 	
+ 
+ 
+-

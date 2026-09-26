@@ -1,3 +1,6 @@
 *
 !Dockerfile
 !requirements.txt
+!docker/
+!docker/dependency-patches/
+!docker/dependency-patches/*.patch

@@ -1,0 +1,538 @@
+diff --git a/src/IR.cpp b/src/IR.cpp
+index 3fab5f23..e72b95dd 100644
+--- a/src/IR.cpp
++++ b/src/IR.cpp
+@@ -24,13 +24,513 @@
+ #include <google/protobuf/io/coded_stream.h>
+ #include <google/protobuf/io/zero_copy_stream_impl.h>
+ #include <google/protobuf/util/json_util.h>
++#include <algorithm>
++#include <array>
++#include <climits>
++#include <cstdint>
++#include <cstring>
+ #include <iostream>
++#include <limits>
+ #include <memory>
++#include <optional>
++#include <string>
+ 
+ using namespace gtirb;
+ 
+ static constexpr const char* GTIRB_MAGIC_CHARS = "GTIRB";
+ 
++namespace {
++
++// CodedInputStream uses signed int byte counters, so it cannot consume a
++// protobuf message whose serialized representation is larger than INT_MAX.
++// GTIRB's nested messages can independently cross that boundary (for example,
++// a Module, Section, or ByteInterval containing many rewrite artifacts).  This
++// buffered wire reader keeps 64-bit bounds and lets us decode those container
++// messages field by field while continuing to use generated protobuf parsers
++// for the small leaf messages.
++class LargeMessageReader {
++public:
++  explicit LargeMessageReader(std::istream& In_) : In(In_) {}
++
++  uint64_t position() const { return Position; }
++
++  bool readByte(uint8_t& Value) {
++    if (Next == Available && !fill())
++      return false;
++    Value = static_cast<uint8_t>(Buffer[Next++]);
++    ++Position;
++    return true;
++  }
++
++  bool readVarint(uint64_t& Value) {
++    Value = 0;
++    for (unsigned I = 0; I != 10; ++I) {
++      uint8_t Byte;
++      if (!readByte(Byte))
++        return false;
++      if (I == 9 && (Byte & 0xfe) != 0)
++        return false;
++      Value |= static_cast<uint64_t>(Byte & 0x7f) << (7 * I);
++      if ((Byte & 0x80) == 0)
++        return true;
++    }
++    return false;
++  }
++
++  bool readString(uint64_t Count, std::string& Value) {
++    if (Count > Value.max_size())
++      return false;
++    Value.resize(static_cast<size_t>(Count));
++    return Count == 0 || readRaw(&Value[0], Count);
++  }
++
++  bool skip(uint64_t Count) {
++    const uint64_t Buffered = Available - Next;
++    const uint64_t FromBuffer = std::min(Count, Buffered);
++    Next += static_cast<size_t>(FromBuffer);
++    Position += FromBuffer;
++    Count -= FromBuffer;
++    if (Count == 0)
++      return true;
++
++    // Seeking avoids physically reading a very large unknown field from a
++    // regular file. Fall back to buffered reads for non-seekable streams.
++    const auto Before = In.tellg();
++    if (Before != std::istream::pos_type(-1) &&
++        Count <= static_cast<uint64_t>(
++                     std::numeric_limits<std::streamoff>::max())) {
++      In.seekg(static_cast<std::streamoff>(Count), std::ios_base::cur);
++      if (In) {
++        Position += Count;
++        return true;
++      }
++      In.clear();
++      In.seekg(Before);
++      if (!In)
++        return false;
++    }
++
++    std::array<char, BufferSize> Discard;
++    while (Count != 0) {
++      const auto Chunk =
++          static_cast<std::streamsize>(std::min<uint64_t>(Count, BufferSize));
++      In.read(Discard.data(), Chunk);
++      const auto Read = In.gcount();
++      if (Read <= 0)
++        return false;
++      Position += static_cast<uint64_t>(Read);
++      Count -= static_cast<uint64_t>(Read);
++      if (Read != Chunk)
++        return false;
++    }
++    return true;
++  }
++
++private:
++  static constexpr size_t BufferSize = 1U << 20;
++
++  bool fill() {
++    In.read(Buffer.data(), static_cast<std::streamsize>(Buffer.size()));
++    const auto Read = In.gcount();
++    if (Read <= 0)
++      return false;
++    Next = 0;
++    Available = static_cast<size_t>(Read);
++    return true;
++  }
++
++  bool readRaw(char* Destination, uint64_t Count) {
++    while (Count != 0) {
++      if (Next != Available) {
++        const uint64_t Chunk =
++            std::min<uint64_t>(Count, Available - Next);
++        std::memcpy(Destination, Buffer.data() + Next,
++                    static_cast<size_t>(Chunk));
++        Destination += Chunk;
++        Next += static_cast<size_t>(Chunk);
++        Position += Chunk;
++        Count -= Chunk;
++        continue;
++      }
++
++      const auto Chunk = static_cast<std::streamsize>(std::min<uint64_t>(
++          Count, static_cast<uint64_t>(
++                     std::numeric_limits<std::streamsize>::max())));
++      In.read(Destination, Chunk);
++      const auto Read = In.gcount();
++      if (Read <= 0)
++        return false;
++      Destination += Read;
++      Position += static_cast<uint64_t>(Read);
++      Count -= static_cast<uint64_t>(Read);
++      if (Read != Chunk)
++        return false;
++    }
++    return true;
++  }
++
++  std::istream& In;
++  std::array<char, BufferSize> Buffer{};
++  size_t Next{0};
++  size_t Available{0};
++  uint64_t Position{0};
++};
++
++bool boundedLength(LargeMessageReader& Reader, uint64_t End,
++                   uint64_t& Length) {
++  return Reader.readVarint(Length) && Reader.position() <= End &&
++         Length <= End - Reader.position();
++}
++
++bool skipField(LargeMessageReader& Reader, uint64_t End, unsigned WireType) {
++  uint64_t Value;
++  switch (WireType) {
++  case 0:
++    return Reader.readVarint(Value) && Reader.position() <= End;
++  case 1:
++    return Reader.position() <= End && End - Reader.position() >= 8 &&
++           Reader.skip(8);
++  case 2:
++    return boundedLength(Reader, End, Value) && Reader.skip(Value);
++  case 3:
++    while (Reader.position() < End) {
++      if (!Reader.readVarint(Value) || Value == 0)
++        return false;
++      const unsigned NestedWireType = static_cast<unsigned>(Value & 7);
++      if (NestedWireType == 4)
++        return true;
++      if (!skipField(Reader, End, NestedWireType))
++        return false;
++    }
++    return false;
++  case 5:
++    return Reader.position() <= End && End - Reader.position() >= 4 &&
++           Reader.skip(4);
++  default:
++    return false;
++  }
++}
++
++bool readTag(LargeMessageReader& Reader, uint64_t End, unsigned& Field,
++             unsigned& WireType) {
++  uint64_t Tag;
++  if (Reader.position() >= End || !Reader.readVarint(Tag) || Tag == 0 ||
++      Tag > std::numeric_limits<uint32_t>::max())
++    return false;
++  Field = static_cast<unsigned>(Tag >> 3);
++  WireType = static_cast<unsigned>(Tag & 7);
++  return Field != 0 && Reader.position() <= End;
++}
++
++bool readDelimitedString(LargeMessageReader& Reader, uint64_t End,
++                         std::string& Value) {
++  uint64_t Length;
++  return boundedLength(Reader, End, Length) &&
++         Reader.readString(Length, Value);
++}
++
++bool readSmallMessage(LargeMessageReader& Reader, uint64_t End,
++                      google::protobuf::MessageLite& Message,
++                      std::string& Scratch) {
++  uint64_t Length;
++  if (!boundedLength(Reader, End, Length) || Length > INT_MAX ||
++      !Reader.readString(Length, Scratch))
++    return false;
++  Message.Clear();
++  return Message.ParseFromArray(Scratch.data(), static_cast<int>(Length));
++}
++
++bool parseAuxData(LargeMessageReader& Reader, uint64_t End,
++                  proto::AuxData& Message) {
++  while (Reader.position() < End) {
++    unsigned Field, WireType;
++    if (!readTag(Reader, End, Field, WireType))
++      return false;
++    if (Field == 1 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_type_name()))
++        return false;
++    } else if (Field == 2 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_data()))
++        return false;
++    } else if (!skipField(Reader, End, WireType)) {
++      return false;
++    }
++  }
++  return Reader.position() == End;
++}
++
++template <class MapType>
++bool parseAuxDataEntry(LargeMessageReader& Reader, uint64_t End,
++                       MapType* Values) {
++  std::string Key;
++  proto::AuxData Value;
++  while (Reader.position() < End) {
++    unsigned Field, WireType;
++    if (!readTag(Reader, End, Field, WireType))
++      return false;
++    if (Field == 1 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, Key))
++        return false;
++    } else if (Field == 2 && WireType == 2) {
++      uint64_t Length;
++      if (!boundedLength(Reader, End, Length))
++        return false;
++      const uint64_t ValueEnd = Reader.position() + Length;
++      if (!parseAuxData(Reader, ValueEnd, Value))
++        return false;
++    } else if (!skipField(Reader, End, WireType)) {
++      return false;
++    }
++  }
++  (*Values)[Key].Swap(&Value);
++  return Reader.position() == End;
++}
++
++bool parseSymbolicExpressionEntry(
++    LargeMessageReader& Reader, uint64_t End,
++    google::protobuf::Map<uint64_t, proto::SymbolicExpression>* Values,
++    std::string& Scratch) {
++  uint64_t Key = 0;
++  proto::SymbolicExpression Value;
++  while (Reader.position() < End) {
++    unsigned Field, WireType;
++    if (!readTag(Reader, End, Field, WireType))
++      return false;
++    if (Field == 1 && WireType == 0) {
++      if (!Reader.readVarint(Key) || Reader.position() > End)
++        return false;
++    } else if (Field == 2 && WireType == 2) {
++      if (!readSmallMessage(Reader, End, Value, Scratch))
++        return false;
++    } else if (!skipField(Reader, End, WireType)) {
++      return false;
++    }
++  }
++  (*Values)[Key].Swap(&Value);
++  return Reader.position() == End;
++}
++
++bool parseByteInterval(LargeMessageReader& Reader, uint64_t End,
++                       proto::ByteInterval& Message, std::string& Scratch) {
++  while (Reader.position() < End) {
++    unsigned Field, WireType;
++    uint64_t Value;
++    if (!readTag(Reader, End, Field, WireType))
++      return false;
++    if (Field == 1 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_uuid()))
++        return false;
++    } else if (Field == 2 && WireType == 2) {
++      if (!readSmallMessage(Reader, End, *Message.add_blocks(), Scratch))
++        return false;
++    } else if (Field == 3 && WireType == 2) {
++      if (!boundedLength(Reader, End, Value))
++        return false;
++      const uint64_t EntryEnd = Reader.position() + Value;
++      if (!parseSymbolicExpressionEntry(
++              Reader, EntryEnd, Message.mutable_symbolic_expressions(),
++              Scratch))
++        return false;
++    } else if (Field == 4 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > End)
++        return false;
++      Message.set_has_address(Value != 0);
++    } else if (Field == 5 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > End)
++        return false;
++      Message.set_address(Value);
++    } else if (Field == 6 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > End)
++        return false;
++      Message.set_size(Value);
++    } else if (Field == 7 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_contents()))
++        return false;
++    } else if (!skipField(Reader, End, WireType)) {
++      return false;
++    }
++  }
++  return Reader.position() == End;
++}
++
++bool parseSection(LargeMessageReader& Reader, uint64_t End,
++                  proto::Section& Message, std::string& Scratch) {
++  while (Reader.position() < End) {
++    unsigned Field, WireType;
++    uint64_t Value;
++    if (!readTag(Reader, End, Field, WireType))
++      return false;
++    if (Field == 1 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_uuid()))
++        return false;
++    } else if (Field == 2 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_name()))
++        return false;
++    } else if (Field == 5 && WireType == 2) {
++      if (!boundedLength(Reader, End, Value))
++        return false;
++      const uint64_t IntervalEnd = Reader.position() + Value;
++      if (!parseByteInterval(Reader, IntervalEnd,
++                             *Message.add_byte_intervals(), Scratch))
++        return false;
++    } else if (Field == 6 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > End)
++        return false;
++      Message.add_section_flags(static_cast<proto::SectionFlag>(Value));
++    } else if (Field == 6 && WireType == 2) {
++      if (!boundedLength(Reader, End, Value))
++        return false;
++      const uint64_t PackedEnd = Reader.position() + Value;
++      while (Reader.position() < PackedEnd) {
++        if (!Reader.readVarint(Value) || Reader.position() > PackedEnd)
++          return false;
++        Message.add_section_flags(static_cast<proto::SectionFlag>(Value));
++      }
++    } else if (!skipField(Reader, End, WireType)) {
++      return false;
++    }
++  }
++  return Reader.position() == End;
++}
++
++bool parseModule(LargeMessageReader& Reader, uint64_t End,
++                 proto::Module& Message, std::string& Scratch) {
++  while (Reader.position() < End) {
++    unsigned Field, WireType;
++    uint64_t Value;
++    if (!readTag(Reader, End, Field, WireType))
++      return false;
++    if (Field == 1 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_uuid()))
++        return false;
++    } else if (Field == 2 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_binary_path()))
++        return false;
++    } else if (Field == 3 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > End)
++        return false;
++      Message.set_preferred_addr(Value);
++    } else if (Field == 4 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > End)
++        return false;
++      Message.set_rebase_delta(static_cast<int64_t>(Value));
++    } else if (Field == 5 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > End)
++        return false;
++      Message.set_file_format(static_cast<proto::FileFormat>(Value));
++    } else if (Field == 6 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > End)
++        return false;
++      Message.set_isa(static_cast<proto::ISA>(Value));
++    } else if (Field == 7 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_name()))
++        return false;
++    } else if (Field == 9 && WireType == 2) {
++      if (!readSmallMessage(Reader, End, *Message.add_symbols(), Scratch))
++        return false;
++    } else if (Field == 12 && WireType == 2) {
++      if (!boundedLength(Reader, End, Value))
++        return false;
++      const uint64_t SectionEnd = Reader.position() + Value;
++      if (!parseSection(Reader, SectionEnd, *Message.add_sections(), Scratch))
++        return false;
++    } else if (Field == 16 && WireType == 2) {
++      if (!readSmallMessage(Reader, End, *Message.add_proxies(), Scratch))
++        return false;
++    } else if (Field == 17 && WireType == 2) {
++      if (!boundedLength(Reader, End, Value))
++        return false;
++      const uint64_t EntryEnd = Reader.position() + Value;
++      if (!parseAuxDataEntry(Reader, EntryEnd, Message.mutable_aux_data()))
++        return false;
++    } else if (Field == 18 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.mutable_entry_point()))
++        return false;
++    } else if (Field == 19 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > End)
++        return false;
++      Message.set_byte_order(static_cast<proto::ByteOrder>(Value));
++    } else if (!skipField(Reader, End, WireType)) {
++      return false;
++    }
++  }
++  return Reader.position() == End;
++}
++
++bool parseCFG(LargeMessageReader& Reader, uint64_t End, proto::CFG& Message,
++              std::string& Scratch) {
++  while (Reader.position() < End) {
++    unsigned Field, WireType;
++    if (!readTag(Reader, End, Field, WireType))
++      return false;
++    if (Field == 2 && WireType == 2) {
++      if (!readSmallMessage(Reader, End, *Message.add_edges(), Scratch))
++        return false;
++    } else if (Field == 3 && WireType == 2) {
++      if (!readDelimitedString(Reader, End, *Message.add_vertices()))
++        return false;
++    } else if (!skipField(Reader, End, WireType)) {
++      return false;
++    }
++  }
++  return Reader.position() == End;
++}
++
++bool parseLargeIR(std::istream& In, uint64_t Size, proto::IR& Message) {
++  LargeMessageReader Reader(In);
++  std::string Scratch;
++  while (Reader.position() < Size) {
++    unsigned Field, WireType;
++    uint64_t Value;
++    if (!readTag(Reader, Size, Field, WireType))
++      return false;
++    if (Field == 1 && WireType == 2) {
++      if (!readDelimitedString(Reader, Size, *Message.mutable_uuid()))
++        return false;
++    } else if (Field == 3 && WireType == 2) {
++      if (!boundedLength(Reader, Size, Value))
++        return false;
++      const uint64_t ModuleEnd = Reader.position() + Value;
++      if (!parseModule(Reader, ModuleEnd, *Message.add_modules(), Scratch))
++        return false;
++    } else if (Field == 5 && WireType == 2) {
++      if (!boundedLength(Reader, Size, Value))
++        return false;
++      const uint64_t EntryEnd = Reader.position() + Value;
++      if (!parseAuxDataEntry(Reader, EntryEnd, Message.mutable_aux_data()))
++        return false;
++    } else if (Field == 6 && WireType == 0) {
++      if (!Reader.readVarint(Value) || Reader.position() > Size)
++        return false;
++      Message.set_version(static_cast<uint32_t>(Value));
++    } else if (Field == 7 && WireType == 2) {
++      if (!boundedLength(Reader, Size, Value))
++        return false;
++      const uint64_t CFGEnd = Reader.position() + Value;
++      if (!parseCFG(Reader, CFGEnd, *Message.mutable_cfg(), Scratch))
++        return false;
++    } else if (!skipField(Reader, Size, WireType)) {
++      return false;
++    }
++  }
++  return Reader.position() == Size;
++}
++
++std::optional<uint64_t> remainingStreamSize(std::istream& In) {
++  const auto Begin = In.tellg();
++  if (Begin == std::istream::pos_type(-1))
++    return std::nullopt;
++  In.seekg(0, std::ios_base::end);
++  const auto End = In.tellg();
++  In.clear();
++  In.seekg(Begin);
++  if (!In || End == std::istream::pos_type(-1) || End < Begin)
++    return std::nullopt;
++  return static_cast<uint64_t>(End - Begin);
++}
++
++} // namespace
++
+ class IR::ModuleObserverImpl : public ModuleObserver {
+ public:
+   explicit ModuleObserverImpl(IR* I_) : I(I_) {}
+@@ -228,6 +728,19 @@ ErrorOr<IR*> IR::load(Context& C, std::istream& In) {
+     return {load_error::IncorrectVersion, ss.str()};
+   }
+ 
++  // Generated protobuf parsers count bytes with a signed int. Use the
++  // field-wise reader only when a seekable input exceeds that hard limit;
++  // ordinary GTIRB files retain the well-tested generated-parser path.
++  const auto PayloadSize = remainingStreamSize(In);
++  if (PayloadSize && *PayloadSize > static_cast<uint64_t>(INT_MAX)) {
++    MessageType Message;
++    if (!parseLargeIR(In, *PayloadSize, Message)) {
++      return {load_error::CorruptFile,
++              "Oversized protobuf unable to be parsed"};
++    }
++    return IR::fromProtobuf(C, Message);
++  }
++
+   google::protobuf::io::IstreamInputStream InputStream(&In);
+   google::protobuf::io::CodedInputStream CodedStream(&InputStream);
+ #ifdef PROTOBUF_SET_BYTES_LIMIT
