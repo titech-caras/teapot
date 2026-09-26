@@ -416,7 +416,8 @@ class TeapotPipeline:
         # analysis, so caching the expanded text disassembly only raises the peak
         # during rewrite application.
         checkpoint_decoder = GtirbInstructionDecoder(self.module.isa)
-        if self.options.enable_checkpoints:
+        if (self.options.enable_checkpoints and
+                not self.arch.text_checkpoints_in_main_text_pass()):
             pass_manager.add(InsertCheckpointsPass(
                 None, self.text_section, checkpoint_decoder, self.arch,
                 self.checkpoint_block_uuids, self.checkpoint_spare_registers))
