@@ -66,6 +66,17 @@ def aarch64_base_register_writeback(inst) -> bool:
     return memory is not None and memory + 1 < len(operands)
 
 
+def aarch64_is_literal_operand(operand) -> bool:
+    """A PC-relative literal (``ldr x0, <label>``): Capstone 6 reports a MEM operand with no base or
+    index register and the target address as its displacement; Capstone 5 an immediate."""
+    return operand.type == CS_OP_MEM and not operand.mem.base and not operand.mem.index
+
+
+def aarch64_data_memory_operands(inst):
+    """Memory operands that address data through registers, i.e. excluding literal pools."""
+    return [op for op in inst.operands if op.type == CS_OP_MEM and not aarch64_is_literal_operand(op)]
+
+
 def aarch64_access_displacement(inst, mem_operand) -> int:
     """Displacement of the address a memory operand accesses.
 
@@ -104,6 +115,12 @@ def aarch64_atomic_read_operand_indices(mnemonic: str):
 
 
 class AArch64OperandMixin:
+    @staticmethod
+    def memory_operand(inst):
+        # A literal load reads a constant from the code's literal pool; its address is fixed by the
+        # layout, not computed from registers, and Capstone 5 did not report it as a memory operand.
+        return next(iter(aarch64_data_memory_operands(inst)), None)
+
     def saved_return_registers(self):
         return tuple(self.abi.get_register(name) for name in ("sp", "x29", "x30"))
 

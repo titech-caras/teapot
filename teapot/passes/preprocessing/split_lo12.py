@@ -16,15 +16,17 @@ with base Xn and an immediate offset that has no symbolic expression. Such a use
 Anything else is left unchanged. Runs before instrumentation, so both copies get it.
 """
 import gtirb
-from capstone import CS_OP_IMM, CS_OP_MEM, CS_OP_REG
+from capstone import CS_OP_IMM, CS_OP_REG
 
-from teapot.arch.aarch64.operands import aarch64_base_register_writeback
+from teapot.arch.aarch64.operands import aarch64_base_register_writeback, aarch64_data_memory_operands
 
 CALLEE_SAVED = frozenset(range(19, 29))
 LO12 = gtirb.SymbolicExpression.Attribute.LO12
 
 
 def _regnum(name):
+    if name is None:
+        return None
     aliases = {'fp': 29, 'lr': 30}
     if name in aliases:
         return aliases[name]
@@ -72,7 +74,7 @@ def _page_offset(inst, reg):
         if getattr(shift, 'type', 0) and getattr(shift, 'value', 0):
             return None
         return ops[2].imm if 0 <= ops[2].imm < 4096 else None
-    memory = [op for op in ops if op.type == CS_OP_MEM]
+    memory = aarch64_data_memory_operands(inst)
     if len(memory) == 1 and _regnum(inst.reg_name(memory[0].mem.base)) == reg and \
             not memory[0].mem.index and not aarch64_base_register_writeback(inst) and 0 <= memory[0].mem.disp < 4096:
         return memory[0].mem.disp

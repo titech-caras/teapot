@@ -3,7 +3,11 @@ from capstone import CS_OP_IMM, CS_OP_MEM, CS_OP_REG
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_rewriting import Pass, RewritingContext
 
-from teapot.arch.aarch64.operands import aarch64_base_register_writeback
+from teapot.arch.aarch64.operands import (
+    aarch64_access_displacement,
+    aarch64_base_register_writeback,
+    aarch64_data_memory_operands,
+)
 from teapot.passes.preprocessing.split_lo12 import symbolize_split_lo12
 from teapot.utils.misc import symbol_address
 
@@ -152,7 +156,7 @@ class NormalizeAArch64RelocationsPass(Pass):
                     or operands[2].type != CS_OP_IMM or operands[2].imm != low):
                 return None
         else:
-            memory = [operand for operand in operands if operand.type == CS_OP_MEM]
+            memory = aarch64_data_memory_operands(inst)
             if (len(memory) != 1 or aarch64_base_register_writeback(inst) or
                     register(inst.reg_name(memory[0].mem.base)) != base
                     or memory[0].mem.index or memory[0].mem.disp != low):
@@ -226,9 +230,8 @@ class NormalizeAArch64RelocationsPass(Pass):
 
     @staticmethod
     def _encoded_lo12(inst):
-        for operand in inst.operands:
-            if operand.type == CS_OP_MEM:
-                return operand.mem.disp & 0xfff
+        for operand in aarch64_data_memory_operands(inst):
+            return aarch64_access_displacement(inst, operand) & 0xfff
 
         for operand in reversed(inst.operands):
             if operand.type == CS_OP_IMM:

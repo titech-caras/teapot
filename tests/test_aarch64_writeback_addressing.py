@@ -57,6 +57,17 @@ class AArch64WritebackAddressingTests(unittest.TestCase):
         self.assertNotIn("#8", snippet)
         self.assertNotIn("add", snippet)
 
+    def test_literal_loads_are_not_data_memory_operands(self):
+        # Capstone 6 reports `ldr x0, <label>` as a MEM operand without registers, Capstone 5 as an
+        # immediate. Neither is an access through registers that needs logging or checks.
+        from teapot.passes.preprocessing.split_lo12 import _page_offset
+        for encoded in ("80000058", "42000098", "0001009c", "800000d8", "e1ffff18"):
+            inst = self.decode(encoded)
+            with self.subTest(instruction=f"{inst.mnemonic} {inst.op_str}"):
+                self.assertIsNone(self.arch.memory_operand(inst))
+                self.assertIsNone(_page_offset(inst, 0))
+                self.arch.access_registers(self.arch.abi, inst, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
