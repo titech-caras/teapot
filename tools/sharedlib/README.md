@@ -13,6 +13,8 @@ The tested strategy is:
 1. Validate the ELF binding/startup/unwind contract and complete dependency set.
 2. Lift each input independently with the pinned DDisasm frontend.
 3. Preserve symbolic GOT/PLT references, data pointers, symbol versions and CFI.
+   Retain recovered in-text data boundaries as sized local OBJECT symbols so
+   a fresh lift after relinking does not reinterpret those bytes as code.
    Print assembly, then assemble genuine target-architecture `ET_REL` objects.
 4. Put only reconstructed selected objects into a deterministic archive. Link
    the executable object and whole selected archive into one non-PIE `ET_EXEC`.
@@ -27,6 +29,49 @@ The tested strategy is:
 `convert.py` is the portable core (Python 3.8+, GTIRB and pyelftools). The other
 scripts are reproducible evaluation launchers tied to the dated worker layout.
 They are not installed as Teapot CLI commands and do not change existing defaults.
+
+## Opt-in archive extensions under validation
+
+The input DSO may contain PIC, but the output remains an ordinary relocatable
+archive linked into a **non-PIE executable before instrumentation**. No PIC
+instrumentation, loadable instrumented DSO, or scratchpad/spilling redesign is
+part of these extensions.
+
+AArch64's exhaustive candidate decoder may warn while reading literal tables.
+Only addressed operand diagnostics covered completely by recovered DataBlocks
+and independently by an input OBJECT or `$d` mapping range are accepted. Any
+overlapping recovered code, missing byte coverage, or other warning still
+rejects conversion; the accepted evidence is saved per input.
+
+- `--resolve-selected-versions` binds each selected SONAME/name/version to a
+  stable static-link identity, retaining the correct default alias. External
+  libc versions remain versioned. Old/default-version fixtures pass ordinary
+  execution and byte-identical archive reuse across two callers on all three
+  architectures, plus full instrumentation of caller A on all three (including
+  AArch64 BTI). This is not yet an OpenSSL full-pipeline result.
+- `--preserve-selected-lifecycle` retains custom selected init/fini callbacks
+  and arrays. A normal `-fno-pic -fno-pie` helper, linked before instrumentation,
+  preserves the tested constructor/registered-exit/finalizer ordering. RISC-V
+  uses its array-based startup contract. Single-selected-library fixtures have
+  ordinary reuse and full-instrumentation evidence on all three architectures;
+  arbitrary sibling-DSO
+  and external-library lifecycle interleaving is not yet established.
+- `--preserve-nonlocal-jumps` permits the original libc context-restoration
+  calls without redirecting them to Teapot rollback. Signal-mask restoration,
+  saved continuations and surviving memory writes pass the signal/nonlocal-jump
+  full-pipeline fixture on all three architectures (AArch64 software and BTI).
+  Allowing an arbitrary input is not itself an instrumented-behavior pass.
+- `--preserve-weak-imports` retains undefined weak binding and the pinned
+  original breadth-first external dependency scope. Supplied-but-unneeded
+  providers are not linked. Present/absent weak-provider fixtures pass ordinary
+  x64 execution and archive reuse across distinct callers. Replaceable weak
+  definitions and ambiguous selected exports remain rejected.
+
+The ordinary-library cache excludes the unrelated caller's executable hash
+but retains library/dependency/tool/converter/layout-policy inputs. It caches
+uninstrumented reconstructed bytes, not caller-independent instrumentation.
+Unnamed FDE starts are accepted only when their complete positive-length range
+belongs to executable code; recovered-CFI validation remains mandatory.
 
 ## Tested outcome
 
@@ -71,23 +116,28 @@ Container commands and input/tool hashes are retained with each conversion.
 - Complete supplied dependency closure, unique selected SONAMEs and unambiguous
   strong global binding are required. Selected dependency cycles, unreachable
   selections, selected/external conflicting definitions, GNU-unique bindings,
-  replaceable weak definitions, and non-CRT weak imports are refused.
+  replaceable weak definitions, and (without the explicit opt-in above)
+  non-CRT weak imports are refused.
   The executable's standard `data_start` alias is recognized explicitly.
 - Default/local/hidden definitions, ordinary GOT/PLT calls and data relocations
   are reconstructed symbolically. COPY relocations and protected/internal
   visibility are refused. Dynamic symbol interposition via `LD_PRELOAD`, audit
   modules or hot-swapped providers is outside the contract.
 - External version requirements are retained with `.symver`; selected version
-  definitions/references are refused. There is no GOT/PLT/version text stripping.
-- Selected TLS, IFUNC, alternate dynamic-loader flags, text/RELR relocations,
+  definitions/references require the explicit resolver above. There is no
+  GOT/PLT/version text stripping.
+- Selected TLS, IFUNC, unsupported dynamic-loader flags, text/RELR relocations,
   executable stacks, `dlopen`/`dlsym`/`dlvsym`/`dl_iterate_phdr` and related runtime
   lookup entry points are refused. Unselected system libraries can still use
   their normal loader features because they remain dynamic.
+  `NOW`, `SYMBOLIC` under the unique-definition contract, and selected
+  process-lifetime `NODELETE` are accepted; runtime unload remains unsupported.
 - CFI is regenerated, not discarded as raw stale `.eh_frame` bytes. Original
   non-PLT FDE starts must have recovered `.cfi_startproc`; emitted objects must
   contain the corresponding FDEs. The fixture checks actual cross-library
-  stack unwinding. C++ exceptions/LSDA, nonlocal unwind/longjmp and unsupported
-  frontend diagnostics are refused. This is not universal unwind support.
+  stack unwinding. C++ exceptions/LSDA and unsupported frontend diagnostics are
+  refused; nonlocal jumps require the opt-in above. This is not universal
+  unwind support.
 - Selected library CRT callbacks, their arrays, local state and per-DSO
   `__dso_handle` are retained. Accepted callbacks must match narrow per-ISA glibc/GCC
   CRT instruction templates **and actual branch/GOT/data targets**. Names alone
@@ -98,8 +148,9 @@ Container commands and input/tool hashes are retained with each conversion.
   except for RV64's validated single executable `load_gp` CRT entry, which is
   retained with its callback. Its exact GP initialization and `_start` call are
   checked; selected-library/custom preinit remains unsupported.
-  Custom constructors/destructors, renamed or body-mutated callback lookalikes,
-  and redirected startup tags are negative tests.
+  Without the lifecycle opt-in, custom constructors/destructors, renamed or
+  body-mutated callback lookalikes, and redirected startup tags remain negative
+  tests. The opt-in validates code ownership and preserves those callbacks.
 - Array priorities respect the selected dependency graph. The accepted CRT
   registration callbacks are order-independent under the restricted contract;
   this is **not** a general emulation of loader ordering between sibling DSOs.
