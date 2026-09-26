@@ -111,14 +111,9 @@ class RISCV64RelaxFixedPointTests(unittest.TestCase):
         self.assertEqual(adjusted[-1], 0)
 
         decoder = GtirbInstructionDecoder(module.isa)
-        self.assertNotIn(
-            list(decoder.get_instructions(jump_a))[-1].mnemonic,
-            {"j", "c.j"},
-        )
-        self.assertNotIn(
-            list(decoder.get_instructions(jump_b))[-1].mnemonic,
-            {"j", "c.j"},
-        )
+        for jump in (jump_a, jump_b):
+            # Capstone decodes j as `jal zero, target`; a relaxed jump ends in jalr.
+            self.assertFalse(self.arch.is_unconditional_jump(list(decoder.get_instructions(jump))[-1]))
 
     def test_non_convergence_fails_loudly(self):
         ir, module, section, _jump_a, _jump_b = build_layout_growth_case()
@@ -193,7 +188,7 @@ class RISCV64RelaxFixedPointTests(unittest.TestCase):
                 self.assertEqual(prefix == self.arch.nop_bytes, marked)
                 decoder = GtirbInstructionDecoder(module.isa)
                 for jump in (jump_a, jump_b):
-                    self.assertNotIn(list(decoder.get_instructions(jump))[-1].mnemonic, {"j", "c.j"})
+                    self.assertFalse(self.arch.is_unconditional_jump(list(decoder.get_instructions(jump))[-1]))
 
 
 if __name__ == "__main__":

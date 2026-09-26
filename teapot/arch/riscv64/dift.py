@@ -11,8 +11,6 @@ class RISCV64DiftPatchesMixin:
 
     def dift_should_skip_instruction(self, inst) -> bool:
         mnemonic = inst.mnemonic.lower()
-        if mnemonic in {"nop", "c.nop", "ret", "call", "jr", "jalr", "c.jr", "c.jalr", "c.j", "c.jal"}:
-            return True
         if self._writes_only_zero(inst):
             return True
         if self.is_stack_pointer_update(inst):
@@ -21,22 +19,20 @@ class RISCV64DiftPatchesMixin:
 
     @staticmethod
     def _writes_only_zero(inst) -> bool:
-        # Capstone 6's real form of nop is `addi zero, zero, 0`: a write to zero is no write.
+        # The real form of nop is `addi zero, zero, 0`: a write to zero is no write.
         operands = inst.operands
         return (bool(operands) and operands[0].type == CS_OP_REG and inst.reg_name(operands[0].reg) == "zero" and
-                inst.mnemonic.lower() in {"addi", "addiw", "c.addi", "add", "addw", "c.nop"})
+                inst.mnemonic.lower() in {"addi", "addiw", "add", "addw"})
 
     @staticmethod
     def dift_clears_destination_tags(inst) -> bool:
         mnemonic = inst.mnemonic.lower()
         if mnemonic in {"lui", "auipc"}:
             return True
-        if mnemonic == "li" and len(inst.operands) >= 2 and inst.operands[1].type == CS_OP_IMM:
-            return True
         operands = inst.operands
         if (mnemonic in {"addi", "addiw"} and len(operands) == 3 and operands[1].type == CS_OP_REG and
                 inst.reg_name(operands[1].reg) == "zero" and operands[2].type == CS_OP_IMM):
-            # `li rd, imm` in Capstone 6's real form.
+            # `li rd, imm` and c.li in their real form.
             return True
         if len(inst.operands) >= 3 and all(op.type == CS_OP_REG for op in inst.operands[:3]):
             return inst.operands[1].reg == inst.operands[2].reg and mnemonic in {"xor", "sub"}

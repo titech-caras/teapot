@@ -115,22 +115,19 @@ class NormalizeRISCV64GPReferencesPass(Pass):
     def _uses_gp_address(inst):
         if any(op.type == CS_OP_MEM and inst.reg_name(op.mem.base) == "gp" for op in inst.operands):
             return True
-        if inst.mnemonic == "addi" and len(inst.operands) == 3:
-            return inst.operands[1].type == CS_OP_REG and inst.reg_name(inst.operands[1].reg) == "gp"
-        if inst.mnemonic in {"mv", "c.mv"} and len(inst.operands) == 2:
-            return inst.operands[1].type == CS_OP_REG and inst.reg_name(inst.operands[1].reg) == "gp"
-        return (inst.mnemonic == "c.addi" and inst.operands and
-                inst.operands[0].type == CS_OP_REG and inst.reg_name(inst.operands[0].reg) == "gp")
+        # addi also stands for mv and c.addi.
+        return (inst.mnemonic == "addi" and len(inst.operands) == 3 and
+                inst.operands[1].type == CS_OP_REG and inst.reg_name(inst.operands[1].reg) == "gp")
 
     def _replacement(self, inst, expression, free):
-        mnemonic = self.arch.bare_mnemonic(inst.mnemonic)
+        mnemonic = inst.mnemonic
         operands = inst.operands
         if not operands or operands[0].type != CS_OP_REG:
             raise ValueError(f"Unsupported RV64 GP operand at {inst.address:#x}")
         value = inst.reg_name(operands[0].reg)
         load = self.arch.is_load_mnemonic(mnemonic)
         store = self.arch.is_store_mnemonic(mnemonic)
-        address = (mnemonic == "addi" and operands[-1].type == CS_OP_IMM) or mnemonic == "mv"
+        address = mnemonic == "addi" and operands[-1].type == CS_OP_IMM
         if not (load or store or address):
             raise ValueError(f"Unsupported RV64 GP instruction: {inst.mnemonic} {inst.op_str}")
 

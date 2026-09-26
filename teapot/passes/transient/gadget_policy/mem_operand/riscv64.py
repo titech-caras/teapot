@@ -29,7 +29,7 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
 
     def _build_policy_patch(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                             block: gtirb.CodeBlock, function: Function = None):
-        if inst.mnemonic in ("nop", "ret", "call", "jr", "jalr") or inst.mnemonic.startswith("j"):
+        if inst.mnemonic.startswith("j"):
             return None
 
         mem_operand = self.arch.memory_operand(inst)

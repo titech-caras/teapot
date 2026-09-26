@@ -84,9 +84,6 @@ class RISCV64ControlFlowPatchesMixin:
 
     @staticmethod
     def retarget_last_operand(mnemonic: str, op_str: str, target_symbol_name: str) -> str:
-        if mnemonic.startswith("c."):
-            mnemonic = mnemonic[2:]
-
         operands = [operand.strip() for operand in op_str.split(",") if operand.strip()]
         if not operands:
             return f"{mnemonic} {target_symbol_name}"
@@ -245,18 +242,8 @@ class RISCV64ControlFlowPatchesMixin:
         if edge_type == gtirb.cfg.Edge.Type.Return or self.is_return_instruction(last_inst):
             return "ra"
 
+        # The target is the last operand: `offset(base)` of a jalr, the address of a jal or branch.
         operands = [operand.strip() for operand in last_inst.op_str.split(",") if operand.strip()]
-        if last_inst.mnemonic in ("jr", "jalr"):
-            if len(operands) == 1:
-                return operands[0]
-            if len(operands) == 2:
-                return operands[1]
-            if len(operands) >= 3:
-                base, offset = operands[1], operands[2]
-                if offset in ("0", "0x0"):
-                    return base
-                return f"{offset}({base})"
-
         if operands:
             return operands[-1]
         return None
@@ -269,31 +256,20 @@ class RISCV64ControlFlowPatchesMixin:
 
     @staticmethod
     def is_return_instruction(instruction) -> bool:
-        """ret/c.jr ra (Capstone 5) or `jalr zero, 0(ra)` (Capstone 6's real form)."""
+        """`jalr zero, 0(ra)`, the real form of ret and c.jr ra."""
         operands = instruction.operands
-        if instruction.mnemonic == "ret":
-            return True
-        if instruction.mnemonic in {"c.jr", "jr"}:
-            return len(operands) == 1 and instruction.reg_name(operands[0].reg) == "ra"
         return (instruction.mnemonic == "jalr" and len(operands) == 3 and
                 riscv64_link_register(instruction) == "zero" and
                 instruction.reg_name(operands[1].reg) == "ra" and operands[2].imm == 0)
 
     @staticmethod
     def is_unconditional_jump(instruction) -> bool:
-        """A direct jump without a link: j/c.j (Capstone 5) or `jal zero, target` (Capstone 6)."""
-        if instruction.mnemonic in {"j", "c.j"}:
-            return True
+        """A direct jump without a link: `jal zero, target`, the real form of j and c.j."""
         return instruction.mnemonic == "jal" and riscv64_link_register(instruction) == "zero"
 
     def is_control_transfer_instruction(self, instruction) -> bool:
         mnemonic = instruction.mnemonic
-        return (
-            mnemonic in {"call", "j", "jal", "jalr", "jr", "ret", "tail"} or
-            mnemonic.startswith("b") or
-            mnemonic in {"c.j", "c.jal", "c.jalr", "c.jr"} or
-            mnemonic.startswith("c.b")
-        )
+        return mnemonic in {"jal", "jalr"} or mnemonic.startswith("b")
 
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,

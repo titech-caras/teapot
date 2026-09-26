@@ -62,7 +62,7 @@ class RISCV64CheckpointPlacementTests(unittest.TestCase):
                         for inst in decoder.get_instructions(block)
                         if inst.address >= address]
                     conditional = next(inst for inst in instructions
-                        if inst.mnemonic in ("beq", "bne", "beqz", "bnez", "c.beqz", "c.bnez"))
+                        if inst.mnemonic in ("beq", "bne"))
                     self.assertEqual(conditional.reg_name(conditional.operands[0].reg), "a0",
                         "checkpoint followed the generated checkpoint_cnt/t0 guard instead of application a0")
                     # Late landing-pad/long-jump work must not insert a second

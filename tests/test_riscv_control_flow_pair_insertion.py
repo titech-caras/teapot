@@ -82,7 +82,7 @@ class RiscvControlFlowPairInsertionTests(unittest.TestCase):
                                     for inst in decoder.get_instructions(block)]
                     self.assertEqual(instructions[0].operands[-1].imm, 77)
                     self.assertEqual(instructions[1].mnemonic, "auipc")
-                    self.assertIn(instructions[2].mnemonic, ("jalr", "jr"))
+                    self.assertEqual(instructions[2].mnemonic, "jalr")
 
     def test_data_pair_still_inserts_after_low(self):
         _, _, high, _ = self.make_pair(tail=False, split=False)
@@ -128,7 +128,7 @@ class RiscvControlFlowPairInsertionTests(unittest.TestCase):
                                                             key=lambda b: b.address) if block.size
                                     for inst in manager.analyzer.decoder.get_instructions(block)]
                     probe_index = next(i for i, inst in enumerate(instructions)
-                                       if inst.mnemonic in ("li", "addi")
+                                       if inst.mnemonic == "addi"
                                        and inst.operands[-1].imm == 7)
                     high_index = next(i for i, inst in enumerate(instructions)
                                       if inst.mnemonic == "auipc")

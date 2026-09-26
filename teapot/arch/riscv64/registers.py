@@ -26,11 +26,7 @@ class RISCV64RegisterMixin:
     def is_stack_pointer_update(inst) -> bool:
         mnemonic = inst.mnemonic.lower()
         op_str = "".join(inst.op_str.lower().split())
-        if mnemonic in {"c.addi16sp"}:
-            return True
-        if mnemonic in {"addi", "c.addi", "add", "sub"} and op_str.startswith("sp,sp,"):
-            return True
-        return False
+        return mnemonic in {"addi", "add", "sub"} and op_str.startswith("sp,sp,")
 
     @staticmethod
     def clear_register_snippet(reg) -> str:

@@ -5,10 +5,10 @@ from teapot.arch.riscv64.architecture import RISCV64Architecture
 
 
 class RISCV64ControlTransferFormTests(unittest.TestCase):
-    """Returns, jumps, calls and nops are recognized however Capstone spells them.
+    """Returns, jumps, calls and nops in Capstone's real, uncompressed form.
 
-    Capstone 5 prints aliases and compressed names (`ret`, `j`, `c.jr ra`); Capstone 6's real,
-    uncompressed form prints `jalr zero, 0(ra)`, `jal zero, target` and `addi zero, zero, 0`.
+    `ret` and `c.jr ra` decode as `jalr zero, 0(ra)`, `j` and `c.j` as `jal zero, target`, and `nop`
+    and `c.nop` as `addi zero, zero, 0`.
     """
 
     # encoding, return, unconditional direct jump, call, DIFT skips it

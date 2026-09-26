@@ -14,9 +14,7 @@ from teapot.datacls.stack_access import StackAccess
 
 _RISCV64_LOAD_MNEMONICS = {"lb", "lh", "lw", "ld", "lbu", "lhu", "lwu", "flw", "fld"}
 _RISCV64_STORE_MNEMONICS = {"sb", "sh", "sw", "sd", "fsw", "fsd"}
-_RISCV64_COMPRESSED_LOAD_MNEMONICS = {"c.lw", "c.ld", "c.lwsp", "c.ldsp", "c.flw", "c.fld", "c.flwsp", "c.fldsp"}
-_RISCV64_COMPRESSED_STORE_MNEMONICS = {"c.sw", "c.sd", "c.swsp", "c.sdsp", "c.fsw", "c.fsd", "c.fswsp", "c.fsdsp"}
-_RISCV64_BRANCH_MNEMONICS = {"beq", "bne", "blt", "bge", "bltu", "bgeu", "beqz", "bnez"}
+_RISCV64_BRANCH_MNEMONICS = {"beq", "bne", "blt", "bge", "bltu", "bgeu"}
 _RISCV64_ATOMIC_MEMORY_MNEMONIC_RE = re.compile(
     r"^(amo(?:add|and|maxu?|minu?|or|swap|xor)|lr|sc)\.([wd])"
     r"(?:\.(?:aqrl|aq|rl))?$"
@@ -51,11 +49,8 @@ class RISCV64OperandMixin:
         if not operands or operands[0].type != CS_OP_REG:
             return None
         dst = self.register_from_name(self.abi, inst.reg_name(operands[0].reg))
-        if inst.mnemonic in {"c.addi", "c.addi16sp"} and len(operands) == 2 and operands[1].type == CS_OP_IMM:
-            return dst, dst, operands[1].imm
-        if inst.mnemonic in {"mv", "c.mv"} and len(operands) == 2 and operands[1].type == CS_OP_REG:
-            source, delta = operands[1], 0
-        elif (inst.mnemonic in {"addi", "c.addi4spn"} and len(operands) == 3 and
+        # addi also stands for mv and the stack adjustments c.addi, c.addi16sp and c.addi4spn.
+        if (inst.mnemonic == "addi" and len(operands) == 3 and
                 operands[1].type == CS_OP_REG and operands[2].type == CS_OP_IMM):
             # Without the type check on operand 1, Capstone's operand union
             # would reinterpret an immediate as a register id and fabricate a
@@ -82,7 +77,7 @@ class RISCV64OperandMixin:
         base = self.register_from_name(self.abi, self.mem_operand_base_name(inst, mem))
         displacement = mem.mem.disp
         return_offset = None
-        if inst.mnemonic in {"ld", "sd", "c.ld", "c.sd", "c.ldsp", "c.sdsp"}:
+        if inst.mnemonic in {"ld", "sd"}:
             if inst.operands[0].type == CS_OP_REG and inst.reg_name(inst.operands[0].reg) == "ra":
                 return_offset = 0
         return StackAccess(base, displacement, self.mem_operand_size(inst, mem), return_offset)
@@ -176,23 +171,19 @@ class RISCV64OperandMixin:
             addi {addr_reg}, {addr_reg}, %pcrel_lo({label})
         """
 
+    # Capstone decodes compressed instructions to their uncompressed real form (c.ldsp is ld, c.beqz is
+    # beq with zero), so the uncompressed names cover them.
     @staticmethod
-    def bare_mnemonic(mnemonic: str) -> str:
-        return mnemonic[2:] if mnemonic.startswith("c.") else mnemonic
+    def is_load_mnemonic(mnemonic: str) -> bool:
+        return mnemonic in _RISCV64_LOAD_MNEMONICS
 
-    @classmethod
-    def is_load_mnemonic(cls, mnemonic: str) -> bool:
-        return cls.bare_mnemonic(mnemonic) in _RISCV64_LOAD_MNEMONICS \
-            or mnemonic in _RISCV64_COMPRESSED_LOAD_MNEMONICS
+    @staticmethod
+    def is_store_mnemonic(mnemonic: str) -> bool:
+        return mnemonic in _RISCV64_STORE_MNEMONICS
 
-    @classmethod
-    def is_store_mnemonic(cls, mnemonic: str) -> bool:
-        return cls.bare_mnemonic(mnemonic) in _RISCV64_STORE_MNEMONICS \
-            or mnemonic in _RISCV64_COMPRESSED_STORE_MNEMONICS
-
-    @classmethod
-    def is_branch_mnemonic(cls, mnemonic: str) -> bool:
-        return cls.bare_mnemonic(mnemonic) in _RISCV64_BRANCH_MNEMONICS
+    @staticmethod
+    def is_branch_mnemonic(mnemonic: str) -> bool:
+        return mnemonic in _RISCV64_BRANCH_MNEMONICS
 
     @staticmethod
     def registers_from_mem_operand(abi, inst: CsInsn, operand,
@@ -231,11 +222,9 @@ class RISCV64OperandMixin:
             return 1
         if mnemonic in {"lh", "lhu", "sh"}:
             return 2
-        if mnemonic in {"lw", "lwu", "sw", "flw", "fsw", "c.lw", "c.lwsp", "c.sw", "c.swsp", "c.flw", "c.flwsp",
-                        "c.fsw", "c.fswsp"}:
+        if mnemonic in {"lw", "lwu", "sw", "flw", "fsw"}:
             return 4
-        if mnemonic in {"ld", "sd", "fld", "fsd", "c.ld", "c.ldsp", "c.sd", "c.sdsp", "c.fld", "c.fldsp",
-                        "c.fsd", "c.fsdsp"}:
+        if mnemonic in {"ld", "sd", "fld", "fsd"}:
             return 8
         return 8
 
