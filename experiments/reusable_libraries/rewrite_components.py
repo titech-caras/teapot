@@ -61,10 +61,17 @@ def run(root, name, command):
     return directory
 
 
-def exports(item):
-    return frozenset(symbol["name"] for symbol in item["symbols"]
-                     if symbol["section"] != "SHN_UNDEF" and symbol["type"] == "STT_FUNC"
-                     and symbol["binding"] == "STB_GLOBAL" and symbol["visibility"] == "STV_DEFAULT")
+def exports(item, converter, functions_only=True):
+    names = set()
+    for symbol in item["symbols"]:
+        if (symbol["section"] == "SHN_UNDEF" or (functions_only and symbol["type"] != "STT_FUNC")
+                or converter.version_node_symbol(item, symbol)
+                or symbol["binding"] != "STB_GLOBAL" or symbol["visibility"] != "STV_DEFAULT"):
+            continue
+        names.add(converter.reconstructed_symbol_name(symbol, item))
+        if symbol.get("version_default"):
+            names.add(symbol["name"])
+    return frozenset(names)
 
 
 def validate_object(path, component_id, expected_exports, expected_fdes):
@@ -93,14 +100,11 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     dump(directory / "key.json", key_data)
     lifted = directory / "lift.gtirb"
     run(directory, "lift", [args.ddisasm, item["path"], "--ir", lifted, "-j", str(args.jobs)])
-    for line in (directory / "lift/stderr").read_text().splitlines():
-        if "WARNING" in line or "ERROR" in line:
-            if item["role"] == "selected" and item["entry"] == 0 and "WARNING: Failed to set module entry point." in line:
-                continue
-            raise RuntimeError("frontend diagnostic: " + line)
     ir = gtirb.IR.load_protobuf(lifted)
     assert len(ir.modules) == 1
     module = ir.modules[0]
+    dump(directory / "proven-data-decoder-warnings.json", converter.validate_frontend_diagnostics(
+        module, item, (directory / "lift/stderr").read_text()))
     assert "liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data
     cfi = module.aux_data.get("cfiDirectives")
     cfi_starts = {offset.element_id.address + offset.displacement
@@ -111,7 +115,14 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     for symbol in module.symbols:
         if SYMBOL_SUFFIX in symbol.name or symbol.name.startswith(("__teapot_linked_", "__teapot_component_")):
             raise RuntimeError("reserved instrumentation symbol in original input: " + symbol.name)
-    own_exports = exports(item)
+    if item["role"] == "selected":
+        converter.localize_private_library_definitions(module, item)
+    version_bindings = (converter.resolve_selected_symbol_versions(module, item, args.selected_sonames)
+                        if args.resolve_selected_versions else [])
+    dump(directory / "selected-version-bindings.json", version_bindings)
+    if args.preserve_selected_lifecycle:
+        dump(directory / "lifecycle.json", converter.preserve_selected_lifecycle(module, item, priority))
+    own_exports = exports(item, converter)
     for name in own_exports:
         definitions = [symbol for symbol in module.symbols_named(name)
                        if isinstance(symbol.referent, gtirb.CodeBlock)]
@@ -133,7 +144,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         matches = list(module.symbols_named(label))
         assert len(matches) == 1
         matches[0].name = label + "_" + component_id
-    if item["role"] == "selected":
+    if item["role"] == "selected" and not args.preserve_selected_lifecycle:
         for section in module.sections:
             if section.name in (".init_array", ".fini_array"):
                 section.name += ".{:05d}".format(priority)
@@ -143,7 +154,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     ir.save_protobuf(instrumented)
     printer = [args.pprinter, "--ir", instrumented, "--asm", directory / "raw.S",
                "--policy", "complete", "--shared", "no"]
-    if item["role"] == "selected":
+    if item["role"] == "selected" and not args.preserve_selected_lifecycle:
         printer += ["--skip-section", ".init", ".fini"]
     run(directory, "print", printer)
     fixed = run(directory, "section-flags", ["sed", "-f", args.teapot / "scripts/fix_asm.sed",
@@ -151,12 +162,16 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     shutil.copyfile(fixed / "stdout", directory / "fixed.S")
     run(directory, "assemble", [args.cc, "-c", directory / "fixed.S", "-o", directory / "component.o"])
     validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]))
+    recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "fixed.S", "component.o",
+                "proven-data-decoder-warnings.json", "selected-version-bindings.json"]
+    if args.preserve_selected_lifecycle:
+        recorded.append("lifecycle.json")
     result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"],
-              "exports": sorted(own_exports), "guard_count": guard_count,
+              "exports": sorted(own_exports), "linked_exports": sorted(exports(item, converter, False)),
+              "guard_count": guard_count,
               "rewrite_seconds": rewrite_seconds, "liveness": "ddisasm",
-              "liveness_contract": "all tracked registers and flags live; original metadata retained in lift.gtirb",
-              "files": {name: sha(directory / name) for name in (
-                  "key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "fixed.S", "component.o")}}
+              "liveness_contract": "standalone-ddisasm-abi-v1; missing instruction masks all-live",
+              "files": {name: sha(directory / name) for name in recorded}}
     dump(directory / "component.json", result)
     return result
 
@@ -178,7 +193,7 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
             result = json.loads((entry / "component.json").read_text())
             for name, expected in result["files"].items():
                 assert sha(entry / name) == expected, "cached artifact hash mismatch: " + name
-            validate_object(entry / "component.o", key, exports(item), len(item["application_fdes"]))
+            validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]))
         else:
             # Containers often reuse PID 1; preserve failed attempts without
             # preventing an unchanged recipe from being retried.
@@ -205,6 +220,10 @@ def main():
     parser.add_argument("--pprinter", required=True)
     parser.add_argument("--cc", default="gcc")
     parser.add_argument("--jobs", type=int, default=2)
+    parser.add_argument("--resolve-selected-versions", action="store_true")
+    parser.add_argument("--preserve-selected-lifecycle", action="store_true")
+    parser.add_argument("--preserve-nonlocal-jumps", action="store_true")
+    parser.add_argument("--preserve-weak-imports", action="store_true")
     args = parser.parse_args()
     assert 1 <= args.jobs <= 8
     args.out.mkdir(parents=True, exist_ok=False)
@@ -212,12 +231,16 @@ def main():
     spec = importlib.util.spec_from_file_location("selected_converter", args.converter)
     converter = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(converter)
-    executable = converter.inspect(args.executable, "executable")
-    selected = [converter.inspect(path, "selected") for path in args.select]
+    conversion_options = {name: getattr(args, name) for name in (
+        "resolve_selected_versions", "preserve_selected_lifecycle",
+        "preserve_nonlocal_jumps", "preserve_weak_imports")}
+    executable = converter.inspect(args.executable, "executable", **conversion_options)
+    selected = [converter.inspect(path, "selected", **conversion_options) for path in args.select]
     external = [converter.inspect(path, "external") for path in args.external]
     order = converter.validate_closure(executable, selected, external)
+    args.selected_sonames = {item["soname"] for item in selected}
     items = [executable] + selected
-    bindings = [(name, item["soname"] or "executable") for item in items for name in exports(item)]
+    bindings = [(name, item["soname"] or "executable") for item in items for name in exports(item, converter)]
     selected_symbols = frozenset(name for name, owner in bindings)
     if any(is_blacklisted_function_name(name) for name in selected_symbols):
         raise RuntimeError("selected exports include an uninstrumented/trusted startup entry")
@@ -231,12 +254,19 @@ def main():
                "assembler": sha(shutil.which(args.cc)),
                "runtime_contract": json.loads(args.runtime_contract.read_text()),
                "options": asdict(InstrumentationOptions()), "ROB_LEN": ROB_LEN,
-               "liveness_contract": "caller-independent-all-live-v1",
+               "liveness_contract": "standalone-ddisasm-abi-v1",
+               "conversion_options": conversion_options,
                "dift_layout": "x64-la48-asan-new"}
     dump(args.out / "inputs.json", {"executable": executable, "selected": selected, "external": external})
-    components = [cached_component(args, converter, item, context, selected_symbols,
-                                  100 + order.index(item["soname"]) if item["role"] == "selected" else 0)
-                  for item in items]
+    # Do the expensive reusable library work first. Keep final link order main,
+    # then selected libraries, independently of the order of cache population.
+    libraries = [cached_component(args, converter, item, context, selected_symbols,
+                                  100 + order.index(item["soname"])) for item in selected]
+    components = [cached_component(args, converter, executable, context, selected_symbols, 0)] + libraries
+    link_support = []
+    if args.preserve_selected_lifecycle:
+        objects = [Path(component["cache_path"]) / "component.o" for component in components]
+        link_support.append(converter.build_lifecycle_dispatcher(args, objects[0], objects[1:], order).name)
     layout = ["SECTIONS {", "  .teapot_component_text : ALIGN(16) {",
               "    __teapot_linked_normal_start = .; KEEP(*(.teapot_component_text))",
               "    __teapot_linked_normal_end = .; }",
@@ -262,6 +292,7 @@ def main():
         shutil.copyfile(Path(component["cache_path"]) / "component.o",
                         args.out / ("component-{:03d}.o".format(index)))
     dump(args.out / "components.json", {"components": components, "total_guards": total_guards,
+                                       "link_support": link_support,
                                        "status": "objects_ready_final_link_and_behavior_not_yet_verified"})
     print(json.dumps({"components": len(components), "cache_hits": sum(c["cache_hit"] for c in components),
                       "total_guards": total_guards}), flush=True)

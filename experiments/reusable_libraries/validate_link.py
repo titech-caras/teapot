@@ -66,9 +66,14 @@ def validate(binary, objects):
                 assert ranges["normal"][0] <= entry < ranges["normal"][1], name
                 offset = entry - normal["sh_addr"]
                 assert normal.data()[offset:offset + 8] == bytes.fromhex("4887db904887d290"), name
+            for name in component.get("linked_exports", ()):
+                address(name)
         for (left_start, left_end), (right_start, right_end) in zip(sorted(guard_ranges), sorted(guard_ranges)[1:]):
             assert left_end <= right_start, "overlapping component guard storage"
-        for item in inputs["selected"]:
+        # New manifests include version-resolved function AND data exports.
+        # Retain the original check for historical unversioned manifests.
+        for item in ([] if all("linked_exports" in c for c in manifest["components"])
+                     else inputs["selected"]):
             for symbol in item["symbols"]:
                 if (symbol["section"] != "SHN_UNDEF" and symbol["binding"] == "STB_GLOBAL"
                         and symbol["visibility"] == "STV_DEFAULT"):

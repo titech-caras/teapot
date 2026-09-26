@@ -1,5 +1,12 @@
 # Reusable instrumented x64 components (experimental)
 
+Current acceptance (September 23): match ordinary program behavior and report
+sites by function, kind, static-site ordinal and tag. Counter values and effects
+near the ROB cutoff need not equal a whole-program rewrite. A warm cache must
+produce a byte-identical executable. Historical exact-counter experiments below
+remain evidence, not additional requirements. Resolved-plan and deferred-restore
+experiments are parked; this path does not lift or split a per-test monolith.
+
 This is an opt-in, binary-only **final-link** experiment. It is not support for
 loading instrumented DSOs independently. Existing Teapot CLI behavior and all
 non-component defaults are unchanged. Do not use a cached object with an
@@ -8,8 +15,9 @@ without the driver's input checks.
 
 The input contract is the selected-library converter's narrow x64 ELF subset:
 one non-PIE executable, selected compiled DSOs, and explicitly supplied external
-ELFs. Unsupported TLS, binding/versioning, IFUNC, custom startup, runtime lookup,
-nonlocal unwind, PIE and other architectures are rejected. Workload source and
+ELFs. Selected symbol versions, custom lifecycle and ordinary libc nonlocal jumps
+use the converter's explicit opt-ins. Unsupported TLS, IFUNC, runtime lookup,
+exception unwinding, PIE and other architectures are rejected. Workload source and
 original application objects/archives are not converter inputs. See
 `tools/sharedlib/README.md` in the separately integrated converter changeset.
 
@@ -20,12 +28,9 @@ original application objects/archives are not converter inputs. See
 2. Lift original inputs separately and retain original DDisasm liveness/CFI in
    `lift.gtirb`. Do not print/re-lift an ordinary monolith before instrumenting
    individual components.
-3. Conservatively mark **all tracked registers and flags live** in the working
-   IR. A reusable object cannot trust dead-register assumptions obtained without
-   every future caller. This over-approximates validated frontend metadata; it
-   is not Python fallback or omitted instrumentation. Missing masks already
-   mean all-live in the register manager. A more efficient inter-component
-   liveness contract is future work, not assumed safe here.
+3. Preserve standalone DDisasm ABI liveness, including live arguments/results.
+   Do not force all-live masks or import a linked caller's liveness. Missing
+   instruction masks still mean all-live in the register manager.
 4. Run all default instrumentation, ROB 250, nesting off, x64 LA48/ASan layout.
    Exported normal entries receive the complete existing marker/redirection
    before normal-path stack poisoning, in the same rewriting round. Direct
@@ -52,7 +57,7 @@ assembly, the instrumented object, command logs and SHA-256 manifests. Recipes
 include input ELF bytes, role/initializer priority, complete selected dependency
 contents and binding names, external provider bytes, Teapot/rewriter/LRA Python
 sources, converter/driver/section-fix hashes, frontend/native libraries, fixed
-image identity, pass options, conservative liveness policy, ROB/nesting/layout,
+image identity, pass options, standalone ABI liveness policy, ROB/nesting/layout,
 and matching runtime/wrapper archives. Corrupt artifacts fail hash validation;
 objects copied to an output directory do not alias the cached files.
 
