@@ -63,9 +63,7 @@ class AArch64Architecture(
             WidenAArch64ByteJumpTablesPass,
         )
 
-        passes = [NormalizeAArch64RelocationsPass(decoder)]
-        if self.needs_startup_normalization():
-            passes.append(NormalizeAArch64StartupPass(decoder))
+        passes = [NormalizeAArch64RelocationsPass(decoder), NormalizeAArch64StartupPass(decoder)]
         # Widen only after all ordinary relocation normalization has applied;
         # original encoded page offsets must not overwrite moved data labels.
         passes.append(WidenAArch64ByteJumpTablesPass())
@@ -79,8 +77,6 @@ class AArch64Architecture(
             AArch64RelaxConditionalBranchesPass,
         )
 
-        if not self.needs_conditional_branch_relax():
-            return
         print("[teapot] begin aarch64-relax", flush=True)
         adjusted_by_iteration = []
         for iteration in range(1, self.MAX_BRANCH_RELAXATION_ITERATIONS + 1):

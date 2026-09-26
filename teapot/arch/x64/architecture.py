@@ -44,8 +44,6 @@ class X64Architecture(
 
         from teapot.passes.common.x64_relax_jcxz_pass import X64RelaxJcxzPass
 
-        if not self.needs_conditional_branch_relax():
-            return
         print("[teapot] begin x64-relax", flush=True)
         pass_manager = PassManager()
         pass_manager.add(X64RelaxJcxzPass(

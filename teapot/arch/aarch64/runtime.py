@@ -4,7 +4,6 @@ from teapot.configs.runtime import COMMON_CHECKPOINT_LIB_SYMBOLS
 
 
 class AArch64RuntimeMixin:
-    NEEDS_STARTUP_NORMALIZATION = True
     RUN_TEXT_PASSES_BEFORE_TRANSIENT = True
     NEEDS_CONDITIONAL_BRANCH_RELAX = True
 

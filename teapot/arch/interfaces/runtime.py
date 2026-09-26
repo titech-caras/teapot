@@ -4,9 +4,7 @@ from teapot.configs.runtime import COMMON_CHECKPOINT_LIB_SYMBOLS
 
 
 class ArchitectureRuntimeMixin(ABC):
-    NEEDS_STARTUP_NORMALIZATION = False
     RUN_TEXT_PASSES_BEFORE_TRANSIENT = False
-    SUPPORTS_DIFT_EXT_CALLS = True
     NEEDS_LATE_TEXT_CHECKPOINTS = False
     NEEDS_CONDITIONAL_BRANCH_RELAX = False
 
@@ -22,14 +20,8 @@ class ArchitectureRuntimeMixin(ABC):
     def checkpoint_lib_symbols(self):
         return list(COMMON_CHECKPOINT_LIB_SYMBOLS)
 
-    def needs_startup_normalization(self) -> bool:
-        return self.NEEDS_STARTUP_NORMALIZATION
-
     def run_text_passes_before_transient(self) -> bool:
         return self.RUN_TEXT_PASSES_BEFORE_TRANSIENT
-
-    def supports_dift_ext_calls(self) -> bool:
-        return self.SUPPORTS_DIFT_EXT_CALLS
 
     def needs_late_text_checkpoints(self) -> bool:
         return self.NEEDS_LATE_TEXT_CHECKPOINTS
