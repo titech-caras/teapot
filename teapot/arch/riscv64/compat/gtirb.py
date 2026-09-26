@@ -356,7 +356,13 @@ def install_riscv64_rewriting_compat() -> None:
                 symbolic = symbolic_expressions[expr_offset]
                 if is_riscv_insert_protected_hi_relocation(symbolic):
                     break
-                if is_riscv_lo_relocation(symbolic):
+                # A PC-relative/GOT/TLS HI is completed only by a %pcrel_lo.
+                # An absolute %lo here belongs to an earlier inserted patch
+                # (for example LUI/ADDI of guard_list_top); treating it as the
+                # partner would move this insertion into the middle of that
+                # patch.
+                if (is_riscv_lo_relocation(symbolic) and
+                        gtirb.SymbolicExpression.Attribute.PCREL in symbolic.attributes):
                     lo_offset = expr_offset
                     break
 
