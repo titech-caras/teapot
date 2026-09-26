@@ -1,4 +1,4 @@
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 from gtirb_live_register_analysis.abi import _RISCV64_ELF as _RISCV64_ELF_BASE
 from gtirb_live_register_analysis.arch.riscv64 import riscv64_is_call

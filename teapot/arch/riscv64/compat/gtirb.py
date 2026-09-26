@@ -11,10 +11,8 @@ import sys
 from bisect import bisect_left
 
 import capstone
-import capstone.riscv
 import gtirb
 from gtirb_capstone import instructions
-from gtirb_capstone.instructions import MemoryAccess
 
 from teapot.arch.decoders import riscv64_decoder
 
@@ -33,7 +31,6 @@ def install_riscv64_decoder_compat() -> None:
         return
 
     original_get_block_decoder = decoder_cls._get_block_decoder
-    original_get_memory_accesses = decoder_cls.get_memory_accesses
 
     def get_block_decoder(self, block: gtirb.CodeBlock, opts: int = 0):
         if self._arch == gtirb.Module.ISA.ValidButUnsupported and _module_is_riscv64(block.module):
@@ -49,25 +46,7 @@ def install_riscv64_decoder_compat() -> None:
 
         return original_get_block_decoder(self, block, opts)
 
-    def get_memory_accesses(self, block: gtirb.CodeBlock):
-        if self._arch != gtirb.Module.ISA.ValidButUnsupported or not _module_is_riscv64(block.module):
-            return original_get_memory_accesses(self, block)
-
-        memory_accesses = []
-        for insn in self.get_instructions(block):
-            for op in insn.operands:
-                if op.type == capstone.riscv.RISCV_OP_MEM:
-                    memory_accesses.append(
-                        MemoryAccess(
-                            addr=insn.address,
-                            type=self.get_access_type(op),
-                            op_mem=op.mem,
-                        )
-                    )
-        return memory_accesses
-
     decoder_cls._get_block_decoder = get_block_decoder
-    decoder_cls.get_memory_accesses = get_memory_accesses
     decoder_cls._teapot_riscv64_compat = True
 
 

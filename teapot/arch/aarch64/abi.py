@@ -99,5 +99,3 @@ class _ARM64_ELF(ConservativeRegisterAllocationMixin, _ARM64_ELF_BASE):
 
         return prologue, reversed(epilogue), 0
 
-
-_AARCH64_ELF = _ARM64_ELF
