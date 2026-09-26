@@ -23,7 +23,7 @@ class X64DiftPatchesMixin:
         # Basic execution/rollback support only: neither the x87 register
         # stack nor RFLAGS has a DIFT tag model. Leave tags untouched instead
         # of treating implicit-source stores as writes of an untainted value.
-        return (inst.mnemonic in ("nop", "ret", "call", "pushf", "pushfq", "popf", "popfq")
+        return (inst.mnemonic.split()[-1] in ("nop", "ret", "call", "pushf", "pushfq", "popf", "popfq")
                 or inst.mnemonic.startswith("j") or self.is_x87_instruction(inst))
 
     @staticmethod

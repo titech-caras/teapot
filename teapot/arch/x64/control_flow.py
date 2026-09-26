@@ -122,6 +122,11 @@ class X64ControlFlowPatchesMixin:
         return patch
 
     def instruction_must_rollback(self, instruction) -> bool:
+        if instruction.mnemonic.lower().split()[-1] in self._UNSUPPORTED_STATE_SAVE_MNEMONICS:
+            # Capstone reports these as eight-byte writes. FXSAVE writes a
+            # 512-byte image; XSAVE's size depends on the enabled processor
+            # state. Neither can use that nominal width for rollback logging.
+            return True
         if instruction.mnemonic in {
             "lfence", "mfence", "sfence", "serialize", "cpuid",
             "syscall", "sysenter", "int3", "int1", "int",

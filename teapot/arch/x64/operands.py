@@ -20,11 +20,18 @@ class X64OperandMixin:
             return kind
         return None
 
-    # Capstone (5 and 6.0) reports the memory destination of the four rotate
-    # families as read-only, even though these forms update it in place.
+    # Capstone (5 and 6.0) reports the memory destination of rotates and
+    # compare/exchange forms as read-only, although these can update it in place.
     # Keep this narrow: comparisons and tests also have a first, read-only
     # memory operand.
-    _UNMARKED_MEMORY_RMW_MNEMONICS = frozenset(("rcl", "rcr", "rol", "ror"))
+    _UNMARKED_MEMORY_RMW_MNEMONICS = frozenset((
+        "rcl", "rcr", "rol", "ror", "cmpxchg", "cmpxchg8b", "cmpxchg16b",
+    ))
+    _UNMARKED_MEMORY_STORE_MNEMONICS = frozenset(("movnti", "stmxcsr", "vstmxcsr"))
+    _UNSUPPORTED_STATE_SAVE_MNEMONICS = frozenset((
+        "fxsave", "fxsave64", "xsave", "xsave64", "xsaveopt", "xsaveopt64",
+        "xsavec", "xsavec64", "xsaves", "xsaves64",
+    ))
     _SETCC_MNEMONICS = frozenset((
         "seto", "setno", "setb", "setae", "sete", "setne", "setbe", "seta",
         "sets", "setns", "setp", "setnp", "setl", "setge", "setle", "setg",
@@ -135,8 +142,38 @@ class X64OperandMixin:
             inst.operands and
             inst.operands[0] == operand and
             operand.access & CS_AC_READ and
-            inst.mnemonic.lower() in cls._UNMARKED_MEMORY_RMW_MNEMONICS
+            inst.mnemonic.lower().split()[-1] in cls._UNMARKED_MEMORY_RMW_MNEMONICS
         )
+
+    @classmethod
+    def _is_unmarked_memory_store(cls, inst, operand) -> bool:
+        return bool(inst.operands and inst.operands[0] == operand and
+                    operand.type == CS_OP_MEM and
+                    inst.mnemonic.lower().split()[-1] in cls._UNMARKED_MEMORY_STORE_MNEMONICS)
+
+    @staticmethod
+    def implicit_memory_write(inst):
+        """Address and byte extent of an implicit store, before it executes.
+
+        MASKMOV logs the entire potential range, including masked-out bytes.
+        ENTER's display pushes are contiguous; allocating its local frame does
+        not itself write the additional local-storage bytes.
+        """
+        mnemonic = inst.mnemonic.lower().split()[-1]
+        width = 2 if 0x66 in inst.prefix else 8
+        if mnemonic == "call":
+            return "[rsp-8]", 8
+        if mnemonic in {"push", "pushf", "pushfq"}:
+            return f"[rsp-{width}]", width
+        if mnemonic == "enter":
+            nesting = inst.operands[-1].imm & 31
+            extent = width * (nesting + 1 if nesting else 1)
+            return f"[rsp-{extent}]", extent
+        if mnemonic in {"maskmovdqu", "maskmovq"}:
+            base = "edi" if inst.addr_size == 4 else "rdi"
+            segment = {0x64: "fs:", 0x65: "gs:"}.get(inst.prefix[1], "")
+            return f"{segment}[{base}]", 16 if mnemonic == "maskmovdqu" else 8
+        return None
 
     @classmethod
     def _is_setcc_memory_store(cls, inst, operand) -> bool:
@@ -183,7 +220,8 @@ class X64OperandMixin:
             # and 6.0) also marks FRSTOR as a write.
             return not cls._is_x87_memory_store(inst, operand)
         if (cls._is_unmarked_vector_store(inst, operand) or
-                cls._is_setcc_memory_store(inst, operand)):
+                cls._is_setcc_memory_store(inst, operand) or
+                cls._is_unmarked_memory_store(inst, operand)):
             return False
         return bool(operand.access & CS_AC_READ)
 
@@ -201,6 +239,7 @@ class X64OperandMixin:
             (inst.operands[0] == operand and inst.operands[0].size > 8) or
             cls._is_unmarked_vector_store(inst, operand) or
             cls._is_unmarked_memory_rmw(inst, operand) or
+            cls._is_unmarked_memory_store(inst, operand) or
             cls._is_setcc_memory_store(inst, operand)
         )
 

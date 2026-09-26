@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Optional, Set
 
 import gtirb
-from capstone import CS_AC_READ, CS_OP_MEM, CS_OP_REG, CsInsn
+from capstone import CS_OP_MEM, CS_OP_REG, CsInsn
 from gtirb_functions import Function
 from gtirb_rewriting import InsertionContext, Patch, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax
@@ -233,8 +233,7 @@ class X64DiftPropagationPass(DiftPropagationBase):
                 regs_read = reg_operand_set
                 regs_write = set()
                 mem_operand_read_str = self.arch.mem_operand_to_str(block, inst, mem_operand) if mem_operand else None
-                mem_operand_write_str = "[rsp-8]"
-                mem_operand_write_size = 8
+                mem_operand_write_str, mem_operand_write_size = self.arch.implicit_memory_write(inst)
             else:  # pop
                 regs_read = set()
                 regs_write = reg_operand_set
@@ -250,9 +249,10 @@ class X64DiftPropagationPass(DiftPropagationBase):
             mem_operand = self.arch.memory_operand(inst) if inst.mnemonic != "lea" else None
             if mem_operand is not None:
                 mem_operand_str = self.arch.mem_operand_to_str(block, inst, mem_operand)
-                mem_operand_read_str = mem_operand_str if mem_operand.access & CS_AC_READ else None
+                mem_operand_read_str = mem_operand_str if self.arch.mem_operand_is_read(inst, mem_operand) else None
                 mem_operand_write_str = mem_operand_str if self.arch.mem_operand_is_write(inst, mem_operand) else None
-                mem_operand_write_size = mem_operand.size if self.arch.mem_operand_is_write(inst, mem_operand) else None
+                mem_operand_write_size = self.arch.mem_operand_size(inst, mem_operand) \
+                    if self.arch.mem_operand_is_write(inst, mem_operand) else None
 
         # Handle special instructions
         clear_dest_tags = self.arch.dift_clears_destination_tags(inst)

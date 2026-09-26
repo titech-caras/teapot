@@ -17,19 +17,17 @@ class X64TransientMemlogPass(TransientMemlogPassBase):
         if self.arch.rep_string_kind(inst) is not None:
             # The bounded REP loop logs each element, including backward copies.
             return
+        if self.arch.instruction_must_rollback(inst):
+            # Unsupported state-image stores are preceded by a restore point;
+            # do not misleadingly log the decoder's nominal eight-byte operand.
+            return
         if inst.mnemonic in ("lea", "nop", "ret") or inst.mnemonic.startswith("j"):
             return
 
         mem_operand = self.arch.memory_operand(inst)
-        if inst.mnemonic == "push" or inst.mnemonic == "call":
-            mem_operand_str = "[rsp-8]"
-            access_size = 8
-        elif inst.mnemonic in ("pushf", "pushfq"):
-            # These have no explicit memory operand. In long mode 66h PUSHF
-            # pushes two bytes; PUSHFQ pushes eight. The logging patch uses
-            # only MOV/LEA, preserving the flags the original instruction sees.
-            access_size = 2 if inst.mnemonic == "pushf" else 8
-            mem_operand_str = f"[rsp-{access_size}]"
+        implicit = self.arch.implicit_memory_write(inst)
+        if implicit is not None:
+            mem_operand_str, access_size = implicit
         elif mem_operand is not None and self.arch.mem_operand_is_write(inst, mem_operand):
             mem_operand_str = self.arch.mem_operand_to_str(block, inst, mem_operand)
             access_size = self.arch.mem_operand_size(inst, mem_operand)
