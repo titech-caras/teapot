@@ -5,12 +5,9 @@ from gtirb_rewriting.abi import _PatchRegisterAllocation
 from gtirb_rewriting.assembly import Constraints, Register, _AsmSnippet
 
 from teapot.arch.aarch64.assembly import AArch64AssemblyMixin
+from teapot.arch.aarch64.spill import AArch64ShadowStackMixin
 from teapot.arch.abi import ConservativeRegisterAllocationMixin
-from teapot.configs.slots import (
-    AARCH64_SHADOW_STACK_ABI_OFFSET,
-    AARCH64_SHADOW_STACK_SIZE,
-    SCRATCHPAD_FIRST_SPILL_OFFSET,
-)
+from teapot.configs.slots import AARCH64_SHADOW_STACK_ABI_OFFSET, SCRATCHPAD_FIRST_SPILL_OFFSET
 
 
 class _ARM64_ELF(ConservativeRegisterAllocationMixin, _ARM64_ELF_BASE):
@@ -23,13 +20,6 @@ class _ARM64_ELF(ConservativeRegisterAllocationMixin, _ARM64_ELF_BASE):
     @staticmethod
     def _load_address(reg: Register, symbol: str) -> str:
         return AArch64AssemblyMixin.load_address(reg, symbol)
-
-    @staticmethod
-    def _shadow_stack_adjust(op: str) -> str:
-        encoded = AArch64AssemblyMixin.add_sub_immediate(op, "sp", "sp", AARCH64_SHADOW_STACK_SIZE)
-        if encoded is not None:
-            return encoded
-        raise ValueError("AARCH64_SHADOW_STACK_SIZE is not encodable as an add/sub immediate")
 
     def _create_prologue_and_epilogue(
             self,
@@ -57,7 +47,7 @@ class _ARM64_ELF(ConservativeRegisterAllocationMixin, _ARM64_ELF_BASE):
         clobbered_names = {reg.name for reg in clobbered_registers}
 
         prologue_lines = [
-            self._shadow_stack_adjust("sub"),
+            AArch64ShadowStackMixin.shadow_stack_adjust_reg("sub", "sp"),
             f"stp x16, x17, [sp, #{AARCH64_SHADOW_STACK_ABI_OFFSET}]",
             self._load_address(self.get_register("x16"), f"scratchpad+{scratchpad_offset}"),
             f"ldr x17, [sp, #{AARCH64_SHADOW_STACK_ABI_OFFSET}]",
@@ -78,7 +68,7 @@ class _ARM64_ELF(ConservativeRegisterAllocationMixin, _ARM64_ELF_BASE):
             prologue_lines.append("ldr x17, [x16, #8]")
         if "x16" not in clobbered_names:
             prologue_lines.append("ldr x16, [x16]")
-        prologue_lines.append(self._shadow_stack_adjust("add"))
+        prologue_lines.append(AArch64ShadowStackMixin.shadow_stack_adjust_reg("add", "sp"))
         prologue.append(_AsmSnippet("\n".join(prologue_lines)))
 
         epilogue_lines = [
