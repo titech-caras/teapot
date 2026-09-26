@@ -41,7 +41,7 @@ class RISCV64TransientPortContentionPolicyPass(TransientPortContentionPolicyPass
 
             asm = ""
             asm += "\n" + self.arch.clear_register_snippet(tag_reg)
-            for reg in regs_read:
+            for reg in sorted(regs_read, key=lambda reg: reg.name):
                 asm += self.arch.dift_or_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
             asm += f"""

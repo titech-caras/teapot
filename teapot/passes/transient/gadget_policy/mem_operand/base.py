@@ -80,4 +80,4 @@ class TransientMemOperandPoliciesPassBase(ArchSpecificPassMixin, InstVisitorPass
 
         if result or not fallback_to_all_writes:
             return result
-        return list(regs_write)
+        return sorted(regs_write, key=lambda reg: reg.name)

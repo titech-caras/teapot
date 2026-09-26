@@ -78,7 +78,7 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
             asm = self.arch.effective_address_snippet(r2, mem_operand_str, r3)
             asm += self.arch.clear_register_snippet(r1)
 
-            for reg in addr_regs:
+            for reg in sorted(addr_regs, key=lambda reg: reg.name):
                 asm += self.arch.dift_or_reg_tag_snippet(r1, None, reg)
 
             label = f".L__{label_key}{SYMBOL_SUFFIX}"

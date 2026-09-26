@@ -121,7 +121,7 @@ class AArch64DiftPropagationPass(DiftPropagationBase):
             def build_base_tag(regs) -> str:
                 asm = self.arch.clear_register_snippet(tag_reg)
                 if not clear_dest_tags:
-                    for reg in regs:
+                    for reg in self._ordered_registers(regs):
                         asm += self.arch.dift_or_reg_tag_snippet(tag_reg, tmp_reg, reg)
                 return asm
 
@@ -143,7 +143,7 @@ class AArch64DiftPropagationPass(DiftPropagationBase):
                         asm += or_memory_tag(element.read_tag_size)
                     asm += self.arch.dift_store_reg_tag_snippet(tag_reg, tmp_reg, element.register)
 
-                for reg in regs_write - loaded_registers:
+                for reg in self._ordered_registers(regs_write - loaded_registers):
                     asm += f"mov {tag_reg:32}, {base_tag_reg:32}\n"
                     asm += self.arch.dift_store_reg_tag_snippet(tag_reg, tmp_reg, reg)
             elif store_elements:
@@ -154,13 +154,13 @@ class AArch64DiftPropagationPass(DiftPropagationBase):
                     asm += load_mem_address(mem_write, element.offset)
                     asm += store_memory_tag(element.size)
 
-                for reg in regs_write:
+                for reg in self._ordered_registers(regs_write):
                     asm += "\n" + build_base_tag(address_tag_regs)
                     asm += self.arch.dift_store_reg_tag_snippet(tag_reg, tmp_reg, reg)
             else:
                 asm += "\n" + self.arch.clear_register_snippet(tag_reg)
                 if not clear_dest_tags:
-                    for reg in regs_read:
+                    for reg in self._ordered_registers(regs_read):
                         asm += self.arch.dift_or_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
                     if mem_read is not None:
@@ -175,7 +175,7 @@ class AArch64DiftPropagationPass(DiftPropagationBase):
                             orr {tag_reg:32}, {tag_reg:32}, {tmp_reg:32}
                         """
 
-                for reg in regs_write:
+                for reg in self._ordered_registers(regs_write):
                     asm += self.arch.dift_store_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
                 if mem_write is not None:

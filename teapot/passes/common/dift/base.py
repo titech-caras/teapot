@@ -34,6 +34,12 @@ class DiftScratchPlan:
 class DiftPropagationBase(ArchSpecificPassMixin, InstVisitorPassMixin):
     section: gtirb.Section
 
+    @staticmethod
+    def _ordered_registers(registers):
+        # Register hashes include their names. Never let hash-seed-dependent
+        # set order become instruction order or LLVM temporary numbering.
+        return sorted(registers, key=lambda reg: reg.name)
+
     def __init__(self, reg_manager: LiveRegisterManager, section: gtirb.Section, decoder: GtirbInstructionDecoder,
                  arch: Architecture, *, dift_layout=None, insert_memlog: bool = False):
         self.check_expected_arch(arch)

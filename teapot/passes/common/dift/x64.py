@@ -343,13 +343,13 @@ class X64DiftPropagationPass(DiftPropagationBase):
             asm += self.arch.clear_register_snippet(r4)
 
             if not clear_dest_tags:
-                for reg in regs_read:
+                for reg in self._ordered_registers(regs_read):
                     asm += self.arch.dift_or_reg_tag_snippet(r4, None, reg)
 
                 if mem_read_operand_str:
                     asm += f"or {r4:8l}, [{r2}]\n"
 
-            for reg in regs_write:
+            for reg in self._ordered_registers(regs_write):
                 asm += self.arch.dift_store_reg_tag_snippet(r4, None, reg)
 
             if mem_write_operand_str:

@@ -398,7 +398,7 @@ attributes #0 = {{ "no-builtins" }}
                         self._load(self.TAG_TYPE, tag), mem_addr, element.offset, element.size)
 
             loaded_registers = {element.register for element in read_elements}
-            for reg in regs_write - loaded_registers:
+            for reg in self._ordered_registers(regs_write - loaded_registers):
                 self._store(self.TAG_TYPE, address_tag, self._build_gep(
                     self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
                     ptr_type=self.DIFT_REG_TAGS_TYPE))
@@ -412,7 +412,7 @@ attributes #0 = {{ "no-builtins" }}
 
             loaded_tag = self._load(self.TAG_TYPE, tag)
 
-            for reg in regs_write:
+            for reg in self._ordered_registers(regs_write):
                 self._store(self.TAG_TYPE, loaded_tag, self._build_gep(
                     self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
                     ptr_type=self.DIFT_REG_TAGS_TYPE))
@@ -441,7 +441,7 @@ attributes #0 = {{ "no-builtins" }}
         return mem_addr
 
     def _or_register_tags_into_tag(self, tag, registers):
-        for reg in registers:
+        for reg in self._ordered_registers(registers):
             self._store(self.TAG_TYPE, self._or(
                 self.TAG_TYPE, self._load(self.TAG_TYPE, tag),
                 self._load(self.TAG_TYPE, self._build_gep(

@@ -134,7 +134,9 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
                     leaq scratchpad+{SCRATCHPAD_SIZE - 16}, %rsp
                 """ + asm
 
-            for reg_idx, register in enumerate(registers.registers):
+            # Map LLVM registers to allocated scratch slots canonically; the
+            # usage set is otherwise ordered by the process's random hash seed.
+            for reg_idx, register in enumerate(self._ordered_registers(registers.registers)):
                 for size, name in register.sizes.items():
                     asm = asm.replace(f"%{name}", f"%tmpr{reg_idx}:{size}")
 

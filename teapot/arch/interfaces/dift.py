@@ -3,7 +3,9 @@ from abc import ABC, abstractmethod
 class ArchitectureDiftMixin(ABC):
     @staticmethod
     def dift_write_registers(write_regs):
-        if isinstance(write_regs, (list, tuple, set, frozenset)):
+        if isinstance(write_regs, (set, frozenset)):
+            return sorted(write_regs, key=lambda reg: reg.name)
+        if isinstance(write_regs, (list, tuple)):
             return list(write_regs)
         return [write_regs]
 

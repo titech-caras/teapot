@@ -69,7 +69,8 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
 
             asm = ""
             asm += self.arch.clear_register_snippet(tag_reg)
-            for reg in self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand):
+            for reg in sorted(self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand),
+                              key=lambda reg: reg.name):
                 asm += self.arch.dift_or_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
             asm += self.arch.mem_operand_address_snippet(

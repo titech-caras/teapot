@@ -29,7 +29,7 @@ class RISCV64DiftPropagationPass(DiftPropagationBase):
             asm = self.arch.save_regs_to_first_spill(scratch_plan.saved_regs)
             asm += "\n" + self.arch.clear_register_snippet(tag_reg)
             if not clear_dest_tags:
-                for reg in regs_read:
+                for reg in self._ordered_registers(regs_read):
                     asm += self.arch.dift_or_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
                 if mem_read is not None:
@@ -42,7 +42,7 @@ class RISCV64DiftPropagationPass(DiftPropagationBase):
                         or {tag_reg}, {tag_reg}, {tmp_reg}
                     """
 
-            for reg in regs_write:
+            for reg in self._ordered_registers(regs_write):
                 asm += self.arch.dift_store_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
             if mem_write is not None:

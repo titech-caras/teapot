@@ -71,7 +71,7 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
 
             asm = ""
             asm += "\n" + self.arch.clear_register_snippet(tag_reg)
-            for reg in address_regs:
+            for reg in sorted(address_regs, key=lambda reg: reg.name):
                 asm += self.arch.dift_or_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
             asm += self.arch.mem_operand_address_snippet(
