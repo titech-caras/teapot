@@ -98,8 +98,6 @@ class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
             patch = self.allocate_registers(function, block, len(instructions) - 1)(patch)
             self.insert_at(block, sum(inst.size for inst in instructions[:-1]), Patch.from_function(patch))
 
-        super().visit_function(function)
-
     def end_module(self, module, functions):
         if not self.arch.return_address_is_stack_resident():
             counts = ", ".join(f"{key}={value}" for key, value in sorted(self.coverage.items()))

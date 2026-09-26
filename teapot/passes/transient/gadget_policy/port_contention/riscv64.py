@@ -1,7 +1,7 @@
 from typing import Optional
 
 import gtirb
-from capstone import CS_OP_MEM, CsInsn
+from capstone import CsInsn
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.tags import TAG_SECRET, TAG_SECRET_INDIRECT
@@ -21,11 +21,9 @@ class RISCV64TransientPortContentionPolicyPass(TransientPortContentionPolicyPass
         return None
 
     def build_patch(self, block: gtirb.CodeBlock, inst: CsInsn, inst_offset: int):
-        mem_operand = next(iter(op for op in inst.operands if op.type == CS_OP_MEM), None)
+        # Only conditional branches reach here, and they have no memory operand.
         regs_read = self.arch.access_registers(self.reg_manager.abi, inst, 0)
-        regs_read |= self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand)
-
-        if not regs_read and mem_operand is None:
+        if not regs_read:
             return None
 
         patch = self._build_patch(inst, regs_read)

@@ -4,7 +4,6 @@ import gtirb
 from capstone import CsInsn
 from gtirb_functions import Function
 from gtirb_rewriting import InsertionContext
-from gtirb_rewriting.assembly import Register
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.tags import (
@@ -24,7 +23,7 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
 
     def _build_policy_patch(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                             block: gtirb.CodeBlock, function: Function = None):
-        if inst.mnemonic in ("nop", "ret", "call", "bl", "blr") \
+        if inst.mnemonic in ("nop", "ret", "bl", "blr") \
                 or inst.mnemonic.startswith(("b.", "cb", "tb")):
             return None
         if self.arch.is_instrumentation_helper_instruction(

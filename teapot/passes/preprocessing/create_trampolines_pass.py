@@ -91,7 +91,7 @@ class CreateTrampolinesPass(VisitorPassMixin):
             last_instruction: CsInsn
             instructions = list(self.decoder.get_instructions(block))
             *_, last_instruction = instructions
-            instruction_idx = max(len(instructions) - 1, 0)
+            instruction_idx = len(instructions) - 1
 
             spare_registers = ()
             if self.reg_manager is not None:

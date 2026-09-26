@@ -106,10 +106,7 @@ class NormalizeRISCV64GPReferencesPass(Pass):
             self.normalized += 1
 
     def _writes_global_pointer(self, inst) -> bool:
-        gp = self.arch.abi.get_register("gp")
-        if gp is None:
-            return False
-        return gp in self.arch.access_registers(self.arch.abi, inst, 1)
+        return self.arch.abi.get_register("gp") in self.arch.access_registers(self.arch.abi, inst, 1)
 
     @staticmethod
     def _uses_gp_address(inst):

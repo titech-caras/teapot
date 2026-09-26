@@ -28,34 +28,19 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
         self.required_target_symbols = frozenset(required_target_symbols)
 
         self.decoder = decoder
-        self.analyzed_function_ids = set()
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         super().begin_module(module, functions, rewriting_ctx)
-        self.analyzed_function_ids = set()
         self.symbol_names = {symbol.name for symbol in module.symbols}
-        self.functions = list(functions)
-        self.function_by_block_uuid = {
-            block.uuid: function
-            for function in self.functions
-            for block in function.get_all_blocks()
-        }
-        self.visit_functions(self.functions, self.text_section)
+        self.visit_functions(functions, self.text_section)
 
     def visit_function(self, function: Function):
         if is_blacklisted_function(function):
             return
 
         if self.arch.indirect_transform_uses_live_registers() and self.reg_manager is not None:
-            self._analyze_function(function)
+            self.reg_manager.analyze(function)
         super().visit_function(function)
-
-    def _analyze_function(self, function: Function):
-        function_id = id(function)
-        if function_id in self.analyzed_function_ids:
-            return
-        self.reg_manager.analyze(function)
-        self.analyzed_function_ids.add(function_id)
 
     def _ensure_landing_pad_symbol(self, original_block_uuid):
         landing_name = self.arch.indirect_transform_landing_pad_label(original_block_uuid)
@@ -111,7 +96,6 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         incoming_edges = list(block.incoming_edges)
         non_fallthrough_edges, fallthrough_edges = distinguish_edges(incoming_edges)
-        # FIXME: this thing clobbers flags!
 
         required_entry = any(symbol.name in self.required_target_symbols for symbol in block.references)
         if (required_entry or

@@ -223,7 +223,7 @@ class LiveRegisterPreservationTests(unittest.TestCase):
             allocated.extend(ctx.scratch_registers)
             return f"li {ctx.scratch_registers[0]}, 7"
 
-        arch.coverage_patch = lambda _idx: patch
+        arch.coverage_patch = lambda _idx, index_base_symbol=None: patch
         guard_section = gtirb.Section(name=".teapot_guards", module=module)
         visitor = TransientCoveragePass(
             manager, block.section, manager.analyzer.decoder, guard_section, arch)
