@@ -77,39 +77,14 @@ def is_blacklisted_function(function) -> bool:
             is_gnu_ifunc_resolver(function))
 
 
-# TODO: eventually take an abilist file instead
-DIFT_IGNORE_LIST = [
-    "printf", "puts", "putchar", "fprintf", "putc", "fputc", "__fprintf_chk", "__snprintf_chk", "__vsnprintf_chk",
-    "fputs", "vfprintf",
-    "isatty", "clock", "utimensat", "__fxstat", "gettimeofday", "getpid", "secure_getenv", "gmtime", "clock_gettime",
-    "sendmsg", "uname", "getnameinfo", "getaddrinfo", "gethostbyname", "freeaddrinfo", "getsockname", "connect",
-    "chown", "chmod", "unlink", "umask", "mkstemp", "shmdt", "shutdown", "shmget", "sysconf", "syscall", "tcgetattr",
-    "shmat", "bind", "accept", "setsockopt", "tcsetattr", "sigaction", "listen", "getsockopt", "usleep", "socket",
-    "signal", "time",
-    "open", "fdopen", "fwrite", "fopen", "fclose", "fflush", "ferror", "fseek", "ftell", "feof", "close", "write",
-    "fstat",
-    "fopen64", "dlopen", "dladdr", "dlsym", "dlclose", "dlerror", "perror", "fcntl", "ioctl", "select", "fileno",
-    "readdir", "closedir", "opendir",
-    "malloc", "free", "realloc",
-    "strcmp", "strncmp", "strchr", "strrchr", "strerror", "memchr", "memcmp", "qsort", "strspn", "strcspn",
-    "strlcat", "strlcpy",
-    "strcasecmp", "strncasecmp",
-    "__ctype_b_loc", "__ctype_tolower_loc", "__ctype_toupper_loc",
-    "abort", "__assert_fail", "exit", "__errno_location", "__xstat", "__stack_chk_fail", "__cxa_atexit",
-    "gai_strerror", "__xpg_strerror_r", "mmap", "mprotect", "mlock", "madvise", "munmap",
-    "crc32",
-
-    "getenv",  # FIXME: whitelist only for now, needed for some experiments
-
-    "sprintf", "__isoc99_sscanf", "__isoc23_strtol",  # FIXME: these should actually be tainted
-]
-
 # These preserve rollback's fault handlers, independently of DIFT being enabled.
 RUNTIME_WRAPPER_FUNCTIONS = {
     "signal": "signal__teapot_wrapper__",
     "sigaction": "sigaction__teapot_wrapper__",
 }
 
+# DIFT wraps only these external calls. Known gaps, whose results should carry taint: sprintf,
+# __isoc99_sscanf and __isoc23_strtol.
 DIFT_WRAPPER_FUNCTIONS = {
     "read",
     "fread",

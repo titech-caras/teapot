@@ -6,7 +6,7 @@ from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext
 
 from teapot.configs.blacklist import (
-    DIFT_IGNORE_LIST, DIFT_WRAPPER_FUNCTIONS, RUNTIME_WRAPPER_FUNCTIONS, is_blacklisted_function)
+    DIFT_WRAPPER_FUNCTIONS, RUNTIME_WRAPPER_FUNCTIONS, is_blacklisted_function)
 from teapot.passes.mixins import VisitorPassMixin
 
 
@@ -23,7 +23,7 @@ class DiftExtCallPass(VisitorPassMixin):
 
     @staticmethod
     def should_ignore_dift_wrapper(name: str) -> bool:
-        return name in DIFT_IGNORE_LIST or name.startswith("__asan_") or name not in DIFT_WRAPPER_FUNCTIONS
+        return name not in DIFT_WRAPPER_FUNCTIONS
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         super().begin_module(module, functions, rewriting_ctx)
