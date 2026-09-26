@@ -44,6 +44,7 @@ class TextDiftLLVMBase(DiftPropagationBase):
     SCRATCHPAD_ELEM_TYPE = "i64"
     TARGET_TRIPLE = None
     TARGET_FEATURES = ""
+    ASM_RETURN_BRANCH = None
     ALLOCATE_INST_PATCH_REGISTERS = False
     ALLOCATE_BLOCK_PATCH_REGISTERS = False
 
@@ -179,8 +180,17 @@ ret void
             if stripped.startswith("."):
                 continue
             if stripped in ("ret", "retq"):
-                continue
-            lines.append(line)
+                # LLVM can put a return block before a cold tail and branch
+                # back to it. Deleting that return creates a fallthrough (or
+                # a loop). Inline it as a jump to the wrapper's restore path.
+                assert self.ASM_RETURN_BRANCH is not None
+                lines.append(f"{self.ASM_RETURN_BRANCH} .Lfunc_end0")
+            else:
+                lines.append(line)
+        # Only the final return may become fallthrough to the patch epilogue.
+        if lines and lines[-1] == f"{self.ASM_RETURN_BRANCH} .Lfunc_end0":
+            lines.pop()
+        lines.append(".Lfunc_end0:")
         return "\n".join(lines)
 
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):

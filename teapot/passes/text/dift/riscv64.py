@@ -18,6 +18,7 @@ from teapot.passes.text.dift.base import (
 
 class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagationPass):
     EXPECTED_ARCH = "riscv64"
+    ASM_RETURN_BRANCH = "j"
     TARGET_TRIPLE = "riscv64-unknown-linux-gnu"
     # Keep patch instructions four bytes wide: implicit compression breaks the
     # rewriter's padding alignment, independently of the input binary's ISA.

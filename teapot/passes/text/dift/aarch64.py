@@ -19,6 +19,7 @@ from teapot.utils.registers import registers_in_abi_order
 
 class AArch64TextDiftPropagationLLVMPass(TextDiftLLVMBase, AArch64DiftPropagationPass):
     EXPECTED_ARCH = "aarch64"
+    ASM_RETURN_BRANCH = "b"
     TARGET_TRIPLE = "aarch64-unknown-linux-gnu"
     TARGET_FEATURES = "+neon,+fp-armv8"
 

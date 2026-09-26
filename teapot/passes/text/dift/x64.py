@@ -20,6 +20,7 @@ class X64LLVMRegisterUsage:
 
 class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
     EXPECTED_ARCH = "x64"
+    ASM_RETURN_BRANCH = "jmp"
     ALLOCATE_INST_PATCH_REGISTERS = True
     ALLOCATE_BLOCK_PATCH_REGISTERS = True
     # gtirb-rewriting's x86 scratch-register ABI allocates and spills GPRs.
@@ -127,9 +128,6 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
         @patch_constraints(scratch_registers=len(registers.registers), clobbers_flags=True)
         def patch(ctx: InsertionContext):
             asm = assembly.strip()
-            if asm.endswith("retq"):
-                asm = asm[:-4]
-
             if registers.has_reg_spill:
                 asm = f"""
                     movq %rsp, old_rsp
@@ -143,13 +141,6 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
             for reg_idx, register in enumerate(ctx.scratch_registers):
                 for size, name in register.sizes.items():
                     asm = asm.replace(f"%tmpr{reg_idx}:{size}", f"%{name}")
-
-            if "retq" in asm:
-                asm = asm.replace("retq", "jmp .Lfunc_end0")
-                asm += """
-                .Lfunc_end0:
-                    nop
-                """
 
             if registers.has_reg_spill:
                 asm += """
