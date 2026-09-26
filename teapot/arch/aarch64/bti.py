@@ -71,10 +71,21 @@ class AArch64BTIArchitecture(AArch64Architecture):
 
     @staticmethod
     def finalize_bti_layout(pipeline):
+        from gtirb_rewriting import PassManager
+        from teapot.passes.common.aarch64_outline_native_landings_pass import AArch64OutlineNativeLandingsPass
+
         module = pipeline.module
         section_name = ".teapot_bti_normal"
         if any(section.name == section_name for section in module.sections):
             raise ValueError("input already contains the reserved BTI section")
+        outline = AArch64OutlineNativeLandingsPass(pipeline.text_section, pipeline.arch.MAGIC_WORDS)
+        manager = PassManager()
+        manager.add(outline)
+        pipeline._run_pass_manager(manager, 'outline-native-landings')
+        if outline.outlined:
+            # New cross-section direct branches also need range convergence.
+            pipeline.arch.relax_conditional_branches(module)
+            pipeline._refresh_register_analysis()
         symbols = (
             ("text_start", pipeline.text_section_start_symbol),
             ("text_end", pipeline.text_section_end_symbol),

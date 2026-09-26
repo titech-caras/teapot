@@ -54,7 +54,7 @@ def main():
             prefix = case / mode
             prefix.with_suffix('.stdout').write_bytes(result.stdout)
             prefix.with_suffix('.stderr').write_bytes(result.stderr)
-            expected = 0 if name == 'valid' and mode == 'normal' else 78
+            expected = 0 if name in ('valid', 'brk', 'hlt') and mode == 'normal' else 78
             diagnostic = b'active:' if expected == 0 else b'refusing activation:'
             good = result.returncode == expected and diagnostic in result.stderr
             row = {'variant': name, 'mode': mode, 'command': command, 'expected': expected,

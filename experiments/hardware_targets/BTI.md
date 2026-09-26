@@ -29,18 +29,36 @@ runtime, trampoline, or external-library pages. Both range checks are essential:
 a hardware landing in some other library is not an admitted application target.
 
 Before activation, the runtime scans every aligned normal-text word. Every
-potential hardware-compatible landing (BTI, compatible PAC hints, and BRK/HLT
-exception-priority cases) must be the complete new two-word marker. Unexpected
-native landing instructions cause a clear exit 78, not excess acceptance. At
+non-trapping hardware-compatible landing (BTI and compatible PAC hints) must be
+the complete new two-word marker. Unexpected non-trapping landings left in
+guarded text cause a clear exit 78, not excess acceptance. BRK/HLT have exception
+priority over BTI and are allowed only with the matching runtime trap path and
+startup enforcement probes described below. This permits unchanged in-text
+data that happens to encode a trap; it does not admit execution past that word.
+The private feature-smoke changes outline decoded native
+PAC/BTI/BRK/HLT instructions into `.teapot_bti_native`, outside both application
+target ranges. A direct branch executes the original instruction and returns
+without changing LR/SP/registers merely for the detour. This does not relax the
+non-trapping landing scan, range checks, or software RET check. At
 least one transformed marker is required. **This prototype requires normal
 executable text to remain unchanged after validation.** Self-modifying normal
 code and later changes to its protection are outside the supported contract;
 report-site NOP patching is in the unguarded transient copy, not this region.
 
+The outlining addition is still experimental: executed regressions cover
+classic SP-only PACIASP/PACIBSP plus authentication, with QEMU pointer
+authentication enabled and disabled. They do **not** establish PC-dependent
+FEAT_PAuth_LR/PACM semantics, asynchronous unwinding while inside a helper, or
+source-PC identity for application BRK/HLT handlers. These are outstanding
+compatibility limits, not a claim that arbitrary native landing sequences are
+fully supported or that this private change is merge-ready.
+
 Startup checks HWCAP2_BTI and mprotect success, executes valid and invalid
 destinations before protection, then forks a short enforcement probe on the
 actual final normal mapping. It requires the valid destination to execute and
 the invalid one to raise the expected signal at the exact target with BTYPE set.
+Separate children verify BRK and HLT deliver their expected trap signals at the
+exact destination with saved BTYPE, on the same protected mapping.
 An advertised feature, a successful-but-ineffective mprotect, or a property note
 alone is insufficient. Failure refuses activation; it does not silently run the
 load-free checker without hardware enforcement. Use the software rewrite on an
@@ -62,6 +80,16 @@ simulated execution:
   illegal instruction retried at depth zero faults with BTYPE zero and is not
   repeatedly mistaken for a BTI landing violation.
 
+The opt-in runtime additionally installs SIGTRAP handling. A guarded indirect
+target whose actual word is BRK (SIGTRAP/TRAP_BRKPT) or HLT (SIGILL) is never
+treated as an ordinary BTI same-PC retry: at depth zero its original signal and
+unchanged context go to the saved disposition. At positive depth it uses the
+same malformed-target rollback as an invalid BTI landing. Exact aligned PC,
+si_addr, signal code and saved BTYPE are checked before classifying such a trap.
+Ordinary runtime builds without the experimental option do not intercept
+SIGTRAP. All of this uses the runtime's existing signal-forwarding contract;
+it does not promise additional POSIX signal-action semantics.
+
 The runtime's three trusted saved-PC continuations use `ret x16` in this mode,
 avoiding a BTI fault when returning to an interior normal instruction. These are
 runtime-controlled continuations, not additional allowed application targets;
@@ -80,7 +108,16 @@ native 16/64-KiB execution has not been tested.
   is runtime coverage, not a new full-workload BTI/MTE instrumentation sweep.
 - Thirteen activation gate tests passed: valid activation; no HWCAP; mprotect
   rejection; deliberately ignored protection; bad second word; overlapping
-  shadow; unexpected BTI c/j/jc, PACIASP/PACIBSP, BRK and HLT.
+  shadow; unexpected BTI c/j/jc and PACIASP/PACIBSP. The September23 trap update
+  changes BRK/HLT data cases from rejection to accepted activation, with actual
+  trap-priority probes. All13 gates pass under that revised contract.
+- September23 trap regression: old runtime reproduces exit78 on the OpenSSL
+  table word. New runtime passes23 shadow,25 MTE and18 ordinary-mode runtime
+  checks, without skips. The trap fixtures cover BR/BLR via x0/x16/x17, default
+  dispositions and saved siginfo handlers, exact PC/BTYPE forwarding, and real
+  checkpoint memory/DIFT/register/guard/budget restoration. An independent
+  24-case probe covers guarded and unguarded branch source pages. This remains
+  QEMU evidence, not a claim of native Arm verification.
 - Fresh current-DDisasm/current-printer libhtp ordinary roundtrip: 118/118 exactly
   matching original status/stdout/stderr/application logs.
 - Fresh full software and BTI pipelines: 118/118 each, both producing 605 MDS,
