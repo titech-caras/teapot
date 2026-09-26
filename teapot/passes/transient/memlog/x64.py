@@ -24,6 +24,12 @@ class X64TransientMemlogPass(TransientMemlogPassBase):
         if inst.mnemonic == "push" or inst.mnemonic == "call":
             mem_operand_str = "[rsp-8]"
             access_size = 8
+        elif inst.mnemonic in ("pushf", "pushfq"):
+            # These have no explicit memory operand. In long mode 66h PUSHF
+            # pushes two bytes; PUSHFQ pushes eight. The logging patch uses
+            # only MOV/LEA, preserving the flags the original instruction sees.
+            access_size = 2 if inst.mnemonic == "pushf" else 8
+            mem_operand_str = f"[rsp-{access_size}]"
         elif mem_operand is not None and self.arch.mem_operand_is_write(inst, mem_operand):
             mem_operand_str = self.arch.mem_operand_to_str(block, inst, mem_operand)
             access_size = self.arch.mem_operand_size(inst, mem_operand)
