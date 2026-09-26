@@ -26,7 +26,7 @@ class X64TransientMemlogPass(TransientMemlogPassBase):
             access_size = 8
         elif mem_operand is not None and self.arch.mem_operand_is_write(inst, mem_operand):
             mem_operand_str = self.arch.mem_operand_to_str(block, inst, mem_operand)
-            access_size = mem_operand.size
+            access_size = self.arch.mem_operand_size(inst, mem_operand)
         else:
             return
 

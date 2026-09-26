@@ -34,6 +34,7 @@ class X64OperandMixin:
     # widths too, keeping the architectural store families together.
     _X87_MEMORY_STORE_MNEMONICS = frozenset((
         "fst", "fstp", "fist", "fistp", "fisttp", "fbstp", "fnstcw", "fnstsw",
+        "fnstenv", "fnsave",
     ))
     _SEGMENT_OVERRIDE_RE = re.compile(r"(?i)(?<![0-9A-Za-z_])(fs|gs):")
     _REGISTER_NAMES = frozenset(
@@ -155,16 +156,42 @@ class X64OperandMixin:
             inst.mnemonic.lower() in cls._X87_MEMORY_STORE_MNEMONICS
         )
 
+    @staticmethod
+    def is_x87_instruction(inst) -> bool:
+        # The legacy x87 escapes and FWAIT. Capstone's FPU group omits some
+        # forms, notably FNSTSW AX; opcodes also avoid matching SSE mnemonics.
+        return inst.opcode[0] == 0x9b or 0xd8 <= inst.opcode[0] <= 0xdf
+
+    @staticmethod
+    def mem_operand_size(inst, operand) -> int:
+        if operand is None:
+            return 0
+        # Capstone 5 reports F(N)SAVE/FRSTOR as 4 bytes and overlooks 66h on
+        # F(N)STENV/FLDENV. These legacy images use 16/32-bit operand sizes,
+        # including in long mode: a 14/28-byte environment and eight 10-byte
+        # x87 registers in the full state image.
+        if inst.mnemonic in ("fnsave", "frstor", "fnstenv", "fldenv"):
+            size = 14 if 0x66 in inst.prefix else 28
+            return size + 80 if inst.mnemonic in ("fnsave", "frstor") else size
+        return operand.size
+
     @classmethod
     def mem_operand_is_read(cls, inst, operand) -> bool:
+        if cls.is_x87_instruction(inst):
+            # x87 memory forms are either loads or stores, not RMW. FRSTOR is
+            # also incorrectly marked as a write by the pinned decoder.
+            return not cls._is_x87_memory_store(inst, operand)
         if (cls._is_unmarked_vector_store(inst, operand) or
-                cls._is_setcc_memory_store(inst, operand) or
-                cls._is_x87_memory_store(inst, operand)):
+                cls._is_setcc_memory_store(inst, operand)):
             return False
         return bool(operand.access & CS_AC_READ)
 
     @classmethod
     def mem_operand_is_write(cls, inst, operand) -> bool:
+        if cls.is_x87_instruction(inst):
+            # In particular, a ten-byte FLD/FBLD must not fall through to the
+            # legacy wide-memory heuristic and be mistaken for a store.
+            return cls._is_x87_memory_store(inst, operand)
         # Capstone misses write accesses for some vector stores and memory
         # read-modify-write instructions.  Recover only instruction shapes
         # whose destination semantics are unambiguous.
@@ -173,8 +200,7 @@ class X64OperandMixin:
             (inst.operands[0] == operand and inst.operands[0].size > 8) or
             cls._is_unmarked_vector_store(inst, operand) or
             cls._is_unmarked_memory_rmw(inst, operand) or
-            cls._is_setcc_memory_store(inst, operand) or
-            cls._is_x87_memory_store(inst, operand)
+            cls._is_setcc_memory_store(inst, operand)
         )
 
     @staticmethod

@@ -23,6 +23,16 @@ STORES = (
     ("df1f", 2), ("db1f", 4), ("df3f", 8),         # fistp
     ("df0f", 2), ("db0f", 4), ("dd0f", 8),         # fisttp
     ("df37", 10), ("d93f", 2), ("dd3f", 2),        # fbstp, fnstcw, fnstsw
+    ("d937", 28), ("66d937", 14),                   # fnstenv
+    ("dd37", 108), ("66dd37", 94),                  # fnsave
+)
+READS = (
+    ("d907", 4), ("dd07", 8), ("db2f", 10),        # fld
+    ("df07", 2), ("db07", 4), ("df2f", 8),         # fild
+    ("df27", 10), ("d92f", 2),                      # fbld, fldcw
+    ("d807", 4), ("dc07", 8),                       # fadd
+    ("d927", 28), ("66d927", 14),                   # fldenv
+    ("dd27", 108), ("66dd27", 94),                  # frstor
 )
 
 
@@ -40,15 +50,16 @@ class X64X87StoreTests(unittest.TestCase):
             inst = self.decode(encoded)
             with self.subTest(instruction=str(inst)):
                 operand = self.arch.memory_operand(inst)
-                self.assertEqual(operand.size, width)
+                self.assertEqual(self.arch.mem_operand_size(inst, operand), width)
                 self.assertTrue(self.arch.mem_operand_is_write(inst, operand))
                 self.assertFalse(self.arch.mem_operand_is_read(inst, operand))
 
     def test_x87_reads_are_not_reclassified_as_stores(self):
-        for encoded in ("d907", "dd07", "df07", "db07", "df2f", "d92f", "d807", "dc07"):
+        for encoded, width in READS:
             inst = self.decode(encoded)
             with self.subTest(instruction=str(inst)):
                 operand = self.arch.memory_operand(inst)
+                self.assertEqual(self.arch.mem_operand_size(inst, operand), width)
                 self.assertTrue(self.arch.mem_operand_is_read(inst, operand))
                 self.assertFalse(self.arch.mem_operand_is_write(inst, operand))
 
@@ -79,8 +90,20 @@ class X64X87StoreTests(unittest.TestCase):
         ranges = []
         offset = 1
         for encoded, width in STORES:
-            opcode, modrm = bytes.fromhex(encoded)
-            stores += bytes.fromhex("dbe3 d9e8") + bytes((opcode, modrm | 0x40, offset))
+            if encoded.startswith("66"):
+                # The pinned printer loses 66h on FNSTENV/FNSAVE. Exercise
+                # those exact encodings in the direct native patch test below,
+                # independently of that printer round-trip defect.
+                continue
+            instruction = bytes.fromhex(encoded)
+            # State images contain the last x87 instruction's address. FNINIT
+            # clears it, making original/rewrite comparisons independent of
+            # their code addresses; scalar stores use ST(0) = 1 instead.
+            stores += bytes.fromhex("dbe3")
+            if self.decode(encoded).mnemonic not in ("fnstenv", "fnsave"):
+                stores += bytes.fromhex("d9e8")
+            stores += (instruction[:-1] + bytes((instruction[-1] | 0x80,)) +
+                       offset.to_bytes(4, "little"))
             ranges.append((offset, width))
             offset += width + 1
         code = stores + bytes.fromhex("dbe3 c3")
@@ -111,7 +134,8 @@ class X64X87StoreTests(unittest.TestCase):
                 ".text\n.globl run_original\nrun_original:\n.byte " + ",".join(map(str, code)) +
                 '\n.section .note.GNU-stack,"",@progbits\n')
             (root / "ranges.h").write_text("static const unsigned ranges[][2] = {" +
-                ",".join("{%d,%d}" % item for item in ranges) + "};\n")
+                ",".join("{%d,%d}" % item for item in ranges) + "};\n" +
+                f"#define BUFFER_SIZE {offset + 16}\n")
             fixture = Path(__file__).with_name("fixtures") / "x64_x87_memlog.c"
             result = subprocess.run(["cc", "-O2", "-no-pie", "-I", str(root), str(fixture),
                                      str(root / "original.S"), str(root / "x87.S"),
@@ -120,6 +144,42 @@ class X64X87StoreTests(unittest.TestCase):
             result = subprocess.run([str(root / "check")], capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("x87 stores and rollback passed", result.stdout)
+
+    @unittest.skipUnless(platform.machine() == "x86_64" and shutil.which("cc"),
+                         "requires native x64 and compiler")
+    def test_16bit_state_store_patches_restore_every_byte(self):
+        from gtirb_rewriting import InsertionContext
+
+        visitor = X64TransientMemlogPass(SimpleNamespace(abi=self.arch.abi), None, None, self.arch)
+        for encoded, width in (("66d937", 14), ("66dd37", 94)):
+            with self.subTest(encoded=encoded), tempfile.TemporaryDirectory() as directory:
+                inst = self.decode(encoded)
+                operand = self.arch.memory_operand(inst)
+                patch = visitor._build_memlog_patch(inst, "[rdi]", self.arch.mem_operand_size(inst, operand))
+                allocation = self.arch.abi._allocate_patch_registers(patch.constraints)
+                prologue, epilogue, _ = self.arch.abi._create_prologue_and_epilogue(
+                    patch.constraints, allocation, True)
+                body = patch(InsertionContext(None, None, None, 0,
+                                               scratch_registers=allocation.scratch_registers))
+                wrapped = (".att_syntax prefix\n" + "\n".join(s.code for s in prologue) +
+                           "\n.intel_syntax noprefix\n" + body + "\n.att_syntax prefix\n" +
+                           "\n".join(s.code for s in epilogue) + "\n.intel_syntax noprefix\n")
+                store = ".byte " + ",".join(map(str, bytes.fromhex(encoded))) + "\n"
+                root = Path(directory)
+                (root / "state.S").write_text(
+                    ".intel_syntax noprefix\n.text\n.globl run_original\nrun_original:\n"
+                    "fninit\n" + store + "fninit\nret\n.globl test_function\ntest_function:\n"
+                    "fninit\n" + wrapped + store + "fninit\nret\n" +
+                    '.section .note.GNU-stack,"",@progbits\n')
+                (root / "ranges.h").write_text(
+                    f"static const unsigned ranges[][2] = {{{{0,{width}}}}};\n#define BUFFER_SIZE 128\n")
+                fixture = Path(__file__).with_name("fixtures") / "x64_x87_memlog.c"
+                compiled = subprocess.run(["cc", "-O2", "-no-pie", "-I", str(root), str(fixture),
+                                           str(root / "state.S"), "-o", str(root / "check")],
+                                          capture_output=True, text=True)
+                self.assertEqual(compiled.returncode, 0, compiled.stderr)
+                executed = subprocess.run([str(root / "check")], capture_output=True, text=True, timeout=10)
+                self.assertEqual(executed.returncode, 0, executed.stdout + executed.stderr)
 
 
 if __name__ == "__main__":
