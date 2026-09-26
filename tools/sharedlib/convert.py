@@ -205,6 +205,123 @@ def sym_record(symbol):
             'size': symbol['st_size']}
 
 
+def dynamic_symbol_records(elf):
+    """Retain version-qualified identities instead of flattening ELF names."""
+    definitions, requirements, by_index = [], [], {}
+    section = elf.get_section_by_name('.gnu.version_d')
+    if section is not None:
+        for version, auxiliaries in section.iter_versions():
+            names = [aux.name for aux in auxiliaries]
+            if not names:
+                raise ValueError('empty ELF version definition')
+            row = {'name': names[0], 'parents': names[1:],
+                   'flags': version['vd_flags'], 'index': version['vd_ndx']}
+            definitions.append(row)
+            by_index[row['index']] = {'version': row['name'], 'version_library': None}
+    section = elf.get_section_by_name('.gnu.version_r')
+    if section is not None:
+        for version, auxiliaries in section.iter_versions():
+            names = []
+            for aux in auxiliaries:
+                names.append(aux.name)
+                by_index[aux['vna_other'] & 0x7fff] = {
+                    'version': aux.name, 'version_library': version.name}
+            requirements.append({'library': version.name, 'versions': names})
+    table = elf.get_section_by_name('.dynsym')
+    versions = elf.get_section_by_name('.gnu.version')
+    symbols = []
+    for index, symbol in enumerate(table.iter_symbols()):
+        if not symbol.name:
+            continue
+        row = sym_record(symbol)
+        if versions is not None:
+            ndx = versions.get_symbol(index)['ndx']
+            if isinstance(ndx, int) and ndx & 0x7fff > 1:
+                version = by_index.get(ndx & 0x7fff)
+                if version is None:
+                    raise ValueError('unresolved ELF version index {}'.format(ndx))
+                row.update(version)
+                row['version_default'] = (symbol['st_shndx'] != 'SHN_UNDEF' and not ndx & 0x8000)
+        symbols.append(row)
+    return symbols, definitions, requirements
+
+
+def version_node_symbol(item, symbol):
+    return (symbol['section'] == 'SHN_ABS' and any(
+        symbol['name'] == version['name'] for version in item.get('version_definitions', ())))
+
+
+def selected_version_name(soname, name, version):
+    """Stable static-link identity; independent of the referring executable."""
+    return '__teapot_selected_version_' + content_key([soname, name, version])
+
+
+def reconstructed_symbol_name(symbol, item=None):
+    if (item and item.get('resolve_selected_versions') and item['role'] == 'selected'
+            and symbol.get('version') and symbol.get('version_library') is None):
+        return selected_version_name(item['soname'], symbol['name'], symbol['version'])
+    if not symbol.get('version'):
+        return symbol['name']
+    return symbol['name'] + ('@@' if symbol.get('version_default') else '@') + symbol['version']
+
+
+def resolve_selected_symbol_versions(module, item, selected_sonames):
+    """Resolve selected versions to explicit ET_REL identities, not DSOs.
+
+    Keep external (e.g. libc) version requirements unchanged. Each selected
+    name/version pair gets a stable linker name at both definitions and uses.
+    A default definition also retains its public, unversioned alias. This
+    avoids relying on a DSO version script or on the printer's arbitrary choice
+    of which same-name version keeps the undecorated assembly label.
+    """
+    aux = module.aux_data.get('elfSymbolVersions')
+    if aux is None:
+        if item.get('version_definitions') or item.get('versions'):
+            reject('MISSING_VERSION_METADATA', item['path'], 'frontend omitted ELF symbol versions')
+        return []
+    definitions, needed, entries = aux.data
+    selected_needs = {index: (library, name)
+                      for library, versions in needed.items() if library in selected_sonames
+                      for index, name in versions.items()}
+    info = module.aux_data['elfSymbolInfo'].data
+    tab_indexes = module.aux_data.get('elfSymbolTabIdxInfo')
+    nodes = {name for names, _ in definitions.values() for name in names}
+    if any(s.name.startswith('__teapot_selected_version_') for s in module.symbols):
+        reject('RESERVED_VERSION_SYMBOL', item['path'], 'input uses the reconstruction namespace')
+    changes = []
+    defaults = []
+    for symbol, (index, hidden) in list(entries.items()):
+        if symbol.name in nodes and info.get(symbol, (0, '', '', '', 0))[-1] == 0xfff1:
+            continue  # Absolute version-node metadata, not a callable export.
+        is_definition = item['role'] == 'selected' and index in definitions
+        if is_definition:
+            library, version = item['soname'], definitions[index][0][0]
+        elif index in selected_needs:
+            library, version = selected_needs[index]
+        else:
+            continue
+        original = symbol.name
+        alias = selected_version_name(library, original, version)
+        changes.append({'name': original, 'version': version, 'library': library,
+                        'linker_name': alias, 'definition': is_definition})
+        if is_definition and not hidden:
+            defaults.append((original, symbol))
+        symbol.name = alias
+        del entries[symbol]
+    for name, symbol in defaults:
+        existing = list(module.symbols_named(name))
+        if existing:
+            if any(s.referent != symbol.referent or s.value != symbol.value for s in existing):
+                reject('AMBIGUOUS_DEFAULT_VERSION', item['path'], name)
+            continue
+        payload = symbol.referent if symbol.referent is not None else symbol.value
+        public = gtirb.Symbol(name=name, payload=payload, at_end=symbol.at_end, module=module)
+        info[public] = info[symbol]
+        if tab_indexes is not None:
+            tab_indexes.data[public] = []
+    return changes
+
+
 def validate_crt_callbacks(elf, static, relocations, dynsym, path):
     symbols = {s['name']: s['address'] for s in static if isinstance(s['section'], int)}
     def read(address, size):
@@ -684,7 +801,8 @@ def validate_frontend_diagnostics(module, item, diagnostics):
     return accepted
 
 
-def inspect(path, role):
+def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifecycle=False,
+            preserve_nonlocal_jumps=False, preserve_weak_imports=False):
     path = Path(path)
     with path.open('rb') as stream:
         elf = ELFFile(stream)
@@ -704,7 +822,7 @@ def inspect(path, role):
         dynamic = elf.get_section_by_name('.dynamic')
         if dynsym is None or dynamic is None:
             reject('MISSING_DYNAMIC_METADATA', path, 'dynamic symbol/loader tables required')
-        symbols = [sym_record(s) for s in dynsym.iter_symbols() if s.name]
+        symbols, version_definitions, version_requirements = dynamic_symbol_records(elf)
         symtab = elf.get_section_by_name('.symtab')
         static = [sym_record(s) for s in symtab.iter_symbols() if s.name] if symtab else []
         tags = list(dynamic.iter_tags())
@@ -714,7 +832,12 @@ def inspect(path, role):
                   'machine': machine, 'architecture': architecture['name'], 'elf_flags': flags,
                   'needed': needed, 'soname': sonames[0] if sonames else None,
                   'symbols': symbols, 'entry': elf['e_entry'], 'fde_count': 0,
-                  'application_fdes': [], 'relocation_types': {}, 'versions': []}
+                  'application_fdes': [], 'relocation_types': {},
+                  'versions': version_requirements, 'version_definitions': version_definitions,
+                  'resolve_selected_versions': resolve_selected_versions,
+                  'preserve_selected_lifecycle': preserve_selected_lifecycle,
+                  'preserve_nonlocal_jumps': preserve_nonlocal_jumps,
+                  'preserve_weak_imports': preserve_weak_imports}
         if role == 'external':
             return result
         if role == 'executable':
@@ -734,8 +857,13 @@ def inspect(path, role):
         all_names = {s['name'].split('@')[0] for s in symbols + static}
         if all_names & LOOKUP:
             reject('RUNTIME_SYMBOL_LOOKUP', path, ', '.join(sorted(all_names & LOOKUP)))
-        if all_names & UNWIND_UNSUPPORTED:
-            reject('NONLOCAL_UNWIND', path, ', '.join(sorted(all_names & UNWIND_UNSUPPORTED)))
+        unsupported_unwind = set(UNWIND_UNSUPPORTED)
+        if preserve_selected_lifecycle:
+            unsupported_unwind.discard('__cxa_atexit')
+        if preserve_nonlocal_jumps:
+            unsupported_unwind -= {'longjmp', 'siglongjmp', '__longjmp_chk'}
+        if all_names & unsupported_unwind:
+            reject('NONLOCAL_UNWIND', path, ', '.join(sorted(all_names & unsupported_unwind)))
         for sec in elf.iter_sections():
             if machine != 'EM_X86_64' and sec.name == '.note.gnu.property' and sec['sh_size']:
                 reject('UNSUPPORTED_PROPERTY_CONTRACT', path,
@@ -746,12 +874,8 @@ def inspect(path, role):
                 (sec.name == '.preinit_array' and not rv_executable)
             if unsupported_startup and sec['sh_size']:
                 reject('UNSUPPORTED_STARTUP_OR_UNWIND_SECTION', path, sec.name)
-            if sec.name == '.gnu.version_d' and sec['sh_size']:
+            if sec.name == '.gnu.version_d' and sec['sh_size'] and not resolve_selected_versions:
                 reject('SELECTED_SYMBOL_VERSION_DEFINITION', path, sec.name)
-            if sec.name == '.gnu.version_r':
-                for version, auxiliaries in sec.iter_versions():
-                    result['versions'].append({'library': version.name,
-                                              'versions': [v.name for v in auxiliaries]})
         for symbol in symbols + static:
             if symbol['type'] in ('STT_GNU_IFUNC', 'STT_LOOS'):
                 reject('IFUNC_SYMBOL', path, symbol['name'])
@@ -763,11 +887,15 @@ def inspect(path, role):
                 crt_data_alias = (role == 'executable' and symbol['name'] == 'data_start'
                     and any(s['name'] == '__data_start' and s['address'] == symbol['address']
                             and s['section'] == symbol['section'] for s in static))
-                if not crt_data_alias and (symbol['section'] != 'SHN_UNDEF' or symbol['name'].split('@')[0] not in CRT_WEAK):
+                if not crt_data_alias and (symbol['section'] != 'SHN_UNDEF' or
+                        (not preserve_weak_imports and symbol['name'].split('@')[0] not in CRT_WEAK)):
                     reject('WEAK_BINDING', path, symbol['name'])
             if symbol['visibility'] not in ('STV_DEFAULT', 'STV_HIDDEN'):
                 reject('UNSUPPORTED_VISIBILITY', path, symbol['name'])
-        unsupported_tags = {'DT_SYMBOLIC', 'DT_FILTER', 'DT_AUXILIARY', 'DT_AUDIT',
+        # DT_SYMBOLIC only changes local-vs-global lookup on duplicate
+        # definitions. validate_closure rejects that ambiguity, and hidden
+        # library definitions are localized before reconstruction.
+        unsupported_tags = {'DT_FILTER', 'DT_AUXILIARY', 'DT_AUDIT',
                             'DT_DEPAUDIT', 'DT_TEXTREL', 'DT_RELR', 'DT_RELRSZ',
                             'DT_PREINIT_ARRAY', 'DT_PREINIT_ARRAYSZ'}
         if rv_executable:
@@ -775,9 +903,12 @@ def inspect(path, role):
         for tag in tags:
             if tag.entry.d_tag in unsupported_tags:
                 reject('UNSUPPORTED_DYNAMIC_TAG', path, tag.entry.d_tag)
-            if tag.entry.d_tag == 'DT_FLAGS' and tag.entry.d_val & ~8:
+            if tag.entry.d_tag == 'DT_FLAGS' and tag.entry.d_val & ~(8 | 2):
                 reject('UNSUPPORTED_DYNAMIC_FLAGS', path, hex(tag.entry.d_val))
-            if tag.entry.d_tag == 'DT_FLAGS_1' and tag.entry.d_val & ~1:
+            # A selected NODELETE DSO is folded into process-lifetime storage;
+            # runtime dlopen/dlclose and provider replacement are still refused.
+            allowed_flags1 = 1 | (8 if role == 'selected' else 0)
+            if tag.entry.d_tag == 'DT_FLAGS_1' and tag.entry.d_val & ~allowed_flags1:
                 reject('UNSUPPORTED_DYNAMIC_FLAGS_1', path, hex(tag.entry.d_val))
         relocations = {}
         counts = Counter()
@@ -801,10 +932,19 @@ def inspect(path, role):
         # specific CRT bodies/targets, not because a function has a CRT name.
         init = elf.get_section_by_name('.init')
         fini = elf.get_section_by_name('.fini')
+        custom_lifecycle = role == 'selected' and preserve_selected_lifecycle
+        result['lifecycle'] = {}
         for section, tag_name in ((init, 'DT_INIT'), (fini, 'DT_FINI')):
             addresses = [t.entry.d_val for t in tags if t.entry.d_tag == tag_name]
-            if addresses and (len(addresses) != 1 or section is None or addresses[0] != section['sh_addr']):
-                reject('REDIRECTED_' + tag_name, path, 'dynamic tag does not name its validated section')
+            if addresses:
+                if custom_lifecycle:
+                    if len(addresses) != 1 or not any(
+                            s['sh_flags'] & 4 and s['sh_addr'] <= addresses[0] < s['sh_addr'] + s['sh_size']
+                            for s in elf.iter_sections()):
+                        reject('INVALID_' + tag_name, path, 'callback must name executable code')
+                elif len(addresses) != 1 or section is None or addresses[0] != section['sh_addr']:
+                    reject('REDIRECTED_' + tag_name, path, 'dynamic tag does not name its validated section')
+                result['lifecycle'][tag_name] = addresses[0]
         array_tags = [('.init_array', 'DT_INIT_ARRAY', 'DT_INIT_ARRAYSZ'),
                       ('.fini_array', 'DT_FINI_ARRAY', 'DT_FINI_ARRAYSZ')]
         if rv_executable:
@@ -818,7 +958,26 @@ def inspect(path, role):
                     reject('MISMATCHED_' + address_tag, path, 'dynamic address/size must describe the retained array')
             elif addresses or (sizes and sizes != [0]):
                 reject('MISMATCHED_' + address_tag, path, 'dynamic array has no retained section')
-        if machine == 'EM_AARCH64':
+        if custom_lifecycle:
+            for section_name in ('.init_array', '.fini_array'):
+                section = elf.get_section_by_name(section_name)
+                if section is None:
+                    continue
+                if section['sh_size'] % 8:
+                    reject('INVALID_CALLBACK_ARRAY', path, section_name)
+                for slot in range(section['sh_addr'], section['sh_addr'] + section['sh_size'], 8):
+                    relocation = relocations.get(slot)
+                    if not relocation:
+                        reject('UNRELOCATED_CALLBACK', path, hex(slot))
+                    if relocation['r_info_type'] == architecture['relative']:
+                        target = relocation.get('r_addend')
+                        if relocation['r_info_sym'] or target is None or not any(
+                                s['sh_flags'] & 4 and s['sh_addr'] <= target < s['sh_addr'] + s['sh_size']
+                                for s in elf.iter_sections()):
+                            reject('INVALID_CALLBACK', path, hex(slot))
+                    elif not relocation['r_info_sym']:
+                        reject('INVALID_CALLBACK', path, hex(slot))
+        elif machine == 'EM_AARCH64':
             StartupImage(elf, static, relocations, dynsym, path).arm_init_fini(init, fini)
         elif machine == 'EM_RISCV':
             if any(section is not None and section['sh_size'] for section in (init, fini)):
@@ -842,7 +1001,7 @@ def inspect(path, role):
                     reject('CUSTOM_DT_INIT', path, 'init call is not the weak __gmon_start__ hook')
             if fini and fini.data() != bytes.fromhex('4883ec084883c408c3'):
                 reject('CUSTOM_DT_FINI', path, 'not the supported empty x64 glibc CRT sequence')
-        if role == 'selected':
+        if role == 'selected' and not custom_lifecycle:
             callbacks_present = False
             for section_name, allowed in (('.init_array', 'frame_dummy'),
                                           ('.fini_array', '__do_global_dtors_aux')):
@@ -864,6 +1023,7 @@ def inspect(path, role):
                     StartupImage(elf, static, relocations, dynsym, path).arm_callbacks()
                 else:
                     StartupImage(elf, static, relocations, dynsym, path).rv_callbacks()
+        if role == 'selected':
             tm = elf.get_section_by_name('.tm_clone_table')
             if tm and tm['sh_size']:
                 reject('TRANSACTION_CLONE_REGISTRATION', path, 'nonempty .tm_clone_table')
@@ -878,12 +1038,17 @@ def inspect(path, role):
                     sections = [s.name for s in elf.iter_sections()
                                 if s['sh_addr'] <= start < s['sh_addr'] + s['sh_size'] and s['sh_flags'] & 2]
                     names = sorted(address_names.get(start, set()))
-                    if role == 'selected' and (set(names) & {'_init', '_fini'} or any(n.startswith('.plt') for n in sections)):
+                    if role == 'selected' and ((not custom_lifecycle and set(names) & {'_init', '_fini'}) or any(n.startswith('.plt') for n in sections)):
                         continue
                     if role == 'executable' and any(n.startswith('.plt') for n in sections):
                         continue
-                    if not names:
-                        reject('UNNAMED_UNWIND_RANGE', path, hex(start))
+                    # Assembly routines may carry several FDEs without a
+                    # symbol at every start. Addresses, not optional names,
+                    # identify their ownership and the recovered CFI check.
+                    if size <= 0 or not any(s['sh_flags'] & 4 and
+                            s['sh_addr'] <= start and start + size <= s['sh_addr'] + s['sh_size']
+                            for s in elf.iter_sections()):
+                        reject('INVALID_UNWIND_RANGE', path, hex(start))
                     result['application_fdes'].append({'start': start, 'size': size, 'names': names})
             except Unsupported:
                 raise
@@ -915,6 +1080,8 @@ def validate_closure(executable, selected, external):
     definitions = {}
     for item in [executable] + selected + external:
         for symbol in item['symbols']:
+            if version_node_symbol(item, symbol):
+                continue
             if symbol['section'] == 'SHN_UNDEF' or symbol['binding'] == 'STB_LOCAL':
                 continue
             if symbol['visibility'] == 'STV_HIDDEN':
@@ -932,7 +1099,24 @@ def validate_closure(executable, selected, external):
     for item in [executable] + selected:
         for version in item['versions']:
             if version['library'] in selected_sonames:
-                reject('SELECTED_SYMBOL_VERSION_REFERENCE', item['path'], version['library'])
+                if not item.get('resolve_selected_versions'):
+                    reject('SELECTED_SYMBOL_VERSION_REFERENCE', item['path'], version['library'])
+                provider = providers[version['library']]
+                available = {definition['name'] for definition in provider['version_definitions']}
+                missing = set(version['versions']) - available
+                if missing:
+                    reject('MISSING_SELECTED_SYMBOL_VERSION', item['path'],
+                           '{}: {}'.format(version['library'], ', '.join(sorted(missing))))
+        for symbol in item['symbols']:
+            if symbol['section'] != 'SHN_UNDEF' or symbol.get('version_library') not in selected_sonames:
+                continue
+            provider = providers[symbol['version_library']]
+            if not any(candidate['section'] != 'SHN_UNDEF' and
+                       candidate['name'] == symbol['name'] and
+                       candidate.get('version') == symbol.get('version')
+                       for candidate in provider['symbols']):
+                reject('MISSING_SELECTED_SYMBOL_VERSION', item['path'],
+                       reconstructed_symbol_name(symbol))
     for item in external:
         if selected_sonames.intersection(item['needed']):
             reject('EXTERNAL_DEPENDS_ON_SELECTED', item['path'], str(item['needed']))
@@ -954,12 +1138,162 @@ def validate_closure(executable, selected, external):
         visiting.remove(name)
         visited.add(name)
         ordering.append(name)
-    for dependency in executable['needed']:
+    dependencies = executable['needed']
+    if executable.get('preserve_selected_lifecycle'):
+        dependencies = list(reversed(dependencies))
+    for dependency in dependencies:
         if dependency in selected_sonames:
             visit(providers[dependency])
     if len(visited) != len(selected):
         reject('UNREACHABLE_SELECTED_LIBRARY', executable['path'], str(selected_sonames - visited))
     return ordering
+
+
+def preserve_selected_lifecycle(module, item, priority):
+    """Keep callback code/data, exposing fini arrays to one static dispatcher.
+
+    Library constructors originally register atexit handlers before libc
+    registers the loader finalizer. Folding constructors into the executable
+    reverses that timing. The dispatcher is therefore registered after the
+    selected constructors and before executable constructors; it invokes the
+    original executable/library fini arrays, including per-DSO cxa_finalize.
+    """
+    selected = item['role'] == 'selected'
+    namespace = '__teapot_lifecycle_' + content_key([item['role'], item['soname']])
+    if any(s.name.startswith('__teapot_lifecycle_') for s in module.symbols):
+        reject('RESERVED_LIFECYCLE_SYMBOL', item['path'], 'input uses reconstruction namespace')
+    properties = module.aux_data.get('sectionProperties', module.aux_data.get('elfSectionProperties'))
+    if properties is None:
+        reject('MISSING_SECTION_PROPERTIES', item['path'], 'cannot preserve callback section types')
+    info = module.aux_data['elfSymbolInfo'].data
+    result = {'role': item['role'], 'soname': item['soname'], 'fini_array': None, 'fini': None}
+    for section in list(module.sections):
+        if section.name == '.fini_array':
+            intervals = list(section.byte_intervals)
+            if len(intervals) != 1:
+                reject('SPLIT_FINI_ARRAY', item['path'], 'one contiguous callback array required')
+            interval = intervals[0]
+            blocks = sorted((b for b in interval.blocks if isinstance(b, gtirb.DataBlock)),
+                            key=lambda b: b.offset)
+            end = 0
+            for block in blocks:
+                if block.offset != end:
+                    reject('UNRECOVERED_FINI_ARRAY', item['path'], 'callback bytes have a gap/overlap')
+                end += block.size
+            if not blocks or end != interval.size or end % 8:
+                reject('UNRECOVERED_FINI_ARRAY', item['path'], 'incomplete callback array')
+            section.name = '.data.' + namespace + '_fini_array'
+            properties.data[section] = (1, 3)  # ordinary pointer data, not automatic ELF callbacks
+            bounds = []
+            for suffix, block, at_end in (('begin', blocks[0], False), ('end', blocks[-1], True)):
+                symbol = gtirb.Symbol(name=namespace + '_fini_' + suffix,
+                                      payload=block, at_end=at_end, module=module)
+                info[symbol] = (0, 'NOTYPE', 'GLOBAL', 'HIDDEN', 0)
+                bounds.append(symbol.name)
+            result['fini_array'] = bounds
+        elif selected and section.name == '.init_array':
+            section.name += '.{:05d}'.format(priority * 2 + 1)
+        elif selected and section.name in ('.init', '.fini'):
+            section.name = '.text.' + namespace + section.name
+    if not selected:
+        # Executable DT_FINI is still the byte-validated inert CRT stub. It
+        # stays under libc/rtld ownership; only its nontrivial array is moved.
+        return result
+    for tag, aux_name, array, section_type in (
+            ('DT_INIT', 'elfDynamicInit', '.init_array', 14),
+            ('DT_FINI', 'elfDynamicFini', '.fini_array', 15)):
+        address = item['lifecycle'].get(tag)
+        # The pinned Linux/glibc RISC-V ABI uses only callback arrays;
+        # ELF_INITFINI=0 means DT_INIT/DT_FINI are not invoked by its loader.
+        if address is None or item.get('machine') == 'EM_RISCV':
+            continue
+        aux = module.aux_data.get(aux_name)
+        block = aux.data if aux is not None else None
+        if not isinstance(block, gtirb.CodeBlock) or block.address != address:
+            reject('UNRECOVERED_' + tag, item['path'], hex(address))
+        symbol = gtirb.Symbol(name=namespace + '_' + tag,
+                              payload=block, module=module)
+        info[symbol] = (0, 'FUNC', 'GLOBAL', 'HIDDEN', 0)
+        if tag == 'DT_FINI':
+            result['fini'] = symbol.name
+            continue
+        flags = {gtirb.Section.Flag.Loaded, gtirb.Section.Flag.Readable,
+                 gtirb.Section.Flag.Writable, gtirb.Section.Flag.Initialized}
+        section = gtirb.Section(name=array + '.{:05d}'.format(priority * 2), flags=flags, module=module)
+        properties.data[section] = (section_type, 3)
+        interval = gtirb.ByteInterval(contents=bytes(8), section=section)
+        pointer = gtirb.DataBlock(size=8, byte_interval=interval)
+        interval.symbolic_expressions[0] = gtirb.SymAddrConst(0, symbol)
+        module.aux_data['symbolicExpressionSizes'].data[gtirb.Offset(interval, 0)] = 8
+        module.aux_data['alignment'].data[pointer] = 8
+    module.aux_data.pop('elfDynamicInit', None)
+    module.aux_data.pop('elfDynamicFini', None)
+    return result
+
+
+def localize_private_library_definitions(module, item):
+    """Only actual DSO exports may bind references from other archive members.
+
+    Frontend-inferred ABI anchors (e.g. a forwarded relocation-range label)
+    are private to the recovered input, even if inference marked them GLOBAL.
+    Do not export these new labels or let them collide with another module.
+    Undefined references keep their original binding, including WEAK.
+    """
+    exports = {symbol['name'] for symbol in item['symbols']
+               if symbol['section'] != 'SHN_UNDEF' and symbol['binding'] != 'STB_LOCAL'
+               and symbol['visibility'] == 'STV_DEFAULT'}
+    info = module.aux_data['elfSymbolInfo'].data
+    for symbol, row in list(info.items()):
+        if (symbol.name not in exports and row[2] in ('GLOBAL', 'WEAK') and
+                (isinstance(symbol.referent, (gtirb.CodeBlock, gtirb.DataBlock)) or symbol.value is not None)):
+            info[symbol] = row[:2] + ('LOCAL',) + row[3:]
+
+
+def external_load_order(executable, selected, external):
+    """Retain the original breadth-first ELF dependency lookup scope."""
+    providers = {item['soname']: item for item in selected + external}
+    pending, seen, result = list(executable['needed']), set(), []
+    for name in pending:
+        if name in seen:
+            continue
+        seen.add(name)
+        provider = providers[name]
+        if provider['role'] == 'external':
+            result.append(provider)
+        pending.extend(provider['needed'])
+    return result
+
+
+def build_lifecycle_dispatcher(args, main_object, objects, initialization_order):
+    """A normal ET_REL adapter, linked into the executable before rewriting."""
+    descriptors = [json.loads((obj.parent / 'lifecycle.json').read_text()) for obj in objects]
+    by_name = {entry['soname']: entry for entry in descriptors}
+    ordered = [json.loads((main_object.parent / 'lifecycle.json').read_text())]
+    ordered += [by_name[name] for name in reversed(initialization_order)]
+    declarations, calls = [], []
+    for entry in ordered:
+        if entry['fini_array']:
+            begin, end = entry['fini_array']
+            declarations.append('extern fini_fn %s[], %s[];' % (begin, end))
+            calls.append('for (fini_fn *p = %s; p != %s;) (*--p)();' % (end, begin))
+        if entry['fini']:
+            declarations.append('extern void %s(void);' % entry['fini'])
+            calls.append('%s();' % entry['fini'])
+    source = args.out / 'lifecycle.c'
+    source.write_text('\n'.join([
+        'typedef void (*fini_fn)(void);',
+        'extern int __cxa_atexit(void (*)(void *), void *, void *);',
+        'extern void abort(void);', *declarations,
+        'static void finish(void *unused) { (void)unused;', *calls, '}',
+        'static void register_finish(void) { if (__cxa_atexit(finish, 0, 0)) abort(); }',
+        '__attribute__((used, section(".init_array.65534")))',
+        'static fini_fn const register_finish_callback = register_finish;', '']))
+    obj = args.out / 'lifecycle.o'
+    run(args.out, 'compile-lifecycle', [args.cc, '-c', '-O2', '-fno-pie', '-fno-pic',
+                                      '-fno-stack-protector', source, '-o', obj])
+    dump(args.out / 'lifecycle.json', {'initialization_order': initialization_order,
+                                     'finalization': ordered, 'adapter_sha256': sha(obj)})
+    return obj
 
 
 def ordinary_object_recipe(item, context, priority=None):
@@ -1025,6 +1359,14 @@ def reconstruct(item, args, out, index=0, priority=None):
     dump(directory / 'ir-summary.json', summary)
     print_ir = irpath
     if item['role'] == 'selected':
+        localize_private_library_definitions(module, item)
+    version_bindings = (resolve_selected_symbol_versions(module, item, args.selected_sonames)
+                        if args.resolve_selected_versions else [])
+    dump(directory / 'selected-version-bindings.json', version_bindings)
+    if args.preserve_selected_lifecycle:
+        lifecycle = preserve_selected_lifecycle(module, item, priority)
+        dump(directory / 'lifecycle.json', lifecycle)
+    elif item['role'] == 'selected':
         # Keep library CRT callback bodies and their per-DSO __dso_handle.
         # Only the byte-validated, inert DT_INIT/DT_FINI stubs are excluded.
         # Array section priorities respect selected dependency startup order;
@@ -1034,12 +1376,13 @@ def reconstruct(item, args, out, index=0, priority=None):
                 section.name += '.{:05d}'.format(priority)
         module.aux_data.pop('elfDynamicInit', None)
         module.aux_data.pop('elfDynamicFini', None)
+    if item['role'] == 'selected' or version_bindings or args.preserve_selected_lifecycle:
         print_ir = directory / 'relocatable.gtirb'
         ir.save_protobuf(print_ir)
     assembly = directory / 'reconstructed.S'
     print_command = [args.pprinter, '--ir', print_ir, '--asm', assembly,
                      '--policy', 'complete', '--shared', 'no']
-    if item['role'] == 'selected':
+    if item['role'] == 'selected' and not args.preserve_selected_lifecycle:
         print_command += ['--skip-section', '.init', '.fini']
     run(directory, 'print', print_command)
     # No replacement/stripping of GOT, PLT, .symver or CFI assembly is allowed.
@@ -1054,10 +1397,12 @@ def reconstruct(item, args, out, index=0, priority=None):
         table = elf.get_section_by_name('.symtab')
         emitted = {s.name: s for s in table.iter_symbols() if s['st_shndx'] != 'SHN_UNDEF'}
         for symbol in item['symbols']:
-            if symbol['section'] == 'SHN_UNDEF' or symbol['binding'] == 'STB_LOCAL':
+            if (symbol['section'] == 'SHN_UNDEF' or symbol['binding'] == 'STB_LOCAL' or
+                    version_node_symbol(item, symbol)):
                 continue
-            if symbol['name'] not in emitted:
-                reject('MISSING_RECONSTRUCTED_EXPORT', item['path'], symbol['name'])
+            expected = reconstructed_symbol_name(symbol, item)
+            if expected not in emitted:
+                reject('MISSING_RECONSTRUCTED_EXPORT', item['path'], expected)
         reconstructed_fdes = sum(isinstance(e, FDE) for e in eh_cfi_entries(elf, obj))
         if reconstructed_fdes < len(item['application_fdes']):
             reject('MISSING_RECONSTRUCTED_UNWIND', item['path'], str(reconstructed_fdes))
@@ -1088,6 +1433,14 @@ def main():
                         help='linker command, shlex parsed without a shell')
     parser.add_argument('--cache-dir', type=Path,
                         help='cache ordinary recovered IR/ET_REL, never instrumentation')
+    parser.add_argument('--resolve-selected-versions', action='store_true',
+                        help='preserve and resolve selected-library ELF symbol versions at final link')
+    parser.add_argument('--preserve-selected-lifecycle', action='store_true',
+                        help='retain custom selected init/fini code, callback arrays and exit registration')
+    parser.add_argument('--preserve-nonlocal-jumps', action='store_true',
+                        help='retain ordinary libc setjmp/longjmp calls and saved continuations')
+    parser.add_argument('--preserve-weak-imports', action='store_true',
+                        help='retain undefined weak bindings and the pinned original external lookup scope')
     parser.add_argument('--source-provenance', default='{}',
                         help='JSON source revisions/patch hashes captured by the trusted launcher')
     parser.add_argument('--jobs', type=int, default=4)
@@ -1098,11 +1451,17 @@ def main():
     if 'TEAPOT_CONTAINER_ARGV' in os.environ:
         dump(args.out / 'container.command.json', json.loads(os.environ['TEAPOT_CONTAINER_ARGV']))
     try:
-        executable = inspect(args.executable, 'executable')
+        executable = inspect(args.executable, 'executable', args.resolve_selected_versions,
+                             args.preserve_selected_lifecycle, args.preserve_nonlocal_jumps,
+                             args.preserve_weak_imports)
         architecture = ARCHITECTURES[executable['machine']]
-        selected = [inspect(path, 'selected') for path in args.select]
+        selected = [inspect(path, 'selected', args.resolve_selected_versions,
+                            args.preserve_selected_lifecycle, args.preserve_nonlocal_jumps,
+                            args.preserve_weak_imports) for path in args.select]
+        args.selected_sonames = {item['soname'] for item in selected}
         external = [inspect(path, 'external') for path in args.external]
         initialization_order = validate_closure(executable, selected, external)
+        linked_external = external_load_order(executable, selected, external) if args.preserve_weak_imports else external
         args.source_provenance_data = json.loads(args.source_provenance)
         args.tool_identities = {name: native_tool_identity(getattr(args, name))
                                 for name in ('ddisasm', 'pprinter', 'cc', 'ar')}
@@ -1119,6 +1478,10 @@ def main():
                              for key, value in architecture.items()},
             'tools': args.tool_identities, 'python': python_identity(),
             'source_provenance': args.source_provenance_data,
+            'resolve_selected_versions': args.resolve_selected_versions,
+            'preserve_selected_lifecycle': args.preserve_selected_lifecycle,
+            'preserve_nonlocal_jumps': args.preserve_nonlocal_jumps,
+            'preserve_weak_imports': args.preserve_weak_imports,
             'executable': executable['sha256'],
             'selected_order': [(i['soname'], i['sha256']) for i in selected],
             'external_order': [(i['soname'], i['sha256']) for i in external],
@@ -1131,6 +1494,7 @@ def main():
                     'executable': executable, 'selected': selected, 'external': external,
                     'selected_dependency_order': [item['soname'] for item in selected],
                     'selected_initialization_order': initialization_order,
+                    'linked_external_order': [item['soname'] for item in linked_external],
                     'tools': args.tool_identities, 'cache_context': args.cache_context,
                     'assumptions': ['single thread', 'no LD_PRELOAD/LD_AUDIT/interposers',
                                     'no alternate runtime symbol lookup',
@@ -1142,6 +1506,8 @@ def main():
         objects = [reconstruct(item, args, args.out, index,
                                100 + initialization_order.index(item['soname']))
                    for index, item in enumerate(selected)]
+        lifecycle_objects = ([build_lifecycle_dispatcher(args, main_object, objects, initialization_order)]
+                             if args.preserve_selected_lifecycle else [])
         archive = args.out / 'selected.a'
         # Distinct member filenames avoid ar silently replacing same-basename
         # members. This archive contains only newly reconstructed ET_REL bytes.
@@ -1160,9 +1526,10 @@ def main():
         run(args.out, 'link', shlex.split(args.linker) + link_policy + [
             '-m', architecture['emulation'], '--dynamic-linker', architecture['interpreter'],
             '--eh-frame-hdr', '--build-id=sha1', '-z', 'noexecstack',
-            '-Map=' + str(args.out / 'link.map'), '-o', output, main_object,
-            '--whole-archive', archive, '--no-whole-archive', '--as-needed']
-            + [item['path'] for item in external])
+            '-Map=' + str(args.out / 'link.map'), '-o', output, main_object, *lifecycle_objects,
+            '--whole-archive', archive, '--no-whole-archive',
+            '--no-as-needed' if args.preserve_weak_imports else '--as-needed']
+            + [item['path'] for item in linked_external])
         with output.open('rb') as stream:
             elf = ELFFile(stream)
             if elf['e_type'] != 'ET_EXEC' or elf['e_machine'] != executable['machine']:
@@ -1179,8 +1546,10 @@ def main():
                        if isinstance(s['st_shndx'], int)}
             for item in selected:
                 for symbol in item['symbols']:
-                    if symbol['section'] != 'SHN_UNDEF' and symbol['name'] not in defined:
-                        raise RuntimeError('missing selected body/data: ' + symbol['name'])
+                    if symbol['section'] != 'SHN_UNDEF' and not version_node_symbol(item, symbol):
+                        expected = reconstructed_symbol_name(symbol, item)
+                        if expected not in defined:
+                            raise RuntimeError('missing selected body/data: ' + expected)
             dump(args.out / 'result.json', {'status': 'ordinary_link_ready_not_yet_behavior_verified',
                 'elf_type': elf['e_type'], 'needed': needed,
                 'monolith_sha256': sha(output), 'archive_sha256': sha(archive),

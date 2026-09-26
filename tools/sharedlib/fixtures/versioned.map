@@ -1,0 +1,2 @@
+LIBTEST_1 { global: api; local: *; };
+LIBTEST_2 { global: api; } LIBTEST_1;
