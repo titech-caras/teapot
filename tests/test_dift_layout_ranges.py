@@ -4,10 +4,17 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from teapot.datacls.dift_layout import DiftLayout, LAYOUTS
+from teapot.datacls.dift_layout import DiftLayout, LAYOUTS, DEFAULT_LAYOUTS
 
 
 class DiftLayoutRangesTest(unittest.TestCase):
+    def test_x64_default_covers_modern_asan_heap(self):
+        self.assertEqual(DEFAULT_LAYOUTS["x64"], "x64-la48-asan-new")
+        layout = LAYOUTS[DEFAULT_LAYOUTS["x64"]]
+        heap = 0x503000000010
+        self.assertTrue(any(lo <= heap < hi for lo, hi in layout.app_ranges))
+        self.assertEqual(heap ^ layout.xor_mask, 0x603000000010)
+
     def test_profile_shadows_do_not_overlap_addressable_ranges(self):
         for layout in LAYOUTS.values():
             with self.subTest(layout=layout.name):
@@ -54,6 +61,12 @@ class DiftLayoutRangesTest(unittest.TestCase):
                        'project(LayoutValidation NONE)\n'
                        'set(CMAKE_INSTALL_DATADIR share)\n')
             command = ["cmake", "-S", directory, "-B", str(Path(directory) / "build")]
+            script.write_text(project + 'set(CHECKPOINT_ARCH_NAME "x64")\n' +
+                              f'include("{source}")\n' +
+                              'if(NOT TEAPOT_DIFT_LAYOUT STREQUAL "x64-la48-asan-new")\n'
+                              'message(FATAL_ERROR "wrong x64 default")\nendif()\n')
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
             for layout in LAYOUTS.values():
                 script.write_text(
                     project +
