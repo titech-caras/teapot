@@ -152,8 +152,8 @@ class TeapotPipeline:
             from teapot.arch.aarch64.bti import AArch64BTIArchitecture
             self.arch = AArch64BTIArchitecture()
         if self.linked_component is not None:
-            if len(self.ir.modules) != 1 or self.arch.name != "x64":
-                raise ValueError("separate component rewriting currently requires one x64 module")
+            if len(self.ir.modules) != 1 or self.arch.name not in ("x64", "aarch64", "riscv64"):
+                raise ValueError("separate component rewriting requires one supported ELF64 module")
             if self.options != InstrumentationOptions():
                 raise ValueError("component prototype requires all default instrumentation, nesting off")
         if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE and self.arch.name != "aarch64":

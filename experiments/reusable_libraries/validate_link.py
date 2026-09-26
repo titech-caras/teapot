@@ -7,14 +7,29 @@ from pathlib import Path
 
 from elftools.dwarf.callframe import FDE
 from elftools.elf.elffile import ELFFile
+from experiments.reusable_libraries.targets import TARGETS
 
 
-def validate(binary, objects):
+def validate_dynamic_symbol_names(elf):
+    table = elf.get_section_by_name('.dynsym')
+    if table is None:
+        return
+    strings = elf.get_section(table['sh_link']).data()
+    for symbol in table.iter_symbols():
+        offset = symbol['st_name']
+        assert 0 <= offset < len(strings) and strings.find(b'\0', offset) != -1, (
+            'dynamic symbol name is outside its string table', offset, len(strings))
+
+
+def validate(binary, objects, *, isa='X64'):
+    target = TARGETS[isa]
     manifest = json.loads((objects / "components.json").read_text())
     inputs = json.loads((objects / "inputs.json").read_text())
     with binary.open("rb") as stream:
         elf = ELFFile(stream)
-        assert elf["e_type"] == "ET_EXEC" and elf["e_machine"] == "EM_X86_64"
+        assert elf["e_type"] == "ET_EXEC" and elf["e_machine"] == target['machine']
+        assert elf.elfclass == 64 and elf.little_endian
+        validate_dynamic_symbol_names(elf)
         symbols = {}
         for symbol in elf.get_section_by_name(".symtab").iter_symbols():
             if symbol["st_shndx"] != "SHN_UNDEF":
@@ -27,7 +42,7 @@ def validate(binary, objects):
 
         needed = [tag.needed for tag in elf.get_section_by_name(".dynamic").iter_tags()
                   if tag.entry.d_tag == "DT_NEEDED"]
-        assert needed[0] == "libasan.so.8" and needed.count("libasan.so.8") == 1, needed
+        assert needed[0] == target['asan'] and needed.count(target['asan']) == 1, needed
         assert not {item["soname"] for item in inputs["selected"]}.intersection(needed), needed
         ranges = {}
         for kind, name in (("normal", ".teapot_component_text"), ("transient", ".teapot_transient")):
@@ -39,7 +54,7 @@ def validate(binary, objects):
             assert start < end
             ranges[kind] = (start, end)
         assert ranges["normal"][1] <= ranges["transient"][0]
-        for name in ("make_checkpoint_x64", "restore_checkpoint", "report_gadget_KASPER_MDS"):
+        for name in (target['checkpoint'], "restore_checkpoint", "report_gadget_KASPER_MDS"):
             entry = address(name)
             assert all(not start <= entry < end for start, end in ranges.values()), name
         for section in elf.iter_sections():
@@ -53,6 +68,7 @@ def validate(binary, objects):
         assert 0 <= (guard_end - guard_start) // 4 < 0x80000000
         guard_ranges = []
         for component in manifest["components"]:
+            assert component.get('isa', isa) == isa
             key = component["component_id"]
             start, end = (address("__guard_" + kind + "__teapot___" + key) for kind in ("start", "end"))
             assert guard_start <= start <= end <= guard_end
@@ -65,7 +81,7 @@ def validate(binary, objects):
                 entry = address(name)
                 assert ranges["normal"][0] <= entry < ranges["normal"][1], name
                 offset = entry - normal["sh_addr"]
-                assert normal.data()[offset:offset + 8] == bytes.fromhex("4887db904887d290"), name
+                assert normal.data()[offset:offset + len(target['marker'])] == target['marker'], name
             for name in component.get("linked_exports", ()):
                 address(name)
         for (left_start, left_end), (right_start, right_end) in zip(sorted(guard_ranges), sorted(guard_ranges)[1:]):
@@ -80,7 +96,7 @@ def validate(binary, objects):
                     address(symbol["name"])
         fdes = [entry for entry in elf.get_dwarf_info().EH_CFI_entries() if isinstance(entry, FDE)]
         assert len(fdes) >= sum(len(item["application_fdes"]) for item in [inputs["executable"]] + inputs["selected"])
-    return {"status": "structural_checks_passed_behavior_still_required", "needed": needed,
+    return {"status": "structural_checks_passed_behavior_still_required", "needed": needed, 'isa': isa,
             "target_ranges": ranges, "guard_ranges": guard_ranges,
             "guard_slots_including_alignment": (guard_end - guard_start) // 4,
             "guard_slots_used": sum(c["guard_count"] for c in manifest["components"]),
@@ -92,8 +108,9 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--objects", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument('--isa', choices=tuple(TARGETS), default='X64')
     args = parser.parse_args()
-    result = validate(args.binary, args.objects)
+    result = validate(args.binary, args.objects, isa=args.isa)
     args.out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result), flush=True)
 

@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from uuid import UUID
 
 import gtirb
 from elftools.dwarf.callframe import FDE
@@ -26,7 +27,9 @@ from elftools.elf.elffile import ELFFile
 from teapot.configs.blacklist import is_blacklisted_function_name
 from teapot.configs.runtime import ROB_LEN, SYMBOL_SUFFIX
 from teapot.datacls.linked_component import LinkedComponent
+from teapot.arch import module_isa_name
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
+from experiments.reusable_libraries.targets import for_machine
 
 
 def sha(path):
@@ -74,10 +77,15 @@ def exports(item, converter, functions_only=True):
     return frozenset(names)
 
 
-def validate_object(path, component_id, expected_exports, expected_fdes):
+def validate_object(path, component_id, expected_exports, expected_fdes,
+                    machine='EM_X86_64', cfi_reader=None):
+    isa, target = for_machine(machine)
     with path.open("rb") as stream:
         elf = ELFFile(stream)
-        assert elf["e_type"] == "ET_REL" and elf["e_machine"] == "EM_X86_64"
+        assert elf["e_type"] == "ET_REL" and elf["e_machine"] == machine
+        assert elf.elfclass == 64 and elf.little_endian
+        if isa == 'RISCV64':
+            assert elf['e_flags'] & 6 == 4 and not elf['e_flags'] & ~5, 'RV64 LP64D required'
         table = elf.get_section_by_name(".symtab")
         symbols = {s.name: s for s in table.iter_symbols() if s.name}
         for name in expected_exports:
@@ -86,13 +94,14 @@ def validate_object(path, component_id, expected_exports, expected_fdes):
             section = elf.get_section(symbol["st_shndx"])
             offset = symbol["st_value"]
             assert section.name == ".teapot_component_text", (name, section.name)
-            assert section.data()[offset:offset + 8] == bytes.fromhex("4887db904887d290"), (
+            assert section.data()[offset:offset + len(target['marker'])] == target['marker'], (
                 "export is missing its full normal-to-transient marker", name)
         for name, flags in ((".teapot_component_text", 6), (".teapot_transient", 6),
                             (".teapot_component_guards." + component_id, 3)):
             section = elf.get_section_by_name(name)
             assert section is not None and section["sh_flags"] & 7 == flags, (name, section)
-        fdes = [entry for entry in elf.get_dwarf_info().EH_CFI_entries() if isinstance(entry, FDE)]
+        entries = cfi_reader(elf, path) if cfi_reader else elf.get_dwarf_info().EH_CFI_entries()
+        fdes = [entry for entry in entries if isinstance(entry, FDE)]
         assert len(fdes) >= expected_fdes, "original unwind ranges were not reconstructed"
 
 
@@ -103,6 +112,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     ir = gtirb.IR.load_protobuf(lifted)
     assert len(ir.modules) == 1
     module = ir.modules[0]
+    isa, target = for_machine(item['machine'])
+    assert module_isa_name(module) == isa
     dump(directory / "proven-data-decoder-warnings.json", converter.validate_frontend_diagnostics(
         module, item, (directory / "lift/stderr").read_text()))
     assert "liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data
@@ -115,6 +126,17 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     for symbol in module.symbols:
         if SYMBOL_SUFFIX in symbol.name or symbol.name.startswith(("__teapot_linked_", "__teapot_component_")):
             raise RuntimeError("reserved instrumentation symbol in original input: " + symbol.name)
+    if isa == 'ARM64':
+        # Bind proved pointer returns directly to the untouched standalone IR.
+        # No ordinary link/re-lift, origin records or UUID correspondence needed.
+        from tools.sharedlib.aarch64_return_abi import produce
+        from teapot.utils.return_abi import POINTER_RETURNS, SCHEMA, function_fingerprint
+        evidence = produce(item['path'], lifted)
+        assert POINTER_RETURNS not in module.aux_data
+        module.aux_data[POINTER_RETURNS] = gtirb.AuxData({
+            UUID(row['function_uuid']): (function_fingerprint(module, UUID(row['function_uuid'])), row['id'])
+            for row in evidence['records']}, SCHEMA)
+        dump(directory / 'pointer-return-contracts.json', evidence)
     if item["role"] == "selected":
         converter.localize_private_library_definitions(module, item)
     version_bindings = (converter.resolve_selected_symbol_versions(module, item, args.selected_sonames)
@@ -129,7 +151,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         if len(definitions) != 1 or definitions[0].referent.section.name != ".text":
             raise RuntimeError("selected export is not a uniquely recovered .text entry: " + name)
     context = LinkedComponent(component_id, selected_symbols, own_exports)
-    pipeline = TeapotPipeline(ir, "x64-la48-asan-new", linked_component=context)
+    pipeline = TeapotPipeline(ir, target['layout'], linked_component=context)
     started = time.monotonic()
     pipeline.run()
     rewrite_seconds = time.monotonic() - started
@@ -160,13 +182,17 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     fixed = run(directory, "section-flags", ["sed", "-f", args.teapot / "scripts/fix_asm.sed",
                                             directory / "raw.S"])
     shutil.copyfile(fixed / "stdout", directory / "fixed.S")
-    run(directory, "assemble", [args.cc, "-c", directory / "fixed.S", "-o", directory / "component.o"])
-    validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]))
+    run(directory, "assemble", [args.cc, "-c", directory / "fixed.S", "-o", directory / "component.o",
+                                *(['-mno-relax', '-Wa,-mno-relax'] if isa == 'RISCV64' else [])])
+    validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]),
+                    item['machine'], converter.eh_cfi_entries)
     recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "fixed.S", "component.o",
                 "proven-data-decoder-warnings.json", "selected-version-bindings.json"]
     if args.preserve_selected_lifecycle:
         recorded.append("lifecycle.json")
-    result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"],
+    if isa == 'ARM64':
+        recorded.append('pointer-return-contracts.json')
+    result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"], 'isa': isa,
               "exports": sorted(own_exports), "linked_exports": sorted(exports(item, converter, False)),
               "guard_count": guard_count,
               "rewrite_seconds": rewrite_seconds, "liveness": "ddisasm",
@@ -193,7 +219,8 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
             result = json.loads((entry / "component.json").read_text())
             for name, expected in result["files"].items():
                 assert sha(entry / name) == expected, "cached artifact hash mismatch: " + name
-            validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]))
+            validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]),
+                            item['machine'], converter.eh_cfi_entries)
         else:
             # Containers often reuse PID 1; preserve failed attempts without
             # preventing an unchanged recipe from being retried.
@@ -235,6 +262,7 @@ def main():
         "resolve_selected_versions", "preserve_selected_lifecycle",
         "preserve_nonlocal_jumps", "preserve_weak_imports")}
     executable = converter.inspect(args.executable, "executable", **conversion_options)
+    isa, target = for_machine(executable['machine'])
     selected = [converter.inspect(path, "selected", **conversion_options) for path in args.select]
     external = [converter.inspect(path, "external") for path in args.external]
     order = converter.validate_closure(executable, selected, external)
@@ -256,7 +284,9 @@ def main():
                "options": asdict(InstrumentationOptions()), "ROB_LEN": ROB_LEN,
                "liveness_contract": "standalone-ddisasm-abi-v1",
                "conversion_options": conversion_options,
-               "dift_layout": "x64-la48-asan-new"}
+               "dift_layout": target['layout'], 'isa': isa,
+               'component_targets_sha256': sha(args.teapot / 'experiments/reusable_libraries/targets.py'),
+               'pointer_contract_producer_sha256': sha(args.teapot / 'tools/sharedlib/aarch64_return_abi.py')}
     dump(args.out / "inputs.json", {"executable": executable, "selected": selected, "external": external})
     # Do the expensive reusable library work first. Keep final link order main,
     # then selected libraries, independently of the order of cache population.
