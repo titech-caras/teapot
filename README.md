@@ -38,7 +38,6 @@ tracking to vector registers. No RVV or SVE requirement is introduced.
 RISC DIFT propagation, operand capture and LLVM replay use liveness to select
 spare GPRs and omit unnecessary saves. Live fallback registers still use the
 existing spill areas; missing liveness is all-live, and FP/SIMD saves remain.
-If the debug symbol manipulation functions are used, `pyelftools` is also required.
 
 Teapot prefers ddisasm's interprocedural `liveRegisterNames` and
 `liveRegisterSets` metadata. Known internal calls are analyzed through the CFG,
@@ -213,4 +212,4 @@ $ ./a.inst input.txt
 
 ## Troubleshooting
 
-See [TROUBLESHOOTING.md](https://github.com/lin-toto/teapot/blob/main/TROUBLESHOOTING.md) for common issues.
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues.

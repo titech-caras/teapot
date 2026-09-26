@@ -1,6 +1,6 @@
 # Opt-in AArch64 BTI experiment (2026-09-22)
 
-This is an isolated prototype, not the default backend or a production merge.
+This backend is opt-in (`--target-identification aarch64-bti`), not the default.
 The user approved replacing the first marker with BTI and requested AArch64
 only for now; this supersedes the earlier literal-marker objection for this opt-in
 path. x64 and RV64 remain software.
@@ -156,8 +156,8 @@ rejected; mixed marked/unmarked system DSOs remain external and unguarded.
 
 Workspace `/home/lin/teapot-multiarch`:
 
-- Private worktrees: `workers/aarch64-bti-20260922/teapot` and its separate
-  `libcheckpoint` worktree; production sources are unchanged.
+- Development worktrees: `workers/aarch64-bti-20260922/teapot` and its separate
+  `libcheckpoint` worktree; the backend has since landed on `multiarch`.
 - `workers/bti-execution-20260922/python-v2` and `runtime-build-v2` retain commands,
   source hashes and raw test logs.
 - `workers/aarch64-bti-20260922/run_libhtp.py` performs a new lift, full rewrite,
