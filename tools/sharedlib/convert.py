@@ -962,13 +962,29 @@ def validate_closure(executable, selected, external):
     return ordering
 
 
+def ordinary_object_recipe(item, context, priority=None):
+    """Describe reconstruction inputs, not unrelated final executable bytes.
+
+    Every invocation still validates its complete ELF binding closure before
+    looking up an object. An ordinary selected-library object is reconstructed
+    only from that library's ELF, the tools and startup placement: it contains
+    symbolic references, not caller-resolved code or instrumentation plans.
+    Retain dependency contents/order and initialization order conservatively.
+    This exemption does NOT apply to resolved instrumented-object caches.
+    """
+    context = dict(context)
+    if item['role'] == 'selected':
+        context.pop('executable', None)
+    return {'format': 2, 'stage': 'ordinary-et-rel', 'context': context,
+            'input_sha256': item['sha256'], 'role': item['role'],
+            'module_basename': Path(item['path']).name, 'array_priority': priority,
+            'printing_policy': 'complete', 'shared': False}
+
+
 def reconstruct(item, args, out, index=0, priority=None):
     directory = out / ('executable' if item['role'] == 'executable' else 'selected-{:03d}'.format(index))
     directory.mkdir()
-    object_recipe = {'format': 1, 'stage': 'ordinary-et-rel', 'context': args.cache_context,
-                     'input_sha256': item['sha256'], 'role': item['role'],
-                     'module_basename': Path(item['path']).name, 'array_priority': priority,
-                     'printing_policy': 'complete', 'shared': False}
+    object_recipe = ordinary_object_recipe(item, args.cache_context, priority)
     lift_recipe = {'format': 1, 'stage': 'recovered-ir', 'frontend': args.tool_identities['ddisasm'],
                    'input_sha256': item['sha256'], 'module_basename': Path(item['path']).name,
                    'frontend_source_provenance': args.source_provenance_data,
