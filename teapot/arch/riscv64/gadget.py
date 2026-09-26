@@ -13,14 +13,18 @@ _REPORT_CALLER_SAVED_GPRS = (
 
 
 class RISCV64GadgetPatchesMixin:
-    def coverage_patch(self, idx: int):
+    def coverage_patch(self, idx: int, *, index_base_symbol=None):
+        if type(idx) is not int or not 0 <= idx < 2**31:
+            raise ValueError('coverage index must fit the signed linker-index contract')
         @self.constraints(scratch_registers=2)
         def patch(ctx):
             top_addr_reg, top_reg = ctx.scratch_registers[:2]
+            index = (f'li {top_addr_reg}, {idx}' if index_base_symbol is None else
+                     self.load_address(top_addr_reg, f'{index_base_symbol.name}+{idx}'))
             return f"""
                 {self.load_address(top_addr_reg, "guard_list_top")}
                 ld {top_reg}, 0({top_addr_reg})
-                li {top_addr_reg}, {idx}
+                {index}
                 sw {top_addr_reg}, 0({top_reg})
                 addi {top_reg}, {top_reg}, 4
                 {self.load_address(top_addr_reg, "guard_list_top")}

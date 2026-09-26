@@ -5,14 +5,24 @@ _REPORT_LABEL_COUNTER = count()
 
 
 class AArch64GadgetPatchesMixin:
-    def coverage_patch(self, idx: int):
+    def coverage_patch(self, idx: int, *, index_base_symbol=None):
+        if type(idx) is not int or not 0 <= idx < 2**32:
+            raise ValueError('coverage index must fit the 32-bit guard ABI')
         @self.constraints(scratch_registers=2)
         def patch(ctx):
             top_addr_reg, top_reg = ctx.scratch_registers[:2]
+            index_reg = self.w_reg(top_addr_reg)
+            if index_base_symbol is None:
+                index = self.mov_w_imm32(index_reg, idx)
+            else:
+                # Absolute linker-defined index, not an address. A skipped
+                # literal uses checked ABS32, supported by the pinned rewriter.
+                expression = f'{index_base_symbol.name}+{idx}'
+                index = f'ldr {index_reg}, 1f\nb 2f\n1:\n.word {expression}\n2:'
             return f"""
                 {self.load_address(top_addr_reg, "guard_list_top")}
                 ldr {top_reg}, [{top_addr_reg}]
-                {self.mov_w_imm32(self.w_reg(top_addr_reg), idx)}
+                {index}
                 str {self.w_reg(top_addr_reg)}, [{top_reg}]
                 add {top_reg}, {top_reg}, #4
                 {self.load_address(top_addr_reg, "guard_list_top")}
