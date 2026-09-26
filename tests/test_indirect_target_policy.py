@@ -166,12 +166,16 @@ int main(void) {
     def test_x64_exact_target_policy(self):
         if platform.machine() not in ("x86_64", "amd64"):
             self.skipTest("requires native x64")
-        self._execute(X64Architecture(), "gcc", [], "rdi", ("r8", "r9"), "mov eax,")
+        arch = X64Architecture()
+        scratch = tuple(arch.abi.get_register(name) for name in ("r8", "r9"))
+        self._execute(arch, "gcc", [], "rdi", scratch, "mov eax,")
 
     def test_aarch64_exact_target_policy(self):
-        self._execute(AArch64Architecture(), "aarch64-linux-gnu-gcc",
+        arch = AArch64Architecture()
+        scratch = tuple(arch.abi.get_register(name) for name in ("x8", "x9", "x10"))
+        self._execute(arch, "aarch64-linux-gnu-gcc",
                       ["qemu-aarch64", "-L", "/usr/aarch64-linux-gnu"],
-                      "x0", ("x8", "x9", "x10"), "mov w0,")
+                      "x0", scratch, "mov w0,")
 
     def test_riscv64_exact_target_policy(self):
         # The rewriter hands the patch Register objects, and Capstone 6 prints `jr a0` as
