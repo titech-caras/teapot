@@ -86,7 +86,9 @@ class NormalizeAArch64RelocationsPassTests(unittest.TestCase):
         code.symbolic_expressions[4] = gtirb.SymAddrAddr(1, 0, got_symbol, page)
         self.assertEqual(self.normalize(module).restored_adrp, 1)
         adrp = next(GtirbInstructionDecoder(module.isa).get_instructions(next(iter(module.code_blocks))))
-        self.assertEqual((adrp.mnemonic, adrp.op_str), ("adrp", "x2, #0x3000"))
+        # Capstone 6 prints the page without "#"; compare the operands.
+        self.assertEqual((adrp.mnemonic, adrp.reg_name(adrp.operands[0].reg), adrp.operands[1].imm),
+                         ("adrp", "x2", 0x3000))
         GOT, LO12 = gtirb.SymbolicExpression.Attribute.GOT, gtirb.SymbolicExpression.Attribute.LO12
         self.assertEqual(code.symbolic_expressions[0], gtirb.SymAddrConst(0, got_symbol, {GOT}))
         self.assertEqual(code.symbolic_expressions[4], gtirb.SymAddrConst(0, got_symbol, {GOT, LO12}))
