@@ -733,7 +733,10 @@ def inspect(path, role):
                 reject('CUSTOM_DT_INIT_OR_FINI', path, 'RV64 startup contract has no init/fini code section')
             if rv_executable:
                 StartupImage(elf, static, relocations, dynsym, path).rv_preinit(
-                    elf.get_section_by_name('.preinit_array'), static)
+                    elf.get_section_by_name('.preinit_array'), static, allow_call_pair=True)
+                # Unrelaxed original executables use the same exact AUIPC/JALR
+                # CRT call already validated after reconstruction. Its register
+                # operands and actual load_gp target must still match.
                 result['preinit_contract'] = 'retained single CRT load_gp; validated _start initialization'
         elif role in ('selected', 'executable'):
             if init:
