@@ -28,6 +28,13 @@ class X64OperandMixin:
         "seto", "setno", "setb", "setae", "sete", "setne", "setbe", "seta",
         "sets", "setns", "setp", "setnp", "setl", "setge", "setle", "setg",
     ))
+    # Capstone 5 marks scalar FST/FSTP, FIST/FISTP/FISTTP and FNSTCW memory
+    # destinations as reads. These x87 forms have an implicit source, so the
+    # vector-source recognizer cannot see them. Include the correctly marked
+    # widths too, keeping the architectural store families together.
+    _X87_MEMORY_STORE_MNEMONICS = frozenset((
+        "fst", "fstp", "fist", "fistp", "fisttp", "fbstp", "fnstcw", "fnstsw",
+    ))
     _SEGMENT_OVERRIDE_RE = re.compile(r"(?i)(?<![0-9A-Za-z_])(fs|gs):")
     _REGISTER_NAMES = frozenset(
         name[len("X86_REG_"):].lower()
@@ -141,8 +148,18 @@ class X64OperandMixin:
         )
 
     @classmethod
+    def _is_x87_memory_store(cls, inst, operand) -> bool:
+        return bool(
+            len(inst.operands) == 1 and inst.operands[0] == operand and
+            operand.type == CS_OP_MEM and
+            inst.mnemonic.lower() in cls._X87_MEMORY_STORE_MNEMONICS
+        )
+
+    @classmethod
     def mem_operand_is_read(cls, inst, operand) -> bool:
-        if cls._is_unmarked_vector_store(inst, operand) or cls._is_setcc_memory_store(inst, operand):
+        if (cls._is_unmarked_vector_store(inst, operand) or
+                cls._is_setcc_memory_store(inst, operand) or
+                cls._is_x87_memory_store(inst, operand)):
             return False
         return bool(operand.access & CS_AC_READ)
 
@@ -156,7 +173,8 @@ class X64OperandMixin:
             (inst.operands[0] == operand and inst.operands[0].size > 8) or
             cls._is_unmarked_vector_store(inst, operand) or
             cls._is_unmarked_memory_rmw(inst, operand) or
-            cls._is_setcc_memory_store(inst, operand)
+            cls._is_setcc_memory_store(inst, operand) or
+            cls._is_x87_memory_store(inst, operand)
         )
 
     @staticmethod
