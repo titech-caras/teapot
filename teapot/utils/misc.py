@@ -11,6 +11,15 @@ def distinguish_edges(edges: Iterable[gtirb.Edge]) -> Tuple[List[gtirb.Edge], Li
             [e for e in edges_list if e.label.type == gtirb.cfg.Edge.Type.Fallthrough]
 
 
+def conditional_branch_edge(block: gtirb.CodeBlock) -> Optional[gtirb.Edge]:
+    """The block's first non-fallthrough edge if it is a conditional branch, else None."""
+    non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
+    if (non_fallthrough_edges and non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Branch and
+            non_fallthrough_edges[0].label.conditional):
+        return non_fallthrough_edges[0]
+    return None
+
+
 def generate_distinct_label_name(prefix: str, uuid: UUID):
     return prefix + "_" + str(uuid).replace("-", "_") + SYMBOL_SUFFIX
 

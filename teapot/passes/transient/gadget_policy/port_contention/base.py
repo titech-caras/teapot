@@ -7,7 +7,7 @@ from gtirb_rewriting import Patch, RewritingContext
 from teapot.arch.architecture import Architecture
 from teapot.datacls.dift_layout import get_dift_layout
 from teapot.passes.mixins import ArchSpecificPassMixin, RegInstAwarePassMixin, VisitorPassMixin
-from teapot.utils.misc import distinguish_edges
+from teapot.utils.misc import conditional_branch_edge
 
 
 class TransientPortContentionPolicyPassBase(ArchSpecificPassMixin, VisitorPassMixin, RegInstAwarePassMixin):
@@ -51,14 +51,8 @@ class TransientPortContentionPolicyPassBase(ArchSpecificPassMixin, VisitorPassMi
         self.insert_at(block, inst_offset, Patch.from_function(patch))
 
     def _conditional_branch_instructions(self, block: gtirb.CodeBlock):
-        non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
-        if len(non_fallthrough_edges) == 0:
+        if conditional_branch_edge(block) is None:
             return None
-
-        edge = non_fallthrough_edges[0]
-        if edge.label.type != gtirb.cfg.Edge.Type.Branch or not edge.label.conditional:
-            return None
-
         return list(self.decoder.get_instructions(block))
 
     def predicate_instruction_index(self, instructions):

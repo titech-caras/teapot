@@ -42,7 +42,7 @@ from teapot.preprocess.copy_section import (
     set_elf_section_properties,
 )
 from teapot.preprocess.create_guards import create_guards
-from teapot.utils.misc import distinguish_edges
+from teapot.utils.misc import conditional_branch_edge
 
 ARCH_INFO_AUX_TYPE = "mapping<string,string>"
 AARCH64_MTE_ARCH_FEATURE = "mte"
@@ -88,14 +88,7 @@ def _restore_integral_symbol_values(symbol_values):
 
 
 def _conditional_branch_block_uuids(section: gtirb.Section):
-    block_uuids = set()
-    for block in section.code_blocks:
-        non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
-        if (non_fallthrough_edges and
-                non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Branch and
-                non_fallthrough_edges[0].label.conditional):
-            block_uuids.add(block.uuid)
-    return block_uuids
+    return {block.uuid for block in section.code_blocks if conditional_branch_edge(block) is not None}
 
 
 def _add_arch_feature(module: gtirb.Module, feature: str):

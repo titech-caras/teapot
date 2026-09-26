@@ -8,7 +8,7 @@ from teapot.arch.architecture import Architecture
 from teapot.configs.blacklist import is_blacklisted_function
 from teapot.passes.mixins import VisitorPassMixin
 from teapot.datacls.copied_section_mapping import CopiedSectionMapping
-from teapot.utils.misc import distinguish_edges, generate_distinct_label_name
+from teapot.utils.misc import conditional_branch_edge, distinguish_edges, generate_distinct_label_name
 
 
 class CreateTrampolinesPass(VisitorPassMixin):
@@ -83,15 +83,10 @@ class CreateTrampolinesPass(VisitorPassMixin):
         if block.uuid in self.processed_blocks:
             return
 
-        non_fallthrough_edges, fallthrough_edges = distinguish_edges(block.outgoing_edges)
-        if len(non_fallthrough_edges) == 0:
-            return
-
-        if (non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Branch and
-                non_fallthrough_edges[0].label.conditional):
+        branch_edge = conditional_branch_edge(block)
+        if branch_edge is not None:
             self.processed_blocks.add(block.uuid)
-            fallthrough_edge: gtirb.Edge = fallthrough_edges[0]
-            branch_edge: gtirb.Edge = non_fallthrough_edges[0]
+            fallthrough_edge: gtirb.Edge = distinguish_edges(block.outgoing_edges)[1][0]
 
             last_instruction: CsInsn
             instructions = list(self.decoder.get_instructions(block))

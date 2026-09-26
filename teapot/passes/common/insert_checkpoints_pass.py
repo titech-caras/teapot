@@ -11,7 +11,7 @@ import functools
 
 from teapot.arch.architecture import Architecture
 from teapot.passes.mixins import VisitorPassMixin, RegInstAwarePassMixin
-from teapot.utils.misc import distinguish_edges
+from teapot.utils.misc import conditional_branch_edge
 from teapot.configs.blacklist import is_blacklisted_function
 
 
@@ -46,12 +46,7 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
         if self.eligible_block_uuids is not None and block.uuid not in self.eligible_block_uuids:
             return
 
-        non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
-        if len(non_fallthrough_edges) == 0:
-            return
-
-        if (non_fallthrough_edges[0].label.type == gtirb.cfg.Edge.Type.Branch and
-                non_fallthrough_edges[0].label.conditional):
+        if conditional_branch_edge(block) is not None:
             instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
             conditional_jump_offset = functools.reduce(lambda x, i: x + i.size, instructions[:-1], 0)
             if conditional_jump_offset > block.size:

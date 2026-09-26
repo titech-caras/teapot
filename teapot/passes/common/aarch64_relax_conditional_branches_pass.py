@@ -12,7 +12,8 @@ from capstone import CS_OP_IMM, CS_OP_REG
 from teapot.arch.aarch64.architecture import AArch64Architecture
 from teapot.arch.aarch64.operands import aarch64_register_number
 from teapot.passes.mixins import VisitorPassMixin
-from teapot.utils.misc import distinguish_edges, generate_distinct_label_name, get_or_insert_symbol
+from teapot.utils.misc import (
+    conditional_branch_edge, distinguish_edges, generate_distinct_label_name, get_or_insert_symbol)
 
 
 @dataclass
@@ -422,14 +423,8 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
 
     @staticmethod
     def _terminator_branch_target(block: gtirb.CodeBlock) -> Optional[gtirb.CodeBlock]:
-        non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
-        if not non_fallthrough_edges:
-            return None
-
-        branch_edge = non_fallthrough_edges[0]
-        if branch_edge.label.type != gtirb.cfg.Edge.Type.Branch or not branch_edge.label.conditional:
-            return None
-        if not isinstance(branch_edge.target, gtirb.CodeBlock):
+        branch_edge = conditional_branch_edge(block)
+        if branch_edge is None or not isinstance(branch_edge.target, gtirb.CodeBlock):
             return None
         return branch_edge.target
 
