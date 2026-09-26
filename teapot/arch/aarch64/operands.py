@@ -51,6 +51,29 @@ _ATOMIC_RMW_MNEMONIC_PREFIXES = (
 )
 
 
+def aarch64_base_register_writeback(inst) -> bool:
+    """Whether a pre- or post-indexed access updates its memory operand's base register.
+
+    Capstone 6 also sets ``writeback`` for tied operands (``movk``, ``fmla``, ``cas``, lane loads), so
+    the flag alone is not enough: the access must be post-indexed, pre-indexed (``[...]!``) or followed
+    by a register increment (``ld1 {v0.16b}, [x0], x2``)."""
+    if not getattr(inst, "writeback", False):
+        return False
+    if getattr(inst, "post_index", False) or inst.op_str.rstrip().endswith("!"):
+        return True
+    operands = inst.operands
+    memory = next((index for index, op in enumerate(operands) if op.type == CS_OP_MEM), None)
+    return memory is not None and memory + 1 < len(operands)
+
+
+def aarch64_access_displacement(inst, mem_operand) -> int:
+    """Displacement of the address a memory operand accesses.
+
+    A post-indexed access reads or writes the unmodified base. Capstone 6 reports the increment as the
+    MEM operand's displacement; Capstone 5 as a separate immediate, with displacement 0."""
+    return 0 if getattr(inst, "post_index", False) else mem_operand.mem.disp
+
+
 def aarch64_is_atomic_rmw_mnemonic(mnemonic: str) -> bool:
     """Return whether *mnemonic* performs an atomic read/modify/write."""
     return mnemonic.lower().startswith(_ATOMIC_RMW_MNEMONIC_PREFIXES)
@@ -87,11 +110,13 @@ class AArch64OperandMixin:
     def stack_register_assignment(self, inst):
         operands = inst.operands
         mem = self.memory_operand(inst)
-        if mem is not None and inst.writeback:
+        if mem is not None and aarch64_base_register_writeback(inst):
             base = self.register_from_name(self.abi, inst.reg_name(mem.mem.base))
             if operands[-1].type == CS_OP_IMM:
+                # Capstone 5's post-index increment.
                 return base, base, operands[-1].imm
             if operands[-1].type == CS_OP_MEM and not mem.mem.index:
+                # Pre-index offset, and Capstone 6's post-index increment.
                 return base, base, mem.mem.disp
             return None
         if len(operands) < 2 or any(op.type != CS_OP_REG for op in operands[:2]):
@@ -114,7 +139,7 @@ class AArch64OperandMixin:
         if mem is None:
             return None
         base = self.register_from_name(self.abi, inst.reg_name(mem.mem.base))
-        displacement = None if mem.mem.index else mem.mem.disp
+        displacement = None if mem.mem.index else aarch64_access_displacement(inst, mem)
         return_offset = None
         value_count = 2 if inst.mnemonic in {"ldp", "stp", "ldnp", "stnp"} else 1
         if inst.mnemonic in {"ldr", "str", "ldur", "stur", "ldp", "stp", "ldnp", "stnp"}:
@@ -249,7 +274,7 @@ class AArch64OperandMixin:
 
         base = mem_operand.mem.base
         index = mem_operand.mem.index
-        disp = mem_operand.mem.disp
+        disp = aarch64_access_displacement(inst, mem_operand)
         symbolic_disp = self.aarch64_symbolic_disp(kwargs.get("mem_symexpr"))
         asm = ""
         addr_reg = get_register(abi, addr_reg)

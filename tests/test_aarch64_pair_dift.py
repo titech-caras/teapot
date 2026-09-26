@@ -10,6 +10,7 @@ import gtirb
 import llvmlite.binding as llvm
 
 from teapot.arch import AArch64Architecture
+from teapot.arch.aarch64.operands import aarch64_access_displacement
 from teapot.arch.decoders import aarch64_decoder
 from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE
 from teapot.passes.common.dift.aarch64 import AArch64DiftPropagationPass
@@ -39,7 +40,7 @@ class AArch64PairDiftTests(unittest.TestCase):
             effects = text._instruction_effects(block, inst)
             word = int.from_bytes(instruction, "little")
             first_reg, second_reg, base_reg = word & 31, (word >> 10) & 31, (word >> 5) & 31
-            displacement = (effects.mem_read or effects.mem_write).mem.disp
+            displacement = aarch64_access_displacement(inst, effects.mem_read or effects.mem_write)
             if base_reg == 31:
                 base_setup = f"sub x10, x0, #{displacement}\nmov sp, x10"
             else:

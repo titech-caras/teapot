@@ -18,6 +18,8 @@ Anything else is left unchanged. Runs before instrumentation, so both copies get
 import gtirb
 from capstone import CS_OP_IMM, CS_OP_MEM, CS_OP_REG
 
+from teapot.arch.aarch64.operands import aarch64_base_register_writeback
+
 CALLEE_SAVED = frozenset(range(19, 29))
 LO12 = gtirb.SymbolicExpression.Attribute.LO12
 
@@ -72,7 +74,7 @@ def _page_offset(inst, reg):
         return ops[2].imm if 0 <= ops[2].imm < 4096 else None
     memory = [op for op in ops if op.type == CS_OP_MEM]
     if len(memory) == 1 and _regnum(inst.reg_name(memory[0].mem.base)) == reg and \
-            not memory[0].mem.index and not getattr(inst, 'writeback', False) and 0 <= memory[0].mem.disp < 4096:
+            not memory[0].mem.index and not aarch64_base_register_writeback(inst) and 0 <= memory[0].mem.disp < 4096:
         return memory[0].mem.disp
     return None
 
