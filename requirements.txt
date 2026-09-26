@@ -3,6 +3,6 @@ gtirb>=2.0.0
 gtirb-rewriting @ git+https://github.com/lin-toto/gtirb-rewriting.git@b969b4c5678d08d55a7c05e2db392a637576808a
 gtirb-functions>=1.0.9
 gtirb-capstone>=1.1.2
-gtirb-live-register-analysis @ git+https://github.com/lin-toto/gtirb-live-register-analysis@3585763c3513ea6d7286927f387223060b5e7d13
+gtirb-live-register-analysis @ git+https://github.com/lin-toto/gtirb-live-register-analysis@490ec2dcd3af5ecf661fc2864f06eb3e4026743f
 llvmlite>=0.41.0
 pyelftools>=0.31
