@@ -18,6 +18,8 @@ MODES = {
     'aarch64-vma42': dict(isa='ARM64', layout='aarch64-vma42', tag_storage='shadow', asan='libasan.so.5'),
     'aarch64-vma39': dict(isa='ARM64', layout='aarch64-vma39', tag_storage='shadow', asan='libasan.so.5'),
     'aarch64-vma42-mte': dict(isa='ARM64', layout='aarch64-vma42', tag_storage='mte', asan=None),
+    'aarch64-vma48': dict(isa='ARM64', layout='aarch64-vma48', tag_storage='shadow', asan='libasan.so.5'),
+    'aarch64-vma48-mte': dict(isa='ARM64', layout='aarch64-vma48', tag_storage='mte', asan=None),
     'riscv64': dict(isa='RISCV64', layout='riscv64-sv39', tag_storage='shadow', asan='libasan.so.8'),
 }
 DEFAULT_MODE = {'X64': 'x64', 'ARM64': 'aarch64-vma42', 'RISCV64': 'riscv64'}
