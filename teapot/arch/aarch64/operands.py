@@ -3,21 +3,7 @@ from typing import Optional
 import gtirb
 from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, CsInsn
 
-try:
-    from capstone.aarch64 import AARCH64_EXT_SXTW, AARCH64_EXT_UXTW, AARCH64_SFT_LSL
-    _CAPSTONE5_ARRANGEMENTS = None
-except ImportError:  # Capstone 5, until Capstone 6 is required
-    from capstone import arm64 as _arm64
-    AARCH64_EXT_SXTW, AARCH64_EXT_UXTW, AARCH64_SFT_LSL = (
-        _arm64.ARM64_EXT_SXTW, _arm64.ARM64_EXT_UXTW, _arm64.ARM64_SFT_LSL)
-    _CAPSTONE5_ARRANGEMENTS = {
-        getattr(_arm64, "ARM64_VAS_" + name): arrangement for name, arrangement in {
-            "16B": (16, 1), "8B": (8, 1), "4B": (4, 1), "1B": (1, 1),
-            "8H": (8, 2), "4H": (4, 2), "2H": (2, 2), "1H": (1, 2),
-            "4S": (4, 4), "2S": (2, 4), "1S": (1, 4),
-            "2D": (2, 8), "1D": (1, 8), "1Q": (1, 16),
-        }.items()
-    }
+from capstone.aarch64 import AARCH64_EXT_SXTW, AARCH64_EXT_UXTW, AARCH64_SFT_LSL
 
 from teapot.utils.registers import get_register
 from teapot.datacls.stack_access import StackAccess
@@ -28,8 +14,6 @@ def _vector_arrangement(vas):
 
     Capstone 6 encodes it as ``(lane count << 8) | element bits``; a single indexed element such as
     ``v1.s[1]`` has no lane count and counts as one lane."""
-    if _CAPSTONE5_ARRANGEMENTS is not None:
-        return _CAPSTONE5_ARRANGEMENTS.get(vas)
     element_bits = vas & 0xff
     if element_bits not in (8, 16, 32, 64, 128):
         return None

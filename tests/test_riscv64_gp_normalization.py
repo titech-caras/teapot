@@ -8,7 +8,6 @@ import unittest
 import warnings
 from unittest.mock import Mock
 
-import capstone
 import gtirb
 from gtirb_functions import Function
 from gtirb_live_register_analysis import LiveRegisterManager
@@ -89,10 +88,8 @@ class RISCV64GPNormalizationTests(unittest.TestCase):
         self.assertEqual((normalization.spare, normalization.spilled), (1, 0))
         instructions = self.instructions(module, normalization)
         self.assertEqual(instructions[0].op_str.split(",")[0], "t1")
-        # Capstone 6 shows the real instructions behind mv and ret.
-        expected = (["auipc", "addi", "sd", "jalr"] if hasattr(capstone, "CS_OPT_SYNTAX_UNCOMPRESSED_REAL")
-                    else ["auipc", "mv", "sd", "ret"])
-        self.assertEqual([inst.mnemonic for inst in instructions], expected)
+        # The real instructions behind mv and ret.
+        self.assertEqual([inst.mnemonic for inst in instructions], ["auipc", "addi", "sd", "jalr"])
 
     def test_pressure_never_skips_and_no_runtime_storage_is_needed(self):
         for instruction in ("sd t0,-128(gp)", "sd sp,-128(gp)", "ld sp,-128(gp)",

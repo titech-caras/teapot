@@ -19,6 +19,9 @@ It also requires the following packages for interfacing with GTIRB format:
 - `gtirb-capstone`
 - `gtirb-live-register-analysis`
 
+Instructions are decoded with Capstone 6.0.0-Alpha11 (`capstone==6.0.0a11`,
+also through `gtirb-capstone` 1.1.2 or newer); Capstone 5 is not supported.
+
 `requirements.txt` pins Teapot's `gtirb-rewriting` fork because its scoped
 rewrite preparation reduces runtime and peak memory on large RV64 modules.
 The Docker image verifies this API while building. For local development, mount

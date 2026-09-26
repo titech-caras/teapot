@@ -6,16 +6,10 @@ decoded through ``riscv64_decoder`` everywhere (see ``teapot.arch.riscv64.compat
 """
 import capstone
 
-# Capstone 6 renamed ARM64 to AArch64.
-CS_ARCH_AARCH64 = getattr(capstone, "CS_ARCH_AARCH64", None)
-if CS_ARCH_AARCH64 is None:
-    CS_ARCH_AARCH64 = capstone.CS_ARCH_ARM64
-
-# RV64GC. Capstone 6 decodes the A, F and D extensions only when their mode flags are set (Capstone 5
-# always decoded them and has no such flags), so a bare RV64 decoder stops at the first atomic or
-# floating-point instruction.
+# RV64GC. Capstone 6 decodes the A, F and D extensions only when their mode flags are set, so a bare
+# RV64 decoder stops at the first atomic or floating-point instruction.
 RISCV64_MODE = (capstone.CS_MODE_RISCV64 | capstone.CS_MODE_RISCVC |
-                getattr(capstone, "CS_MODE_RISCV_A", 0) | getattr(capstone, "CS_MODE_RISCV_FD", 0))
+                capstone.CS_MODE_RISCV_A | capstone.CS_MODE_RISCV_FD)
 
 
 def x64_decoder() -> capstone.Cs:
@@ -25,24 +19,19 @@ def x64_decoder() -> capstone.Cs:
 
 
 def aarch64_decoder() -> capstone.Cs:
-    decoder = capstone.Cs(CS_ARCH_AARCH64, capstone.CS_MODE_ARM)
+    decoder = capstone.Cs(capstone.CS_ARCH_AARCH64, capstone.CS_MODE_ARM)
     decoder.detail = True
     return decoder
 
 
 def configure_riscv64(decoder: capstone.Cs) -> capstone.Cs:
-    """Real, uncompressed RISC-V instructions with complete details under Capstone 6.
+    """Real, uncompressed RISC-V instructions with complete details.
 
     Capstone 6's alias details drop the link register of `jal`, `jalr` and `ret` from the operands, the
     register accesses and the call group; the uncompressed real form lists every operand. A compressed
     instruction keeps its 2-byte size. gtirb-live-register-analysis configures its decoder the same way.
-    Capstone 5 has neither option and is left as is.
     """
-    syntax = getattr(capstone, "CS_OPT_SYNTAX_UNCOMPRESSED_REAL", None)
-    if syntax is None:
-        decoder.detail = True
-        return decoder
-    decoder.syntax = syntax
+    decoder.syntax = capstone.CS_OPT_SYNTAX_UNCOMPRESSED_REAL
     decoder.option(capstone.CS_OPT_DETAIL, capstone.CS_OPT_ON | capstone.CS_OPT_DETAIL_UNCOMPRESSED_REAL)
     return decoder
 

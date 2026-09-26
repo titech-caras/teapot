@@ -34,7 +34,7 @@ RUN apt-get update && \
     gcc g++ llvm clang lld git \
     binutils-dev libunwind-dev libblocksruntime-dev zlib1g-dev \
     libboost-filesystem-dev libboost-program-options-dev libboost-system-dev \
-    libcapstone-dev libprotobuf-dev protobuf-compiler \
+    libprotobuf-dev protobuf-compiler \
     gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
     gcc-riscv64-linux-gnu g++-riscv64-linux-gnu binutils-riscv64-linux-gnu \
     qemu-user qemu-user-static \
