@@ -30,7 +30,7 @@ from teapot.datacls.linked_component import LinkedComponent
 from teapot.arch import module_isa_name
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.utils.serialization import compact_for_pprinter
-from experiments.reusable_libraries.targets import for_machine
+from experiments.reusable_libraries.targets import for_machine, mode_for, MODES
 
 
 def sha(path):
@@ -152,7 +152,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         if len(definitions) != 1 or definitions[0].referent.section.name != ".text":
             raise RuntimeError("selected export is not a uniquely recovered .text entry: " + name)
     context = LinkedComponent(component_id, selected_symbols, own_exports)
-    pipeline = TeapotPipeline(ir, target['layout'], linked_component=context)
+    pipeline = TeapotPipeline(ir, args.mode_layout, args.instrumentation_options, linked_component=context)
     started = time.monotonic()
     pipeline.run()
     rewrite_seconds = time.monotonic() - started
@@ -190,7 +190,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
                                             directory / "raw.S"])
     shutil.copyfile(fixed / "stdout", directory / "fixed.S")
     run(directory, "assemble", [args.cc, "-c", directory / "fixed.S", "-o", directory / "component.o",
-                                *(['-mno-relax', '-Wa,-mno-relax'] if isa == 'RISCV64' else [])])
+                                *(['-mno-relax', '-Wa,-mno-relax'] if isa == 'RISCV64' else []),
+                                *(['-march=armv8.5-a+memtag'] if args.mode_tag_storage == 'mte' else [])])
     validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]),
                     item['machine'], converter.eh_cfi_entries)
     recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "fixed.S", "component.o",
@@ -253,6 +254,8 @@ def main():
     parser.add_argument("--ddisasm", required=True)
     parser.add_argument("--pprinter", required=True)
     parser.add_argument("--cc", default="gcc")
+    parser.add_argument("--mode", choices=tuple(MODES),
+                        help="instrumentation mode; defaults to the ISA's historical component mode")
     parser.add_argument("--jobs", type=int, default=2)
     parser.add_argument("--resolve-selected-versions", action="store_true")
     parser.add_argument("--preserve-selected-lifecycle", action="store_true")
@@ -270,6 +273,9 @@ def main():
         "preserve_nonlocal_jumps", "preserve_weak_imports")}
     executable = converter.inspect(args.executable, "executable", **conversion_options)
     isa, target = for_machine(executable['machine'])
+    args.mode, mode = mode_for(isa, args.mode)
+    args.mode_layout, args.mode_tag_storage = mode['layout'], mode['tag_storage']
+    args.instrumentation_options = InstrumentationOptions(aarch64_tag_storage=mode['tag_storage'])
     selected = [converter.inspect(path, "selected", **conversion_options) for path in args.select]
     external = [converter.inspect(path, "external") for path in args.external]
     order = converter.validate_closure(executable, selected, external)
@@ -288,10 +294,11 @@ def main():
                "frontend": {"ddisasm": sha(args.ddisasm), "pprinter": sha(args.pprinter)},
                "assembler": sha(shutil.which(args.cc)),
                "runtime_contract": json.loads(args.runtime_contract.read_text()),
-               "options": asdict(InstrumentationOptions()), "ROB_LEN": ROB_LEN,
+               "options": asdict(args.instrumentation_options), "ROB_LEN": ROB_LEN,
+               "mode": args.mode,
                "liveness_contract": "standalone-ddisasm-abi-v1",
                "conversion_options": conversion_options,
-               "dift_layout": target['layout'], 'isa': isa,
+               "dift_layout": args.mode_layout, 'isa': isa,
                'component_targets_sha256': sha(args.teapot / 'experiments/reusable_libraries/targets.py'),
                'pointer_contract_producer_sha256': sha(args.teapot / 'tools/sharedlib/aarch64_return_abi.py')}
     dump(args.out / "inputs.json", {"executable": executable, "selected": selected, "external": external})

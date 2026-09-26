@@ -7,7 +7,7 @@ from pathlib import Path
 
 from elftools.dwarf.callframe import FDE
 from elftools.elf.elffile import ELFFile
-from experiments.reusable_libraries.targets import TARGETS
+from experiments.reusable_libraries.targets import TARGETS, MODES, mode_for
 
 
 def validate_dynamic_symbol_names(elf):
@@ -21,8 +21,10 @@ def validate_dynamic_symbol_names(elf):
             'dynamic symbol name is outside its string table', offset, len(strings))
 
 
-def validate(binary, objects, *, isa='X64'):
+def validate(binary, objects, *, isa='X64', mode=None):
     target = TARGETS[isa]
+    mode, mode_spec = mode_for(isa, mode)
+    asan = mode_spec['asan']
     manifest = json.loads((objects / "components.json").read_text())
     inputs = json.loads((objects / "inputs.json").read_text())
     with binary.open("rb") as stream:
@@ -42,7 +44,10 @@ def validate(binary, objects, *, isa='X64'):
 
         needed = [tag.needed for tag in elf.get_section_by_name(".dynamic").iter_tags()
                   if tag.entry.d_tag == "DT_NEEDED"]
-        assert needed[0] == target['asan'] and needed.count(target['asan']) == 1, needed
+        if asan is None:
+            assert not any(name.startswith('libasan.so') for name in needed), needed
+        else:
+            assert needed[0] == asan and needed.count(asan) == 1, needed
         assert not {item["soname"] for item in inputs["selected"]}.intersection(needed), needed
         ranges = {}
         for kind, name in (("normal", ".teapot_component_text"), ("transient", ".teapot_transient")):
@@ -97,6 +102,7 @@ def validate(binary, objects, *, isa='X64'):
         fdes = [entry for entry in elf.get_dwarf_info().EH_CFI_entries() if isinstance(entry, FDE)]
         assert len(fdes) >= sum(len(item["application_fdes"]) for item in [inputs["executable"]] + inputs["selected"])
     return {"status": "structural_checks_passed_behavior_still_required", "needed": needed, 'isa': isa,
+            'mode': mode,
             "target_ranges": ranges, "guard_ranges": guard_ranges,
             "guard_slots_including_alignment": (guard_end - guard_start) // 4,
             "guard_slots_used": sum(c["guard_count"] for c in manifest["components"]),
@@ -109,8 +115,9 @@ def main():
     parser.add_argument("--objects", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument('--isa', choices=tuple(TARGETS), default='X64')
+    parser.add_argument('--mode', choices=tuple(MODES))
     args = parser.parse_args()
-    result = validate(args.binary, args.objects, isa=args.isa)
+    result = validate(args.binary, args.objects, isa=args.isa, mode=args.mode)
     args.out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result), flush=True)
 

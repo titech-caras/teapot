@@ -1,5 +1,5 @@
 import gc
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import gtirb
 from gtirb_capstone.instructions import GtirbInstructionDecoder
@@ -154,7 +154,9 @@ class TeapotPipeline:
         if self.linked_component is not None:
             if len(self.ir.modules) != 1 or self.arch.name not in ("x64", "aarch64", "riscv64"):
                 raise ValueError("separate component rewriting requires one supported ELF64 module")
-            if self.options != InstrumentationOptions():
+            # AArch64 MTE tag storage changes only how ASan tags are stored;
+            # every pass stays enabled and nesting stays off.
+            if replace(self.options, aarch64_tag_storage=ASAN_TAG_STORAGE_SHADOW) != InstrumentationOptions():
                 raise ValueError("component prototype requires all default instrumentation, nesting off")
         if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE and self.arch.name != "aarch64":
             raise ValueError("--aarch64-tag-storage=mte is only valid for AArch64 modules")
