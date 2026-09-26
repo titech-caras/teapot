@@ -16,12 +16,13 @@ from test_live_register_preservation import make_module
 
 
 class WidenByteJumpTablesTests(unittest.TestCase):
-    def loop_fixture(self, partial=False):
+    def loop_fixture(self, partial=False, register=10):
         # Hoist ADRP x12 / ADD x10 before a guarded loop. The consumer uses
         # x10, not ADRP's destination; its backedge does not redefine x10.
-        words = [0xb000000c, 0x9100018a, 0xd503201f,
+        # register selects the hoisted base (x10 by default): ADD Rd and LDRB Rn.
+        words = [0xb000000c, 0x91000180 | register, 0xd503201f,
                  0x7100051f, 0x540000c8,
-                 0x38684949, 0x1000006b, 0x8b298969, 0xd61f0120,
+                 0x38684809 | register << 5, 0x1000006b, 0x8b298969, 0xd61f0120,
                  0x17fffffa, 0x17fffff9]
         ir, module, setup, _, _ = make_module(AArch64Architecture(), gtirb.Module.ISA.ARM64,
                                               b''.join(w.to_bytes(4, 'little') for w in words))
@@ -138,8 +139,8 @@ class WidenByteJumpTablesTests(unittest.TestCase):
             WidenAArch64ByteJumpTablesPass().end_module(module, [])
         self.assertEqual((bytes(data.contents), bytes(setup.byte_interval.contents)), before)
 
-    def call_exit_fixture(self, callee_words=None, *, reads_after=False, external=None):
-        ir, module, setup, _, _, data, entries, cases, _ = self.loop_fixture()
+    def call_exit_fixture(self, callee_words=None, *, reads_after=False, external=None, register=10):
+        ir, module, setup, _, _, data, entries, cases, _ = self.loop_fixture(register=register)
         caller = cases[0]
         for edge in list(caller.outgoing_edges):
             ir.cfg.discard(edge)
@@ -151,7 +152,8 @@ class WidenByteJumpTablesTests(unittest.TestCase):
             contents = b''.join(word.to_bytes(4, 'little') for word in callee_words)
             interval = gtirb.ByteInterval(address=0x4000, contents=contents, section=setup.section)
             callee = gtirb.CodeBlock(size=len(contents), byte_interval=interval)
-        words = ([0x39400140] if reads_after else []) + [0xd280000a, 0xd65f03c0]
+        # Optionally read the base (LDRB w0,[xN]), then kill it (MOV xN,#0) and return.
+        words = ([0x39400000 | register << 5] if reads_after else []) + [0xd2800000 | register, 0xd65f03c0]
         contents = b''.join(word.to_bytes(4, 'little') for word in words)
         interval = gtirb.ByteInterval(address=0x5000, contents=contents, section=setup.section)
         after = gtirb.CodeBlock(size=len(contents), byte_interval=interval)
@@ -199,6 +201,71 @@ class WidenByteJumpTablesTests(unittest.TestCase):
 
     def test_unknown_external_call_is_not_a_proven_clobber(self):
         module, data, _ = self.call_exit_fixture(external='unknown_consumer')
+        before = bytes(data.contents)
+        with self.assertRaisesRegex(ValueError, 'unproved call'):
+            WidenAArch64ByteJumpTablesPass().end_module(module, [])
+        self.assertEqual(bytes(data.contents), before)
+
+    def interleaved_fixture(self, middle_word):
+        # ADRP x12; <middle>; ADD x10,x12,#lo12 -- the scheduler split the pair.
+        fixture = self.loop_fixture()
+        interval = fixture[2].byte_interval
+        add = bytes(interval.contents[4:8])
+        interval.contents[4:8] = middle_word.to_bytes(4, 'little')
+        interval.contents[8:12] = add
+        interval.symbolic_expressions[8] = interval.symbolic_expressions.pop(4)
+        return fixture
+
+    def test_hoisted_base_with_interleaved_adrp_add(self):
+        _, module, _, _, _, _, entries, _, _ = self.interleaved_fixture(0xaa0203e1)  # MOV x1, x2
+        WidenAArch64ByteJumpTablesPass().end_module(module, [])
+        self.assertEqual([b.size for b in entries], [4, 4])
+
+    def test_interleaved_write_of_adrp_register_is_rejected(self):
+        _, module, setup, _, _, data, _, _, _ = self.interleaved_fixture(0xaa0203ec)  # MOV x12, x2
+        before = bytes(data.contents), bytes(setup.byte_interval.contents)
+        with self.assertRaisesRegex(ValueError, 'unproved.*base'):
+            WidenAArch64ByteJumpTablesPass().end_module(module, [])
+        self.assertEqual((bytes(data.contents), bytes(setup.byte_interval.contents)), before)
+
+    def test_callee_saved_base_path_ends_at_noreturn_call(self):
+        # x21 base; case 0 ends in BL abort with only a call edge (no fallthrough).
+        ir, module, setup, _, _, _, entries, cases, _ = self.loop_fixture(register=21)
+        caller = cases[0]
+        for edge in list(caller.outgoing_edges):
+            ir.cfg.discard(edge)
+        caller.byte_interval.contents[caller.offset:caller.offset + 4] = (0x94000000).to_bytes(4, 'little')
+        callee = gtirb.ProxyBlock(module=module)
+        gtirb.Symbol('abort', payload=callee, module=module)
+        ir.cfg.add(gtirb.Edge(caller, callee, gtirb.Edge.Label(gtirb.Edge.Type.Call)))
+        WidenAArch64ByteJumpTablesPass().end_module(module, [])
+        self.assertEqual([b.size for b in entries], [4, 4])
+
+    def test_callee_saved_hoisted_base_crosses_a_call(self):
+        # Same hoisted loop as test_hoisted_base_cannot_cross_a_call, but the base
+        # is in callee-saved x21, which AAPCS64 preserves across the BL.
+        _, module, setup, _, _, _, entries, _, _ = self.loop_fixture(register=21)
+        setup.byte_interval.contents[8:12] = (0x94000000).to_bytes(4, 'little')
+        WidenAArch64ByteJumpTablesPass().end_module(module, [])
+        self.assertEqual([b.size for b in entries], [4, 4])
+
+    def test_callee_saved_base_survives_unknown_external_call(self):
+        for reads_after in (False, True):
+            with self.subTest(reads_after=reads_after):
+                module, data, entries = self.call_exit_fixture(external='unknown_consumer',
+                                                               reads_after=reads_after, register=21)
+                if reads_after:
+                    # Still tracked after the call: another byte-stride read is rejected.
+                    before = bytes(data.contents)
+                    with self.assertRaisesRegex(ValueError, 'unrecognized register use'):
+                        WidenAArch64ByteJumpTablesPass().end_module(module, [])
+                    self.assertEqual(bytes(data.contents), before)
+                else:
+                    WidenAArch64ByteJumpTablesPass().end_module(module, [])
+                    self.assertEqual([block.size for block in entries], [4, 4])
+
+    def test_caller_saved_base_still_cannot_cross_unknown_external_call(self):
+        module, data, _ = self.call_exit_fixture(external='unknown_consumer', register=10)
         before = bytes(data.contents)
         with self.assertRaisesRegex(ValueError, 'unproved call'):
             WidenAArch64ByteJumpTablesPass().end_module(module, [])

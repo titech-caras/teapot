@@ -10,6 +10,10 @@ from teapot.utils.misc import symbol_address
 from teapot.utils.return_abi import POINTER_RETURNS, has_pointer_return_contract
 
 
+
+# AAPCS64 callee-saved general registers: preserved across every conforming call.
+CALLEE_SAVED = frozenset(range(19, 29))
+
 class WidenAArch64ByteJumpTablesPass(Pass):
     """Promote ADR(P)-based LDRB/ADR/ADD/BR switch idioms to 32-bit entries.
 
@@ -89,7 +93,9 @@ class WidenAArch64ByteJumpTablesPass(Pass):
         Revisiting an unchanged (block, instruction index) adds no definition.
         A pure cycle therefore proves nothing; an initialized invariant loop
         is accepted only when every terminal path supplies the same address.
-        Calls and unknown/external entry paths terminate the proof.
+        Calls terminate the proof unless the register is callee-saved under
+        AAPCS64 (x19-x28), which every conforming callee preserves; unknown or
+        external entry paths always terminate it.
         """
         context = self._function(module, block)
         pending, seen, definitions, references = [(block, index)], set(), set(), set()
@@ -105,6 +111,10 @@ class WidenAArch64ByteJumpTablesPass(Pass):
             for position in range(stop - 1, -1, -1):
                 inst = instructions[position]
                 if inst.mnemonic in ('bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz'):
+                    if register in CALLEE_SAVED:
+                        # AAPCS64: every conforming callee preserves x19-x28, so
+                        # a hoisted base in one survives the call unchanged.
+                        continue
                     return None
                 writes = {self._register_number(inst.reg_name(r)) for r in inst.regs_access()[1]}
                 if register not in writes:
@@ -116,9 +126,24 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                     pass
                 elif (inst.mnemonic == 'add' and word & 0xffc00000 == 0x91000000 and
                       word & 31 == register and address is not None and position > 0):
-                    high = instructions[position - 1]
+                    # The ADRP need not be adjacent: schedulers interleave unrelated
+                    # instructions. It must be the nearest earlier write of the ADD's
+                    # source register in this block; nothing between may write it.
+                    source = (word >> 5) & 31
+                    high = None
+                    for earlier in range(position - 1, -1, -1):
+                        candidate = instructions[earlier]
+                        if (candidate.mnemonic in ('bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz') and
+                                source not in CALLEE_SAVED):
+                            break
+                        if source in {self._register_number(candidate.reg_name(r))
+                                      for r in candidate.regs_access()[1]}:
+                            high = candidate
+                            break
+                    if high is None:
+                        return None
                     high_word = int.from_bytes(high.bytes, 'little')
-                    if (high.mnemonic != 'adrp' or high_word & 31 != (word >> 5) & 31 or
+                    if (high.mnemonic != 'adrp' or high_word & 31 != source or
                             self._address(self._expression(high, current)) != address):
                         return None
                     sites = high, inst
@@ -229,7 +254,10 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                     if (register in {self._register_number(inst.reg_name(r)) for r in reads} and
                             (block, index, register) not in loads):
                         raise ValueError('unrecognized register use of widened byte jump-table base')
-                    if inst.mnemonic in ('bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz'):
+                    if (inst.mnemonic in ('bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz') and
+                            register not in CALLEE_SAVED):
+                        # A callee-saved base is not an argument and survives the
+                        # call (AAPCS64), so it stays tracked past it unchanged.
                         effect = call_input_effect(block, index, register)
                         if effect is True:
                             break
@@ -263,6 +291,11 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                             raise ValueError('unproved byte jump-table base exit')
                         successors.append(edge.target)
                     if not successors:
+                        # A block ending in a call with no fallthrough (DDisasm's
+                        # no-return analysis, e.g. abort) ends every path through it.
+                        if instructions and instructions[-1].mnemonic in (
+                                'bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz'):
+                            continue
                         raise ValueError('unproved byte jump-table base lifetime')
                     pending.extend((successor, 0, register) for successor in successors)
 
