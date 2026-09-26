@@ -20,7 +20,7 @@ FROM scratch AS lief-src
 ADD --keep-git-dir=true https://github.com/lief-project/LIEF.git#60c648a447c81d857ec4d2d4476537b662037a80 /
 
 FROM scratch AS pprinter-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#49a2d372e9247a4f0cad5d7a3d9a28223580531b /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#6ffb8d9883f3ac31c031db51e64df31bff549682 /
 
 FROM scratch AS ddisasm-src
 ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#efef9146f7990f96145ba66f0e7903fdbaee5139 /
@@ -106,7 +106,7 @@ RUN cmake -S /src/pprinter -B /build/pprinter -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DGTIRB_PPRINTER_BUILD_SHARED_LIBS=ON -DGTIRB_PPRINTER_STATIC_DRIVERS=OFF \
     -DGTIRB_PPRINTER_ENABLE_TESTS=OFF \
-    -DGTIRB_PPRINTER_BUILD_REVISION=49a2d372e9247a4f0cad5d7a3d9a28223580531b \
+    -DGTIRB_PPRINTER_BUILD_REVISION=6ffb8d9883f3ac31c031db51e64df31bff549682 \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
     && cmake --build /build/pprinter --target gtirb-pprinter gtirb-layout \
