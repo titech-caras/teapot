@@ -592,6 +592,98 @@ def validate_linked_riscv_startup(elf, path):
     image.rv_preinit(elf.get_section_by_name('.preinit_array'), static, allow_call_pair=True)
 
 
+def arm64_input_data_regions(elf, symbols):
+    """Independent input evidence for data in otherwise executable sections.
+
+    Mapping symbols delimit regions within their own ELF section, not across
+    the address space. Conflicting mappings at the same address are not proof.
+    """
+    if elf['e_machine'] != 'EM_AARCH64':
+        return []
+    sections = list(elf.iter_sections())
+    mappings = {}
+    regions = []
+    for symbol in symbols:
+        index = symbol['section']
+        if not isinstance(index, int) or not 0 < index < len(sections):
+            continue
+        section = sections[index]
+        begin, end = section['sh_addr'], section['sh_addr'] + section['sh_size']
+        address = symbol['address']
+        if not section['sh_flags'] & 2 or not begin <= address < end:
+            continue
+        if symbol['type'] == 'STT_OBJECT' and 0 < symbol['size'] <= end - address:
+            regions.append({'start': address, 'end': address + symbol['size'],
+                            'source': 'STT_OBJECT', 'name': symbol['name'], 'section': index})
+        match = re.fullmatch(r'\$([dx])(?:\..+)?', symbol['name'])
+        if match and symbol['type'] == 'STT_NOTYPE' and symbol['binding'] == 'STB_LOCAL':
+            mappings.setdefault(index, {}).setdefault(address, set()).add(match[1])
+    for index, points in sorted(mappings.items()):
+        addresses = sorted(points)
+        section_end = sections[index]['sh_addr'] + sections[index]['sh_size']
+        for offset, address in enumerate(addresses):
+            if points[address] == {'d'}:
+                end = addresses[offset + 1] if offset + 1 < len(addresses) else section_end
+                regions.append({'start': address, 'end': end, 'source': '$d', 'section': index})
+    return sorted(regions, key=lambda r: (r['start'], r['end'], r['source']))
+
+
+def frontend_data_warning_proof(module, item, address):
+    """Accept no undecodable code: input metadata and final IR must agree on data."""
+    if item['machine'] != 'EM_AARCH64' or module.isa != gtirb.Module.ISA.ARM64 or address % 4:
+        return None
+    end = address + 4
+    witness = next((r for r in item.get('input_data_regions', ())
+                    if r['start'] <= address and end <= r['end']), None)
+    if witness is None:
+        return None
+    blocks = list(module.byte_blocks_on(range(address, end)))
+    if not blocks or any(not isinstance(b, gtirb.DataBlock) for b in blocks):
+        return None
+    covered = address
+    for block in sorted(blocks, key=lambda b: b.address):
+        if block.address > covered:
+            return None
+        covered = max(covered, block.address + block.size)
+    if covered < end:
+        return None
+    return {'address': address, 'size': 4, 'input_witness': witness,
+            'recovered_data_blocks': sorted((b.address, b.size) for b in blocks)}
+
+
+def validate_frontend_diagnostics(module, item, diagnostics):
+    """Distinguish failed candidate decodes of proven data from lost instructions.
+
+    Arm64Loader tries each word in executable sections before code inference.
+    Its CIMM message is immediately followed by the addressed type-64 message;
+    that exact pair can share the same evidence. All other warnings still fail.
+    """
+    lines = diagnostics.splitlines()
+    accepted = []
+    pattern = r'WARNING: unhandled operand at (\d+), op type:(\d+)'
+    for index, line in enumerate(lines):
+        if 'ERROR' in line:
+            reject('FRONTEND_DIAGNOSTIC', item['path'], line.strip())
+        if 'WARNING' not in line:
+            continue
+        message = line[line.index('WARNING'):].strip()
+        if (item['role'] == 'selected' and item['entry'] == 0 and
+                message == 'WARNING: Failed to set module entry point.'):
+            continue
+        match = re.fullmatch(pattern, message)
+        if message == 'WARNING: unsupported CIMM operand' and index + 1 < len(lines):
+            following = re.fullmatch(pattern, lines[index + 1].strip())
+            if following and following[2] == '64':
+                match = following
+        if match:
+            proof = frontend_data_warning_proof(module, item, int(match[1]))
+            if proof is not None:
+                accepted.append(dict(proof, diagnostic=message, operand_type=int(match[2])))
+                continue
+        reject('FRONTEND_DIAGNOSTIC', item['path'], line.strip())
+    return accepted
+
+
 def inspect(path, role):
     path = Path(path)
     with path.open('rb') as stream:
@@ -798,6 +890,7 @@ def inspect(path, role):
             except Exception as error:
                 reject('UNWIND_DECODE', path, str(error))
         result['static_symbols'] = static
+        result['input_data_regions'] = arm64_input_data_regions(elf, static)
         return result
 
 
@@ -889,15 +982,12 @@ def reconstruct(item, args, out, index=0, priority=None):
     if not lift_hit:
         run(directory, 'lift', [args.ddisasm, item['path'], '--ir', irpath, '-j', str(args.jobs)])
     diagnostics = (directory / 'lift/stderr').read_text()
-    for line in diagnostics.splitlines():
-        if 'WARNING' in line or 'ERROR' in line:
-            if item['role'] == 'selected' and item['entry'] == 0 and 'WARNING: Failed to set module entry point.' in line:
-                continue
-            reject('FRONTEND_DIAGNOSTIC', item['path'], line.strip())
     ir = gtirb.IR.load_protobuf(irpath)
     if len(ir.modules) != 1:
         reject('MULTIMODULE_INPUT', item['path'], 'one module per ELF required')
     module = ir.modules[0]
+    data_warnings = validate_frontend_diagnostics(module, item, diagnostics)
+    dump(directory / 'proven-data-decoder-warnings.json', data_warnings)
     cfi = module.aux_data.get('cfiDirectives')
     starts = set()
     if cfi:
