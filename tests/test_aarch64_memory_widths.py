@@ -34,6 +34,24 @@ class AArch64MemoryWidthTests(unittest.TestCase):
                 self.assertEqual(inst.mnemonic, mnemonic)
                 self.assertEqual(arch.mem_operand_size(inst, arch.memory_operand(inst)), size)
 
+    def test_structure_access_width_follows_the_register_list(self):
+        # Capstone 5 names list members v0, v1, ...; Capstone 6 names them q0/d0 with a vector flag.
+        decoder = aarch64_decoder()
+        arch = AArch64Architecture()
+        cases = (
+            (0x4c40a000, "ld1", 32),   # ld1 {v0.16b, v1.16b}, [x0]
+            (0x0c407000, "ld1", 8),    # ld1 {v0.8b}, [x0]
+            (0x0d009000, "st1", 4),    # st1 {v0.s}[1], [x0]
+            (0x4d40c800, "ld1r", 4),   # ld1r {v0.4s}, [x0]
+            (0x4c408820, "ld2", 32),   # ld2 {v0.4s, v1.4s}, [x1]
+            (0x0d202c00, "st4", 4),    # st4 {v0.b, v1.b, v2.b, v3.b}[3], [x0]
+        )
+        for word, mnemonic, size in cases:
+            with self.subTest(mnemonic=mnemonic, word=hex(word)):
+                inst = next(decoder.disasm(word.to_bytes(4, "little"), 0x1000))
+                self.assertEqual(inst.mnemonic, mnemonic)
+                self.assertEqual(arch.mem_operand_size(inst, arch.memory_operand(inst)), size)
+
 
 if __name__ == "__main__":
     unittest.main()

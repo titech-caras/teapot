@@ -200,8 +200,8 @@ class AArch64OperandMixin:
         for operand in inst.operands:
             if operand.type != CS_OP_REG:
                 continue
-            name = inst.reg_name(operand.reg).lower()
-            if not name.startswith("v"):
+            # List members are v<n> in Capstone 5 and q<n>/d<n> with a vector flag in Capstone 6.
+            if not (getattr(operand, "is_vreg", False) or inst.reg_name(operand.reg).lower().startswith("v")):
                 continue
 
             arrangement = _vector_arrangement(getattr(operand, "vas", 0))
