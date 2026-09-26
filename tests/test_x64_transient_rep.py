@@ -115,13 +115,13 @@ class X64TransientRepTests(unittest.TestCase):
                                         dift_layout=SimpleNamespace(xor_mask=1 << 32),
                                         insert_memlog=mode == "history", enable_mem_policy=False,
                                         enable_port_policy=False, enable_dift=enable_dift or function is not None)
-                                    before = rep_tests.X64RepDiftTests._wrapped(
-                                        self, dift._build_rep_patch(
+                                    before = rep_tests.wrapped_patch(
+                                        self.arch, dift._build_rep_patch(
                                             dift._rep_string_effects(inst), inst, None, function=function))
                                     before = before.replace("__teapot__", "__teapot__" + name)
                                     body = b"\x90"
                                 declarations.append(f"extern void {name}(struct state *);")
-                                functions.append(rep_tests.X64RepDiftTests._runner(name, body, before, ""))
+                                functions.append(rep_tests.runner_function(name, body, before, ""))
                             cases.append("{" + ",".join(names + [str(width), "4" if addr32 else "8",
                                                                  str(int(segment)),
                                                                  f"'{dict(movs='m', stos='s', lods='l', cmps='c', scas='t')[kind]}'"]) + "}")
@@ -222,8 +222,8 @@ class X64TransientRepTests(unittest.TestCase):
                                          "--ir", str(root / "rep.gtirb"), "--asm", str(root / "rep.S")],
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                original = rep_tests.X64RepDiftTests._runner("run_original", code, "", "")
-                rewritten = rep_tests.X64RepDiftTests._runner(
+                original = rep_tests.runner_function("run_original", code, "", "")
+                rewritten = rep_tests.runner_function(
                     "rewritten", b"\x90", "call test_function\nmov qword ptr [rsp-8], 0x12345678\n", "")
                 reports = ""
                 for kind in ("CACHE", "MDS", "PORT"):

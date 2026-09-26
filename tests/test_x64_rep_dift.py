@@ -21,6 +21,66 @@ from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from test_live_register_preservation import make_module
 
 
+def wrapped_patch(arch, patch):
+    # Exercise the real all-live ABI spill path, not hand-picked scratch GPRs.
+    allocation = arch.abi._allocate_patch_registers(patch.constraints)
+    prologue, epilogue, _ = arch.abi._create_prologue_and_epilogue(
+        patch.constraints, allocation, True)
+    body = patch(InsertionContext(None, None, None, 0, scratch_registers=allocation.scratch_registers))
+    return (
+        ".att_syntax prefix\n" + "\n".join(s.code for s in prologue) +
+        "\n.intel_syntax noprefix\n" + body +
+        "\n.att_syntax prefix\n" + "\n".join(s.code for s in epilogue) +
+        "\n.intel_syntax noprefix\n")
+
+
+def runner_function(name, encoding, before, after):
+    sentinels = ("rdx", "rbp", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15")
+    setup = "\n".join(f"mov {reg}, {0x123400 + i}" for i, reg in enumerate(sentinels))
+    save = "\n".join(f"mov [rbx+{40+8*i}], {reg}" for i, reg in enumerate(sentinels))
+    redzone = "\n".join(f"mov qword ptr [rsp-{i}], 0x12345678" for i in range(8, 129, 8))
+    check_redzone = "\n".join(
+        f"mov rax, [rsp-{i}]\nmov [rbx+{120+i}], rax" for i in range(8, 129, 8))
+    return f"""
+    .globl {name}
+    {name}:
+        push rbx
+        push rbp
+        push r12
+        push r13
+        push r14
+        push r15
+        mov rbx, rdi
+        {setup}
+        mov rax, [rbx]
+        mov rsi, [rbx+8]
+        mov rdi, [rbx+16]
+        mov rcx, [rbx+24]
+        push qword ptr [rbx+32]
+        popfq
+        {redzone}
+        {before}
+        .byte {','.join(map(str, encoding))}
+        {after}
+        mov [rbx], rax
+        mov [rbx+8], rsi
+        mov [rbx+16], rdi
+        mov [rbx+24], rcx
+        {save}
+        {check_redzone}
+        pushfq
+        pop qword ptr [rbx+32]
+        cld
+        pop r15
+        pop r14
+        pop r13
+        pop r12
+        pop rbp
+        pop rbx
+        ret
+    """
+
+
 class X64RepDiftTests(unittest.TestCase):
     def setUp(self):
         self.arch = X64Architecture()
@@ -39,18 +99,6 @@ class X64RepDiftTests(unittest.TestCase):
             inst = next(self.decoder.disasm(bytes.fromhex(encoding), 0x1000))
             self.assertIsNotNone(self.dift._rep_string_effects(inst))
             self.assertTrue(self.arch.instruction_must_rollback(inst))
-
-    def _wrapped(self, patch):
-        # Exercise the real all-live ABI spill path, not hand-picked scratch GPRs.
-        allocation = self.arch.abi._allocate_patch_registers(patch.constraints)
-        prologue, epilogue, _ = self.arch.abi._create_prologue_and_epilogue(
-            patch.constraints, allocation, True)
-        body = patch(InsertionContext(None, None, None, 0, scratch_registers=allocation.scratch_registers))
-        return (
-            ".att_syntax prefix\n" + "\n".join(s.code for s in prologue) +
-            "\n.intel_syntax noprefix\n" + body +
-            "\n.att_syntax prefix\n" + "\n".join(s.code for s in epilogue) +
-            "\n.intel_syntax noprefix\n")
 
     @unittest.skipUnless(platform.machine() == "x86_64" and shutil.which("cc"),
                          "requires native x64 and C compiler")
@@ -86,11 +134,11 @@ class X64RepDiftTests(unittest.TestCase):
                                         SimpleNamespace(abi=self.arch.abi), None, None, self.arch,
                                         dift_layout=SimpleNamespace(xor_mask=1 << 32),
                                         insert_memlog=mode == "history")
-                                    before = self._wrapped(dift._build_rep_capture_patch(effects))
-                                    after = self._wrapped(dift._build_rep_tags_patch(effects))
+                                    before = wrapped_patch(self.arch, dift._build_rep_capture_patch(effects))
+                                    after = wrapped_patch(self.arch, dift._build_rep_tags_patch(effects))
                                     after = after.replace(".L__rep_dift", f".L__rep_dift_{name}")
                                 declarations.append(f"extern void {name}(struct state *);")
-                                functions.append(self._runner(name, encoding, before, after))
+                                functions.append(runner_function(name, encoding, before, after))
                             cases.append("{" + ",".join(names + [str(width), str(address_size),
                                                                  str(int(segment)),
                                                                  f"'{dict(movs='m', stos='s', lods='l', cmps='c', scas='t')[kind]}'"]) + "}")
@@ -176,53 +224,6 @@ class X64RepDiftTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr + (root / "rewritten.S").read_text())
                     result = subprocess.run([str(root / "check")], capture_output=True, text=True, timeout=10)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    @staticmethod
-    def _runner(name, encoding, before, after):
-        sentinels = ("rdx", "rbp", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15")
-        setup = "\n".join(f"mov {reg}, {0x123400 + i}" for i, reg in enumerate(sentinels))
-        save = "\n".join(f"mov [rbx+{40+8*i}], {reg}" for i, reg in enumerate(sentinels))
-        redzone = "\n".join(f"mov qword ptr [rsp-{i}], 0x12345678" for i in range(8, 129, 8))
-        check_redzone = "\n".join(
-            f"mov rax, [rsp-{i}]\nmov [rbx+{120+i}], rax" for i in range(8, 129, 8))
-        return f"""
-        .globl {name}
-        {name}:
-            push rbx
-            push rbp
-            push r12
-            push r13
-            push r14
-            push r15
-            mov rbx, rdi
-            {setup}
-            mov rax, [rbx]
-            mov rsi, [rbx+8]
-            mov rdi, [rbx+16]
-            mov rcx, [rbx+24]
-            push qword ptr [rbx+32]
-            popfq
-            {redzone}
-            {before}
-            .byte {','.join(map(str, encoding))}
-            {after}
-            mov [rbx], rax
-            mov [rbx+8], rsi
-            mov [rbx+16], rdi
-            mov [rbx+24], rcx
-            {save}
-            {check_redzone}
-            pushfq
-            pop qword ptr [rbx+32]
-            cld
-            pop r15
-            pop r14
-            pop r13
-            pop r12
-            pop rbp
-            pop rbx
-            ret
-        """
 
 
 if __name__ == "__main__":
