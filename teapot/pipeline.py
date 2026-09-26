@@ -246,7 +246,7 @@ class TeapotPipeline:
 
     def _create_instrumentation_sections(self):
         self.transient_section, self.transient_section_start_symbol, self.transient_section_end_symbol, \
-            self.text_transient_mapping = copy_section(self.text_section, ".teapot_transient")
+            self.text_transient_mapping = copy_section(self.text_section, ".teapot_transient", self.decoder)
         self.text_section_start_symbol, self.text_section_end_symbol = create_section_bounds(
             self.text_section, "text")
         self.component_guard_base = None

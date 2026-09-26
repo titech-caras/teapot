@@ -2,7 +2,8 @@ import uuid
 
 import gtirb
 import copy
-from typing import Tuple
+from typing import Optional, Tuple
+from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_rewriting import _auxdata_offsetmap
 
 from teapot.datacls.copied_section_mapping import CopiedSectionMapping
@@ -82,7 +83,32 @@ def _external_relative_jump_table_base_symbol_uuids(module: gtirb.Module,
     return base_symbol_uuids
 
 
-def copy_section(section: gtirb.Section, name: str) \
+def _direct_control_flow_expression_offsets(section: gtirb.Section, decoder):
+    """Find relocation bytes of terminating direct branches and calls.
+
+    A block can materialize a jump-table base before branching to the very
+    same symbol. Only the terminating instruction is a control-flow use;
+    preserving every reference in that block would let transient execution
+    escape into the normal copy.
+    """
+    offsets = set()
+    for block in section.code_blocks:
+        if not any(edge.label is not None and edge.label.direct and
+                   edge.label.type in (gtirb.Edge.Type.Branch, gtirb.Edge.Type.Call)
+                   for edge in block.outgoing_edges):
+            continue
+        last_instruction = None
+        for instruction in decoder.get_instructions(block):
+            last_instruction = instruction
+        if last_instruction is None:
+            continue
+        start = block.offset + last_instruction.address - block.address
+        offsets.update(range(start, start + last_instruction.size))
+    return offsets
+
+
+def copy_section(section: gtirb.Section, name: str,
+                 decoder: Optional[GtirbInstructionDecoder] = None) \
         -> Tuple[gtirb.Section, gtirb.Symbol, gtirb.Symbol, CopiedSectionMapping]:
     section_copy = gtirb.Section(
         name=name,
@@ -157,16 +183,24 @@ def copy_section(section: gtirb.Section, name: str) \
 
     external_relative_jump_table_base_symbol_uuids = \
         _external_relative_jump_table_base_symbol_uuids(section.module, section)
+    direct_control_flow_offsets = (
+        _direct_control_flow_expression_offsets(
+            section, decoder if decoder is not None else GtirbInstructionDecoder(section.module.isa))
+        if external_relative_jump_table_base_symbol_uuids else set()
+    )
 
     def copied_symbol(symbol):
         return symbol_copy_mapping.get(symbol.uuid, symbol)
 
-    def copied_addr_const_symbol(symbol):
+    def copied_addr_const_symbol(symbol, pos):
         # Keep non-copied relative jump-table bases anchored in the original
         # section.  The computed address then reaches the text marker/bouncer
         # instead of becoming a stale transient-relative offset after inserted
-        # instrumentation shifts the copied code.
-        if symbol.uuid in external_relative_jump_table_base_symbol_uuids:
+        # instrumentation shifts the copied code. Direct branches/calls must
+        # still target the copied code, matching the cloned CFG edge, even
+        # when their destination symbol also serves as a jump-table base.
+        if (symbol.uuid in external_relative_jump_table_base_symbol_uuids and
+                pos not in direct_control_flow_offsets):
             return symbol
         return copied_symbol(symbol)
 
@@ -182,7 +216,7 @@ def copy_section(section: gtirb.Section, name: str) \
         elif isinstance(symbolic_expression, gtirb.SymAddrConst):
             symbolic_expression_copy = gtirb.SymAddrConst(
                 offset=symbolic_expression.offset,
-                symbol=copied_addr_const_symbol(symbolic_expression.symbol),
+                symbol=copied_addr_const_symbol(symbolic_expression.symbol, pos),
                 attributes=symbolic_expression.attributes
             )
         else:
