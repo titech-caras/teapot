@@ -4,6 +4,7 @@ import gtirb
 from teapot.arch import module_isa_name
 from teapot.arch.aarch64.architecture import AArch64Architecture
 from teapot.arch.riscv64.architecture import RISCV64Architecture
+from teapot.arch.x64.architecture import X64Architecture
 from experiments.reusable_libraries.targets import TARGETS, for_machine
 from experiments.reusable_libraries.validate_link import validate_dynamic_symbol_names
 from unittest.mock import Mock
@@ -36,15 +37,20 @@ class ComponentArchitecturesTests(unittest.TestCase):
             self.assertEqual(TARGETS[isa]['marker'], arch.nop_bytes)
             self.assertEqual(for_machine(TARGETS[isa]['machine'])[0], isa)
 
-    def test_coverage_relocates_index_not_guard_address(self):
-        for arch, registers, expected in (
-                (AArch64Architecture(), ('x0', 'x1'), '.word component_base+3'),
-                (RISCV64Architecture(), ('t0', 't1'), '%hi(component_base+3)')):
-            context = SimpleNamespace(scratch_registers=registers)
-            ordinary = arch.coverage_patch(3)(context)
-            linked = arch.coverage_patch(3, index_base_symbol=gtirb.Symbol(name='component_base'))(context)
-            self.assertNotIn('component_base', ordinary)
-            self.assertIn(expected, linked)
+    def test_coverage_relocates_only_the_opt_in_index(self):
+        # Only the recorded coverage index moves with a linked component; the guard list does not.
+        for arch, registers, ordinary_index, linked_index in (
+                (X64Architecture(), ('rax',), 'mov dword ptr [rax], 3',
+                 'mov dword ptr [rax], OFFSET component_base + 3'),
+                (AArch64Architecture(), ('x0', 'x1'), 'mov w0, #3', '.word component_base+3'),
+                (RISCV64Architecture(), ('t0', 't1'), 'li t0, 3', '%hi(component_base+3)')):
+            with self.subTest(arch=arch.name):
+                context = SimpleNamespace(scratch_registers=registers)
+                ordinary = arch.coverage_patch(3)(context)
+                linked = arch.coverage_patch(3, index_base_symbol=gtirb.Symbol(name='component_base'))(context)
+                self.assertIn(ordinary_index, ordinary)
+                self.assertNotIn('component_base', ordinary)
+                self.assertIn(linked_index, linked)
 
 
 if __name__ == '__main__':

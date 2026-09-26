@@ -112,15 +112,6 @@ class LinkedComponentTests(unittest.TestCase):
         self.assertFalse(self.riscv_target(offset=8))
         self.assertFalse(self.riscv_target(offset=-4, split_relocation=True))
 
-    def test_coverage_keeps_default_immediate_and_relocates_only_opt_in_index(self):
-        arch = X64Architecture()
-        context = SimpleNamespace(scratch_registers=("rax",))
-        ordinary = arch.coverage_patch(3)(context)
-        linked = arch.coverage_patch(3, index_base_symbol=gtirb.Symbol(name="component_base"))(context)
-        self.assertIn("mov dword ptr [rax], 3", ordinary)
-        self.assertNotIn("OFFSET", ordinary)
-        self.assertIn("mov dword ptr [rax], OFFSET component_base + 3", linked)
-
     def test_component_profile_cannot_disable_required_instrumentation(self):
         for options in (InstrumentationOptions(enable_memlog=False),
                         InstrumentationOptions(enable_indirect_check=False),
