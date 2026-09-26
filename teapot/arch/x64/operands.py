@@ -2,7 +2,7 @@ import re
 
 import capstone_gt.x86
 import gtirb
-from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_REG
+from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM, CS_OP_REG
 from capstone_gt.x86 import X86_REG_INVALID, X86_REG_RIP
 from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
 
@@ -24,6 +24,10 @@ class X64OperandMixin:
     # read-only, even though these forms update it in place.  Keep this narrow:
     # comparisons and tests also have a first, read-only memory operand.
     _UNMARKED_MEMORY_RMW_MNEMONICS = frozenset(("rcl", "rcr", "rol", "ror"))
+    _SETCC_MNEMONICS = frozenset((
+        "seto", "setno", "setb", "setae", "sete", "setne", "setbe", "seta",
+        "sets", "setns", "setp", "setnp", "setl", "setge", "setle", "setg",
+    ))
     _SEGMENT_OVERRIDE_RE = re.compile(r"(?i)(?<![0-9A-Za-z_])(fs|gs):")
     _REGISTER_NAMES = frozenset(
         name[len("X86_REG_"):].lower()
@@ -126,8 +130,19 @@ class X64OperandMixin:
         )
 
     @classmethod
+    def _is_setcc_memory_store(cls, inst, operand) -> bool:
+        # Capstone 5 marks most SETcc memory destinations as read-only.
+        # Every condition writes one byte, including zero when false; omitting
+        # its memlog entry allows a transient store to survive rollback.
+        return bool(
+            len(inst.operands) == 1 and inst.operands[0] == operand and
+            operand.type == CS_OP_MEM and operand.size == 1 and
+            inst.mnemonic.lower() in cls._SETCC_MNEMONICS
+        )
+
+    @classmethod
     def mem_operand_is_read(cls, inst, operand) -> bool:
-        if cls._is_unmarked_vector_store(inst, operand):
+        if cls._is_unmarked_vector_store(inst, operand) or cls._is_setcc_memory_store(inst, operand):
             return False
         return bool(operand.access & CS_AC_READ)
 
@@ -140,7 +155,8 @@ class X64OperandMixin:
             operand.access & CS_AC_WRITE or
             (inst.operands[0] == operand and inst.operands[0].size > 8) or
             cls._is_unmarked_vector_store(inst, operand) or
-            cls._is_unmarked_memory_rmw(inst, operand)
+            cls._is_unmarked_memory_rmw(inst, operand) or
+            cls._is_setcc_memory_store(inst, operand)
         )
 
     @staticmethod
