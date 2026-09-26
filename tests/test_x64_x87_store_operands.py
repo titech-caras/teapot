@@ -67,7 +67,7 @@ class X64X87StoreTests(unittest.TestCase):
     def test_x87_is_not_given_taint_propagation(self):
         encodings = [encoded for encoded, _ in STORES + READS]
         # Register-only arithmetic, FPU initialization, WAIT and FNSTSW AX.
-        # Capstone 5 omits the FPU group from the last of these.
+        # Capstone (5 and 6.0) omits the FPU group from the last of these.
         encodings += ["d8c1", "dec1", "dbe3", "d9e8", "9b", "dfe0", "dbf1"]
         for cls in (X64DiftPropagationPass, X64TextDiftPropagationLLVMPass):
             visitor = cls(SimpleNamespace(abi=self.arch.abi), None, None, self.arch)

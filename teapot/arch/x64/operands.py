@@ -20,17 +20,18 @@ class X64OperandMixin:
             return kind
         return None
 
-    # Capstone 5 reports the memory destination of the four rotate families as
-    # read-only, even though these forms update it in place.  Keep this narrow:
-    # comparisons and tests also have a first, read-only memory operand.
+    # Capstone (5 and 6.0) reports the memory destination of the four rotate
+    # families as read-only, even though these forms update it in place.
+    # Keep this narrow: comparisons and tests also have a first, read-only
+    # memory operand.
     _UNMARKED_MEMORY_RMW_MNEMONICS = frozenset(("rcl", "rcr", "rol", "ror"))
     _SETCC_MNEMONICS = frozenset((
         "seto", "setno", "setb", "setae", "sete", "setne", "setbe", "seta",
         "sets", "setns", "setp", "setnp", "setl", "setge", "setle", "setg",
     ))
-    # Capstone 5 marks scalar FST/FSTP, FIST/FISTP/FISTTP and FNSTCW memory
-    # destinations as reads. These x87 forms have an implicit source, so the
-    # vector-source recognizer cannot see them. Include the correctly marked
+    # Capstone (5 and 6.0) marks scalar FST/FSTP, FIST/FISTP/FISTTP and FNSTCW
+    # memory destinations as reads. These x87 forms have an implicit source, so
+    # the vector-source recognizer cannot see them. Include the correctly marked
     # widths too, keeping the architectural store families together.
     _X87_MEMORY_STORE_MNEMONICS = frozenset((
         "fst", "fstp", "fist", "fistp", "fisttp", "fbstp", "fnstcw", "fnstsw",
@@ -112,10 +113,10 @@ class X64OperandMixin:
     def _is_unmarked_vector_store(inst, operand) -> bool:
         """Recognize store forms whose memory access flags Capstone gets wrong.
 
-        Capstone 5 labels the memory destination of instructions such as
-        ``movq [rdi], xmm8`` as read-only.  Intel syntax places that destination
-        first and a vector source later in the operand list, which distinguishes
-        the store from scalar memory comparisons and vector loads.
+        Capstone (5 and 6.0) labels the memory destination of instructions
+        such as ``movq [rdi], xmm8`` as read-only.  Intel syntax places that
+        destination first and a vector source later in the operand list, which
+        distinguishes the store from scalar memory comparisons and vector loads.
         """
         if not inst.operands or inst.operands[0] != operand:
             return False
@@ -139,7 +140,7 @@ class X64OperandMixin:
 
     @classmethod
     def _is_setcc_memory_store(cls, inst, operand) -> bool:
-        # Capstone 5 marks most SETcc memory destinations as read-only.
+        # Capstone (5 and 6.0) marks most SETcc memory destinations as read-only.
         # Every condition writes one byte, including zero when false; omitting
         # its memlog entry allows a transient store to survive rollback.
         return bool(
@@ -166,10 +167,10 @@ class X64OperandMixin:
     def mem_operand_size(inst, operand) -> int:
         if operand is None:
             return 0
-        # Capstone 5 reports F(N)SAVE/FRSTOR as 4 bytes and overlooks 66h on
-        # F(N)STENV/FLDENV. These legacy images use 16/32-bit operand sizes,
-        # including in long mode: a 14/28-byte environment and eight 10-byte
-        # x87 registers in the full state image.
+        # Capstone (5 and 6.0) reports F(N)SAVE/FRSTOR as 4 bytes and overlooks
+        # 66h on F(N)STENV/FLDENV. These legacy images use 16/32-bit operand
+        # sizes, including in long mode: a 14/28-byte environment and eight
+        # 10-byte x87 registers in the full state image.
         if inst.mnemonic in ("fnsave", "frstor", "fnstenv", "fldenv"):
             size = 14 if 0x66 in inst.prefix else 28
             return size + 80 if inst.mnemonic in ("fnsave", "frstor") else size
@@ -178,8 +179,8 @@ class X64OperandMixin:
     @classmethod
     def mem_operand_is_read(cls, inst, operand) -> bool:
         if cls.is_x87_instruction(inst):
-            # x87 memory forms are either loads or stores, not RMW. FRSTOR is
-            # also incorrectly marked as a write by the pinned decoder.
+            # x87 memory forms are either loads or stores, not RMW. Capstone (5
+            # and 6.0) also marks FRSTOR as a write.
             return not cls._is_x87_memory_store(inst, operand)
         if (cls._is_unmarked_vector_store(inst, operand) or
                 cls._is_setcc_memory_store(inst, operand)):

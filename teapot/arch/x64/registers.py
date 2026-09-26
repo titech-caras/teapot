@@ -19,8 +19,9 @@ class X64RegisterMixin:
             return False
 
     def access_registers(self, abi, inst, acc_type: int):
-        # TEST has two read-only value operands. Capstone 5 omits reads (and
-        # can report writes) for the register in its memory-first forms.
+        # TEST has two read-only value operands. Capstone (5 and 6.0) omits
+        # reads (and can report writes) for the register in its memory-first
+        # forms.
         if inst.mnemonic == 'test' and acc_type == 1:
             return set()
         try:
