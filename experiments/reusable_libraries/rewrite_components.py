@@ -181,8 +181,11 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     dump(directory / "compaction.json", asdict(compact_stats))
     print("[teapot] compact component output " + json.dumps(asdict(compact_stats)), flush=True)
     ir.save_protobuf(instrumented)
+    # --layout: rewritten intervals keep their original addresses while growing, so they can
+    # overlap; the pprinter finds function aliases by address and would otherwise print a
+    # normal function's .size inside a transient function that shares its address.
     printer = [args.pprinter, "--ir", instrumented, "--asm", directory / "raw.S",
-               "--policy", "complete", "--shared", "no"]
+               "--policy", "complete", "--shared", "no", "--layout"]
     if item["role"] == "selected" and not args.preserve_selected_lifecycle:
         printer += ["--skip-section", ".init", ".fini"]
     run(directory, "print", printer)
