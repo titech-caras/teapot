@@ -382,7 +382,7 @@ ret void
 
     def _load_scratchpad_addr(self, capture_operands, block, inst, inst_offset, mem_operand):
         scratchpad_idx = self.scratchpad_offset
-        mem_symexpr = self.arch.operand_symbolic_expression(block, inst, mem_operand, inst_offset)
+        mem_symexpr = self.arch.mem_operand_address_expression(block, inst, mem_operand, inst_offset)
         capture_operands.append((scratchpad_idx, mem_operand, mem_symexpr))
         mem_addr = self._load(self.SCRATCHPAD_ELEM_TYPE, self._build_gep(
             self.SCRATCHPAD_ELEM_TYPE, "scratchpad", scratchpad_idx, ptr_type=self.SCRATCHPAD_ARR_TYPE))

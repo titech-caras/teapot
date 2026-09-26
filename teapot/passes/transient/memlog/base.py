@@ -45,7 +45,7 @@ class TransientMemlogPassBase(ArchSpecificPassMixin, InstVisitorPassMixin):
         regs_read.update(self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand))
         self.reg_manager.add_live_registers(function, block, inst_idx, regs_read)
 
-        mem_symexpr = self.arch.operand_symbolic_expression(block, inst, mem_operand, inst_offset)
+        mem_symexpr = self.arch.mem_operand_address_expression(block, inst, mem_operand, inst_offset)
         patch = self._build_patch(
             inst, mem_operand, access_size, mem_symexpr=mem_symexpr,
             reads_registers={reg.name for reg in regs_read})

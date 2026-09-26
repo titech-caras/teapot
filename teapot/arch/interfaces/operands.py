@@ -29,6 +29,10 @@ class ArchitectureOperandMixin(ABC):
                                     inst_offset: Optional[int] = None) -> Optional[gtirb.SymbolicExpression]:
         return None
 
+    def mem_operand_address_expression(self, block, inst, operand, inst_offset=None):
+        """Capture address metadata before deferred patch emission mutates IR."""
+        return self.operand_symbolic_expression(block, inst, operand, inst_offset)
+
     @staticmethod
     def mem_operand_is_read(inst, operand) -> bool:
         access = getattr(operand, "access", 0)

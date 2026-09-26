@@ -127,11 +127,14 @@ class RISCV64OperandMixin:
         }.issubset(symexpr.attributes):
             return None
 
+        if symexpr.offset:
+            return None
         anchor = symexpr.symbol.referent
         if not isinstance(anchor, gtirb.ByteBlock) or anchor.byte_interval is None:
             return None
 
-        high = anchor.byte_interval.symbolic_expressions.get(anchor.offset)
+        high_offset = anchor.offset + (anchor.size if symexpr.symbol.at_end else 0)
+        high = anchor.byte_interval.symbolic_expressions.get(high_offset)
         if not isinstance(high, gtirb.SymAddrConst):
             return None
         if not (
@@ -143,6 +146,22 @@ class RISCV64OperandMixin:
                 }.issubset(high.attributes)):
             return None
         return high
+
+    def mem_operand_address_expression(self, block, inst, operand, inst_offset=None):
+        expression = self.operand_symbolic_expression(block, inst, operand, inst_offset)
+        if isinstance(expression, gtirb.SymAddrConst) and {
+                gtirb.SymbolicExpression.Attribute.PCREL,
+                gtirb.SymbolicExpression.Attribute.LO,
+        }.issubset(expression.attributes):
+            # Rewriting temporarily isolates zero-size instruction anchors in
+            # intervals without the AUIPC expression. Resolve the exact pair
+            # now, while input IR is intact, not inside a deferred callback.
+            # Retain symbol identity so later renaming still applies.
+            high = self._paired_pcrel_hi_expression(expression)
+            if high is None:
+                raise ValueError("RISC-V memory PC-relative LO has no valid HI anchor")
+            return gtirb.SymAddrConst(high.offset, high.symbol, high.attributes)
+        return expression
 
     @staticmethod
     def _symbolic_reference(symexpr: gtirb.SymAddrConst) -> str:
@@ -324,6 +343,12 @@ class RISCV64OperandMixin:
         stack_adjustment = stack_adjustment or 0
 
         mem_symexpr = kwargs.get("mem_symexpr")
+        if isinstance(mem_symexpr, gtirb.SymAddrConst) and (
+                gtirb.SymbolicExpression.Attribute.GOT in mem_symexpr.attributes or
+                gtirb.SymbolicExpression.Attribute.TLSGD in mem_symexpr.attributes or
+                {gtirb.SymbolicExpression.Attribute.PCREL,
+                 gtirb.SymbolicExpression.Attribute.HI}.issubset(mem_symexpr.attributes)):
+            return self._pcrel_address_snippet(addr_reg, mem_symexpr)
         if (
                 isinstance(mem_symexpr, gtirb.SymAddrConst) and
                 gtirb.SymbolicExpression.Attribute.LO in mem_symexpr.attributes and
@@ -337,6 +362,11 @@ class RISCV64OperandMixin:
         pcrel_hi = self._paired_pcrel_hi_expression(mem_symexpr)
         if pcrel_hi is not None:
             return self._pcrel_address_snippet(addr_reg, pcrel_hi)
+        if isinstance(mem_symexpr, gtirb.SymAddrConst) and {
+                gtirb.SymbolicExpression.Attribute.PCREL,
+                gtirb.SymbolicExpression.Attribute.LO,
+        }.issubset(mem_symexpr.attributes):
+            raise ValueError("RISC-V memory PC-relative LO has no valid HI anchor")
 
         def load_original_reg(base_name: Optional[str]) -> str:
             normalized = abi.normalize_register_name(base_name)

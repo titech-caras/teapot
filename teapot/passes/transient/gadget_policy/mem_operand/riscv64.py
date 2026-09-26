@@ -54,11 +54,12 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
 
         patch = self._build_patch(
             inst, mem_operand, access_size, write_regs, address_regs,
+            mem_symexpr=self.arch.mem_operand_address_expression(block, inst, mem_operand, inst_offset),
             reads_registers={reg.name for reg in regs_read.union(regs_write)})
         return MemOperandPolicyPatch(patch, regs_read.union(regs_write))
 
     def _build_patch(self, inst: CsInsn, mem_operand, access_size: int, write_regs,
-                     address_regs, *, reads_registers=None):
+                     address_regs, *, mem_symexpr=None, reads_registers=None):
 
         scratch_registers = 5 if self.enable_asan_check and access_size > 1 else 4
 
@@ -74,7 +75,8 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
                 asm += self.arch.dift_or_reg_tag_snippet(tag_reg, tmp_reg, reg)
 
             asm += self.arch.mem_operand_address_snippet(
-                self.reg_manager.abi, inst, addr_reg, tmp_reg, mem_operand, ctx.stack_adjustment)
+                self.reg_manager.abi, inst, addr_reg, tmp_reg, mem_operand, ctx.stack_adjustment,
+                mem_symexpr=mem_symexpr)
             asm += f"""
                 andi {tmp_reg}, {tag_reg}, {TAG_SECRET | TAG_SECRET_INDIRECT}
                 beqz {tmp_reg}, .L__attacker_tags_check{SYMBOL_SUFFIX}

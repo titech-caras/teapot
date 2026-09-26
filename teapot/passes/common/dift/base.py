@@ -95,7 +95,7 @@ class DiftPropagationBase(ArchSpecificPassMixin, InstVisitorPassMixin):
             mem_write=mem_write,
             mem_write_size=mem_write_size,
             mem_symexpr=(
-                self.arch.operand_symbolic_expression(block, inst, mem_operand, inst_offset)
+                self.arch.mem_operand_address_expression(block, inst, mem_operand, inst_offset)
                 if mem_operand is not None else None),
             live_registers=self._insertion_live_registers(function, block, inst_idx),
         )
