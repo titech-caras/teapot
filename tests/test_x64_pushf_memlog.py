@@ -12,6 +12,8 @@ import capstone_gt
 import gtirb
 
 from teapot.arch import X64Architecture
+from teapot.passes.common.dift.x64 import X64DiftPropagationPass
+from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
 
 
@@ -37,6 +39,19 @@ class X64PushfMemlogTests(unittest.TestCase):
                 self.assertEqual(visitor.insert_at.call_count, 1)
                 self.assertEqual(visitor._build_memlog_patch.call_args.args[1:], (f"[rsp-{width}]", width))
                 self.assertIsNone(visitor._build_memlog_patch.call_args.kwargs["conditional"])
+
+    def test_flag_stack_operations_do_not_propagate_taint(self):
+        for cls in (X64DiftPropagationPass, X64TextDiftPropagationLLVMPass):
+            visitor = cls(SimpleNamespace(abi=self.arch.abi), None, None, self.arch)
+            visitor._x64_instruction_effects = mock.Mock(side_effect=AssertionError("taint requested"))
+            visitor.insert_at = mock.Mock()
+            for encoded in ("9c", "669c", "489c", "9d", "669d"):
+                inst = self.decode(encoded)
+                with self.subTest(pass_name=cls.__name__, instruction=str(inst)):
+                    self.assertTrue(self.arch.dift_should_skip_instruction(inst))
+                    visitor.visit_inst(inst, 0, 0, gtirb.CodeBlock(size=inst.size))
+            visitor._x64_instruction_effects.assert_not_called()
+            visitor.insert_at.assert_not_called()
 
     def test_pop_flags_has_no_memory_write(self):
         for encoded in ("9d", "669d"):

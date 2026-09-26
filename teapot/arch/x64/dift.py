@@ -19,9 +19,12 @@ class X64DiftPatchesMixin:
 
         raise KeyError(f"No x64 DIFT register id for {reg.name}")
 
-    @staticmethod
-    def dift_should_skip_instruction(inst) -> bool:
-        return inst.mnemonic in ("nop", "ret", "call") or inst.mnemonic.startswith("j")
+    def dift_should_skip_instruction(self, inst) -> bool:
+        # Basic execution/rollback support only: neither the x87 register
+        # stack nor RFLAGS has a DIFT tag model. Leave tags untouched instead
+        # of treating implicit-source stores as writes of an untainted value.
+        return (inst.mnemonic in ("nop", "ret", "call", "pushf", "pushfq", "popf", "popfq")
+                or inst.mnemonic.startswith("j") or self.is_x87_instruction(inst))
 
     @staticmethod
     def dift_clears_destination_tags(inst) -> bool:

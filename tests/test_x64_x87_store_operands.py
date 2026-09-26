@@ -12,6 +12,8 @@ import capstone_gt
 import gtirb
 
 from teapot.arch import X64Architecture
+from teapot.passes.common.dift.x64 import X64DiftPropagationPass
+from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
 
 
@@ -62,6 +64,28 @@ class X64X87StoreTests(unittest.TestCase):
                 self.assertEqual(self.arch.mem_operand_size(inst, operand), width)
                 self.assertTrue(self.arch.mem_operand_is_read(inst, operand))
                 self.assertFalse(self.arch.mem_operand_is_write(inst, operand))
+
+    def test_x87_is_not_given_taint_propagation(self):
+        encodings = [encoded for encoded, _ in STORES + READS]
+        # Register-only arithmetic, FPU initialization, WAIT and FNSTSW AX.
+        # Capstone 5 omits the FPU group from the last of these.
+        encodings += ["d8c1", "dec1", "dbe3", "d9e8", "9b", "dfe0", "dbf1"]
+        for cls in (X64DiftPropagationPass, X64TextDiftPropagationLLVMPass):
+            visitor = cls(SimpleNamespace(abi=self.arch.abi), None, None, self.arch)
+            visitor._x64_instruction_effects = mock.Mock(side_effect=AssertionError("taint requested"))
+            visitor.insert_at = mock.Mock()
+            for encoded in encodings:
+                inst = self.decode(encoded)
+                with self.subTest(pass_name=cls.__name__, instruction=str(inst)):
+                    self.assertTrue(self.arch.dift_should_skip_instruction(inst))
+                    visitor.visit_inst(inst, 0, 0, gtirb.CodeBlock(size=inst.size))
+            visitor._x64_instruction_effects.assert_not_called()
+            visitor.insert_at.assert_not_called()
+
+    def test_sse_is_not_skipped_with_x87(self):
+        for encoded in ("f20f1007", "f20f1107", "f20f58c1"):
+            with self.subTest(encoded=encoded):
+                self.assertFalse(self.arch.dift_should_skip_instruction(self.decode(encoded)))
 
     def test_x87_stores_get_full_width_rollback_logging(self):
         for encoded, width in STORES:
@@ -122,6 +146,9 @@ class X64X87StoreTests(unittest.TestCase):
                 block, inst.address - block.address)] = (1 << len(registers)) - 1
         passes = PassManager()
         passes.add(X64TransientMemlogPass(manager, block.section, manager.analyzer.decoder, self.arch))
+        # "No taint" must not mean clearing memory tags, nor should stores
+        # require a mapped taint shadow just to get rollback logging.
+        passes.add(X64DiftPropagationPass(manager, block.section, manager.analyzer.decoder, self.arch))
         passes.run(ir)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
