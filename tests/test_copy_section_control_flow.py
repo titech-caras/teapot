@@ -57,17 +57,11 @@ class CopySectionControlFlowTests(unittest.TestCase):
         self.assertEqual({e.target for e in copied_source.outgoing_edges},
                          {mapping.code_blocks_map[target.uuid]})
 
-    def test_aarch64_branch_to_jump_table_base_stays_transient(self):
-        self.case(gtirb.Module.ISA.ARM64)
-
-    def test_aarch64_call_to_jump_table_base_stays_transient(self):
-        self.case(gtirb.Module.ISA.ARM64, call=True)
-
-    def test_x64_branch_to_jump_table_base_stays_transient(self):
-        self.case(gtirb.Module.ISA.X64)
-
-    def test_x64_call_to_jump_table_base_stays_transient(self):
-        self.case(gtirb.Module.ISA.X64, call=True)
+    def test_branch_or_call_to_jump_table_base_stays_transient(self):
+        for isa in (gtirb.Module.ISA.ARM64, gtirb.Module.ISA.X64):
+            for call in (False, True):
+                with self.subTest(isa=isa.name, call=call):
+                    self.case(isa, call)
 
 
 if __name__ == '__main__':
