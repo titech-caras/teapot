@@ -45,6 +45,71 @@ class NormalizeAArch64RelocationsPassTests(unittest.TestCase):
                     self.assertEqual(code.symbolic_expressions[offset].offset, addend)
                     self.assertIs(code.symbolic_expressions[offset].symbol, symbol)
 
+    @staticmethod
+    def relaxed_adrp_fixture(words):
+        """GNU ld erratum-843419 output: 'adr x2, 0x3000' at page offset 0xff8
+        followed by uses of x2, lifted as ddisasm does: each paired use carries
+        '.L_3fc0 - .L_3000' (GOT slot minus an integral page symbol)."""
+        module = gtirb.Module(
+            name="relaxed-adrp", isa=gtirb.Module.ISA.ARM64,
+            file_format=gtirb.Module.FileFormat.ELF,
+            byte_order=gtirb.Module.ByteOrder.Little,
+        )
+        text = gtirb.Section(name=".text", module=module)
+        code = gtirb.ByteInterval(
+            address=0x1ff8, section=text,
+            contents=b"".join(word.to_bytes(4, "little") for word in words),
+        )
+        gtirb.CodeBlock(size=4 * len(words), byte_interval=code)
+        got = gtirb.Section(name=".got", module=module)
+        slot = gtirb.DataBlock(size=8, byte_interval=gtirb.ByteInterval(address=0x3fc0, size=8, section=got))
+        got_symbol = gtirb.Symbol(name=".L_3fc0", payload=slot, module=module)
+        target = gtirb.Symbol(name="stderr", payload=gtirb.ProxyBlock(module=module), module=module)
+        page = gtirb.Symbol(name=".L_3000", payload=0x3000, module=module)
+        module.aux_data["symbolForwarding"] = gtirb.AuxData(
+            type_name="mapping<UUID,UUID>", data={got_symbol: target})
+        return module, code, got_symbol, page
+
+    def normalize(self, module):
+        normalize = NormalizeAArch64RelocationsPass(GtirbInstructionDecoder(module.isa))
+        normalize.begin_module(module, (), None)
+        return normalize
+
+    ADR_X2_3000 = 0x10008042         # adr x2, 0x3000 (at 0x1ff8)
+    LDR_X2_X2_FC0 = 0xF947E042       # ldr x2, [x2, #0xfc0]
+    LDR_X0_X2 = 0xF9400040           # ldr x0, [x2]
+    LDR_X3_X2_8 = 0xF9400443         # ldr x3, [x2, #8]
+
+    def test_relaxed_adrp_got_pair_is_restored(self):
+        module, code, got_symbol, page = self.relaxed_adrp_fixture(
+            (self.ADR_X2_3000, self.LDR_X2_X2_FC0, self.LDR_X0_X2))
+        code.symbolic_expressions[4] = gtirb.SymAddrAddr(1, 0, got_symbol, page)
+        self.assertEqual(self.normalize(module).restored_adrp, 1)
+        adrp = next(GtirbInstructionDecoder(module.isa).get_instructions(next(iter(module.code_blocks))))
+        self.assertEqual((adrp.mnemonic, adrp.op_str), ("adrp", "x2, #0x3000"))
+        GOT, LO12 = gtirb.SymbolicExpression.Attribute.GOT, gtirb.SymbolicExpression.Attribute.LO12
+        self.assertEqual(code.symbolic_expressions[0], gtirb.SymAddrConst(0, got_symbol, {GOT}))
+        self.assertEqual(code.symbolic_expressions[4], gtirb.SymAddrConst(0, got_symbol, {GOT, LO12}))
+        self.assertNotIn(8, code.symbolic_expressions)
+
+    def test_relaxed_adrp_with_other_base_use_is_left_alone(self):
+        # x2 is also read as a plain page base before being redefined.
+        module, code, got_symbol, page = self.relaxed_adrp_fixture(
+            (self.ADR_X2_3000, self.LDR_X3_X2_8, self.LDR_X2_X2_FC0))
+        code.symbolic_expressions[8] = gtirb.SymAddrAddr(1, 0, got_symbol, page)
+        original = bytes(code.contents)
+        self.assertEqual(self.normalize(module).restored_adrp, 0)
+        self.assertEqual(bytes(code.contents), original)
+        self.assertNotIn(0, code.symbolic_expressions)
+        self.assertIsInstance(code.symbolic_expressions[8], gtirb.SymAddrAddr)
+
+    def test_relaxed_adrp_live_past_block_is_left_alone(self):
+        # x2 is never redefined in the block, so later uses cannot be ruled out.
+        module, code, got_symbol, page = self.relaxed_adrp_fixture((self.ADR_X2_3000, self.LDR_X0_X2 | 0xFC0 // 8 << 10))
+        code.symbolic_expressions[4] = gtirb.SymAddrAddr(1, 0, got_symbol, page)
+        self.assertEqual(self.normalize(module).restored_adrp, 0)
+        self.assertNotIn(0, code.symbolic_expressions)
+
 
 if __name__ == "__main__":
     unittest.main()
