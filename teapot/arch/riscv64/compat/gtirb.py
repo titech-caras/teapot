@@ -363,6 +363,17 @@ def install_riscv64_rewriting_compat() -> None:
             if lo_offset is None:
                 continue
             if hi_offset < insert_offset <= lo_offset:
+                low_word = int.from_bytes(
+                    block.byte_interval.contents[lo_offset:lo_offset + 4], "little")
+                if low_word & 0x7f in (0x03, 0x23, 0x07, 0x27):
+                    # Scalar/FP/vector memory operations have real side effects,
+                    # unlike an ADDI address materialization. In particular a
+                    # pre-store memlog patch must read the OLD value, not the
+                    # value after the store. These instructions are printed
+                    # explicitly (not folded into a CALL pseudo-op), so keeping
+                    # the requested boundary between HI and LO is valid; the
+                    # existing pinned PCREL anchor still identifies the AUIPC.
+                    return offset
                 after_lo_offset = lo_offset + riscv_instruction_size(block, lo_offset)
                 return min(after_lo_offset, block_end) - block_start
 
