@@ -11,7 +11,11 @@ CS_ARCH_AARCH64 = getattr(capstone, "CS_ARCH_AARCH64", None)
 if CS_ARCH_AARCH64 is None:
     CS_ARCH_AARCH64 = capstone.CS_ARCH_ARM64
 
-RISCV64_MODE = capstone.CS_MODE_RISCV64 | capstone.CS_MODE_RISCVC
+# RV64GC. Capstone 6 decodes the A, F and D extensions only when their mode flags are set (Capstone 5
+# always decoded them and has no such flags), so a bare RV64 decoder stops at the first atomic or
+# floating-point instruction.
+RISCV64_MODE = (capstone.CS_MODE_RISCV64 | capstone.CS_MODE_RISCVC |
+                getattr(capstone, "CS_MODE_RISCV_A", 0) | getattr(capstone, "CS_MODE_RISCV_FD", 0))
 
 
 def x64_decoder() -> capstone.Cs:
