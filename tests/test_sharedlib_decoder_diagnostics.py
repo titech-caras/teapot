@@ -1,13 +1,8 @@
-import importlib.util
-from pathlib import Path
 import unittest
 
 import gtirb
 
-spec = importlib.util.spec_from_file_location('sharedlib_decoder_converter',
-    Path(__file__).resolve().parents[1] / 'tools/sharedlib/convert.py')
-converter = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(converter)
+from tools.sharedlib import convert as converter
 
 
 class DecoderDiagnosticsTests(unittest.TestCase):

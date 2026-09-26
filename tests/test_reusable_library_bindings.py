@@ -3,6 +3,8 @@ import importlib.util
 from pathlib import Path
 import unittest
 
+from tools.sharedlib import convert as converter
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,7 +16,6 @@ def load(name, relative):
     return module
 
 
-converter = load('reuse_binding_converter', 'tools/sharedlib/convert.py')
 driver = load('reuse_binding_driver', 'experiments/reusable_libraries/rewrite_components.py')
 
 

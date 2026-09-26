@@ -1,4 +1,3 @@
-import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
@@ -8,10 +7,7 @@ import unittest
 import gtirb
 from elftools.elf.elffile import ELFFile
 
-spec = importlib.util.spec_from_file_location('sharedlib_data_converter',
-    Path(__file__).resolve().parents[1] / 'tools/sharedlib/convert.py')
-converter = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(converter)
+from tools.sharedlib import convert as converter
 
 
 class ExecutableDataMetadataTests(unittest.TestCase):

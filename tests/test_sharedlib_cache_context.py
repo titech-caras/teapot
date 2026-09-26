@@ -1,14 +1,8 @@
 """Caller-independent ordinary reconstruction, not instrumented-object reuse."""
 import copy
-import importlib.util
-from pathlib import Path
 import unittest
 
-
-CONVERTER = Path(__file__).resolve().parents[1] / 'tools/sharedlib/convert.py'
-spec = importlib.util.spec_from_file_location('sharedlib_cache_converter', CONVERTER)
-converter = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(converter)
+from tools.sharedlib import convert as converter
 
 
 class OrdinaryLibraryCacheTests(unittest.TestCase):
