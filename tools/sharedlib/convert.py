@@ -1296,6 +1296,40 @@ def build_lifecycle_dispatcher(args, main_object, objects, initialization_order)
     return obj
 
 
+def preserve_executable_data_blocks(module):
+    """Carry recovered in-text data boundaries through the ordinary ELF link.
+
+    A later fresh lift must not invent instructions in bytes already recovered
+    as data. A .byte directive alone carries no such information in an ELF;
+    local sized OBJECT symbols do. This changes metadata, not bytes or linkage.
+    Keep each block separate so alignment between blocks cannot inflate a size.
+    """
+    info = module.aux_data['elfSymbolInfo'].data
+    names = {s.name for s in module.symbols}
+    evidence = []
+    for section in sorted(module.sections, key=lambda s: (s.address or 0, s.name)):
+        if gtirb.Section.Flag.Executable not in section.flags:
+            continue
+        for block in sorted(section.data_blocks, key=lambda b: (b.address or 0, b.size)):
+            if not block.size:
+                continue
+            if block.address is None or any(module.code_blocks_on(
+                    range(block.address, block.address + block.size))):
+                reject('AMBIGUOUS_RECOVERED_DATA', module.name,
+                       'in-text data has no address or overlaps code')
+            name = '__teapot_recovered_data_{:x}'.format(block.address)
+            suffix = 0
+            while name in names:
+                suffix += 1
+                name = '__teapot_recovered_data_{:x}_{}'.format(block.address, suffix)
+            names.add(name)
+            symbol = gtirb.Symbol(name, payload=block, module=module)
+            info[symbol] = (block.size, 'OBJECT', 'LOCAL', 'DEFAULT', 0)
+            evidence.append({'name': name, 'address': block.address, 'size': block.size,
+                             'section': section.name})
+    return evidence
+
+
 def ordinary_object_recipe(item, context, priority=None):
     """Describe reconstruction inputs, not unrelated final executable bytes.
 
@@ -1360,6 +1394,8 @@ def reconstruct(item, args, out, index=0, priority=None):
     print_ir = irpath
     if item['role'] == 'selected':
         localize_private_library_definitions(module, item)
+    data_metadata = preserve_executable_data_blocks(module)
+    dump(directory / 'recovered-data-metadata.json', data_metadata)
     version_bindings = (resolve_selected_symbol_versions(module, item, args.selected_sonames)
                         if args.resolve_selected_versions else [])
     dump(directory / 'selected-version-bindings.json', version_bindings)
@@ -1376,7 +1412,7 @@ def reconstruct(item, args, out, index=0, priority=None):
                 section.name += '.{:05d}'.format(priority)
         module.aux_data.pop('elfDynamicInit', None)
         module.aux_data.pop('elfDynamicFini', None)
-    if item['role'] == 'selected' or version_bindings or args.preserve_selected_lifecycle:
+    if item['role'] == 'selected' or version_bindings or args.preserve_selected_lifecycle or data_metadata:
         print_ir = directory / 'relocatable.gtirb'
         ir.save_protobuf(print_ir)
     assembly = directory / 'reconstructed.S'
