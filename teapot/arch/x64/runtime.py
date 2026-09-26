@@ -14,4 +14,7 @@ class X64RuntimeMixin:
         return [
             *COMMON_CHECKPOINT_LIB_SYMBOLS,
             "make_checkpoint_x64",
+            # Only x64 instrumentation switches stacks and saves flags through these.
+            "old_rsp",
+            "indirect_branch_flags_scratch",
         ]

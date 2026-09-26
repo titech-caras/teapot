@@ -13,7 +13,6 @@ ASAN_TAG_STORAGES = (ASAN_TAG_STORAGE_SHADOW, ASAN_TAG_STORAGE_MTE)
 
 COMMON_CHECKPOINT_LIB_SYMBOLS = [
     "scratchpad",
-    "old_rsp",
 
     "checkpoint_cnt",
     "libcheckpoint_enable",
@@ -22,10 +21,6 @@ COMMON_CHECKPOINT_LIB_SYMBOLS = [
     "restore_checkpoint_EXT_LIB",
     "restore_checkpoint_MALFORMED_INDIRECT_BR",
 
-    "report_gadget_SPECFUZZ_ASAN_READ",
-    "report_gadget_SPECFUZZ_ASAN_WRITE",
-    "report_gadget_SPECTAINT_BCB",
-    "report_gadget_SPECTAINT_BCBS",
     "report_gadget_KASPER_CACHE",
     "report_gadget_KASPER_MDS",
     "report_gadget_KASPER_PORT",
@@ -33,7 +28,6 @@ COMMON_CHECKPOINT_LIB_SYMBOLS = [
     "checkpoint_target_metadata",
     "memory_history_top",
     "guard_list_top",
-    "indirect_branch_flags_scratch",
     "instruction_cnt",
 
     "dift_reg_tags",
