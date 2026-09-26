@@ -41,13 +41,12 @@ class LinkedComponent:
 
     @staticmethod
     def make_liveness_caller_independent(module):
-        """Over-approximate validated metadata; never reuse caller-specific deadness.
+        """Legacy all-live experiment, not the independent-library ABI policy.
 
-        A separately lifted DSO does not contain every future caller. Until the
-        cache carries a proved inter-component liveness summary, all tracked
-        registers/flags must be preserved everywhere. Missing instruction masks
-        already mean all-live in LiveRegisterManager. The untouched frontend
-        tables remain in the driver's saved original lift.
+        Retained for reproducing historical experiments. The current component
+        pipeline preserves standalone DDisasm masks, including ABI boundary
+        information; it does not call this over-approximation. Missing masks
+        already mean all-live in LiveRegisterManager.
         """
         names = module.aux_data["liveRegisterNames"].data
         masks = module.aux_data["liveRegisterSets"].data

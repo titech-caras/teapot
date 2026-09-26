@@ -1,6 +1,7 @@
 """Conservative contracts for the opt-in x64 component prototype."""
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import gtirb
 
@@ -89,7 +90,7 @@ class LinkedComponentTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "all default instrumentation"):
                     pipeline.run()
 
-    def test_cached_components_never_trust_caller_specific_dead_registers(self):
+    def liveness_module(self):
         module = self.module()
         section = gtirb.Section(name=".text", module=module)
         interval = gtirb.ByteInterval(address=0x1000, contents=b"\x90\xc3", section=section)
@@ -98,9 +99,32 @@ class LinkedComponentTests(unittest.TestCase):
         masks = {gtirb.Offset(block, 0): 0, gtirb.Offset(block, 1): 2}
         module.aux_data["liveRegisterNames"] = gtirb.AuxData(names, "sequence<string>")
         module.aux_data["liveRegisterSets"] = gtirb.AuxData(masks, "mapping<Offset,uint64_t>")
+        return module, block, names, masks
+
+    def test_legacy_all_live_helper_remains_explicit(self):
+        module, block, names, masks = self.liveness_module()
         self.assertEqual(self.context().make_liveness_caller_independent(module), 2)
         self.assertEqual(set(masks.values()), {7})
         self.assertEqual(module.aux_data["liveRegisterNames"].data, names)
+
+    def test_component_pipeline_preserves_standalone_abi_masks(self):
+        module, block, names, masks = self.liveness_module()
+        del masks[gtirb.Offset(block, 1)]  # A missing instruction stays missing.
+        expected = dict(masks)
+        pipeline = TeapotPipeline(gtirb.IR(modules=[module]), "x64-la48-asan-new",
+                                  linked_component=self.context())
+        class LivenessInitialized(Exception):
+            pass
+        with patch('teapot.pipeline.LiveRegisterManager',
+                   return_value=SimpleNamespace(analysis_source='ddisasm')), \
+                patch.object(LinkedComponent, 'make_liveness_caller_independent') as force_live, \
+                patch.object(pipeline, '_run_normalize_passes', side_effect=LivenessInitialized):
+            with self.assertRaises(LivenessInitialized):
+                pipeline.run()
+        force_live.assert_not_called()
+        self.assertEqual(masks, expected)
+        self.assertNotIn(gtirb.Offset(block, 1), masks)
+        self.assertEqual(module.aux_data['liveRegisterNames'].data, names)
 
 
 if __name__ == "__main__":

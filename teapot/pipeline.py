@@ -177,10 +177,13 @@ class TeapotPipeline:
             if self.linked_component is not None:
                 if self.reg_manager.analysis_source != "ddisasm":
                     raise ValueError("component prototype requires validated DDisasm liveness metadata")
-                count = self.linked_component.make_liveness_caller_independent(self.module)
-                self.reg_manager.refresh(preserve_liveness=True)
-                print(f"[teapot] component liveness: {count} masks conservatively all-live "
-                      "for caller-independent reuse", flush=True)
+                # A standalone ELF is analyzed at ABI boundaries. Preserve its
+                # masks, including genuinely live arguments/results; do not
+                # replace them with the liveness of a particular linked caller
+                # or force every register live. Missing masks remain all-live
+                # in LiveRegisterManager, as for ordinary instrumentation.
+                print("[teapot] component liveness: standalone DDisasm ABI masks; "
+                      "missing masks remain all-live", flush=True)
 
         self._run_normalize_passes()
         self._create_instrumentation_sections()
