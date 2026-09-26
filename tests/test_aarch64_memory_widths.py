@@ -1,15 +1,12 @@
 import unittest
 
-import capstone
-from capstone import CS_ARCH_ARM64, CS_MODE_ARM
-
 from teapot.arch.aarch64.architecture import AArch64Architecture
+from teapot.arch.decoders import aarch64_decoder
 
 
 class AArch64MemoryWidthTests(unittest.TestCase):
     def test_memory_width_is_not_the_status_or_destination_width(self):
-        decoder = capstone.Cs(CS_ARCH_ARM64, CS_MODE_ARM)
-        decoder.detail = True
+        decoder = aarch64_decoder()
         arch = AArch64Architecture()
         cases = (
             (0xc8007c41, "stxr", 8),

@@ -5,9 +5,8 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-import capstone
-
 from teapot.arch import AArch64Architecture, RISCV64Architecture
+from teapot.arch.decoders import aarch64_decoder, riscv64_decoder
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE, RISCV64_ORIGINAL_TP_OFFSET
 from teapot.passes.common.dift.aarch64 import AArch64DiftPropagationPass
@@ -19,7 +18,7 @@ class RISCDiftHistoryTests(unittest.TestCase):
         if not shutil.which(compiler) or not shutil.which(launcher[0]):
             self.skipTest("requires target compiler and execution environment")
         if arch.name == "aarch64":
-            decoder = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
+            decoder = aarch64_decoder()
             instruction = bytes.fromhex("010800a9" if pair else "010000f9")
             pass_type = AArch64DiftPropagationPass
             source_names = ("x1", "x2") if pair else ("x1",)
@@ -38,7 +37,7 @@ class RISCDiftHistoryTests(unittest.TestCase):
             """
         else:
             arch.install_decoder_compat()
-            decoder = capstone.Cs(capstone.CS_ARCH_RISCV, capstone.CS_MODE_RISCV64)
+            decoder = riscv64_decoder()
             instruction = bytes.fromhex("2330b500")  # sd a1, 0(a0)
             pass_type = RISCV64DiftPropagationPass
             source_names = ("a1",)
@@ -47,7 +46,6 @@ class RISCDiftHistoryTests(unittest.TestCase):
                 sd tp, 0(t2)
             """
             epilogue = data = ""
-        decoder.detail = True
         inst = next(decoder.disasm(instruction, 0x1000))
         source_regs = {arch.abi.get_register(name) for name in source_names}
         source_ids = [arch.dift_register_id(arch.abi.get_register(name)) for name in source_names]

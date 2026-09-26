@@ -8,18 +8,17 @@ import tempfile
 from types import SimpleNamespace
 from unittest import mock
 
-import capstone
 import gtirb
 
 from teapot.arch import X64Architecture
+from teapot.arch.decoders import x64_decoder
 from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
 
 
 class X64SetccMemoryTests(unittest.TestCase):
     def setUp(self):
         self.arch = X64Architecture()
-        self.decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
-        self.decoder.detail = True
+        self.decoder = x64_decoder()
 
     def instructions(self):
         for opcode in range(0x90, 0xa0):

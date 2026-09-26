@@ -5,12 +5,12 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-import capstone
 import gtirb
 from gtirb_rewriting import Assembler
 import llvmlite.binding as llvm
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture
+from teapot.arch.decoders import riscv64_decoder
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE, RISCV64_ORIGINAL_TP_OFFSET
 from teapot.passes.text.dift.aarch64 import AArch64TextDiftPropagationLLVMPass
@@ -51,8 +51,7 @@ class TextDiftCodegenTests(unittest.TestCase):
         assembler = Assembler(module, allow_undef_symbols=True)
         assembler.assemble(snippet)
         data = assembler.finalize().text_section.data
-        decoder = capstone.Cs(capstone.CS_ARCH_RISCV,
-                                capstone.CS_MODE_RISCV64 | capstone.CS_MODE_RISCVC)
+        decoder = riscv64_decoder()
         instructions = list(decoder.disasm(data, 0))
         self.assertEqual(sum(inst.size for inst in instructions), len(data))
         self.assertTrue(instructions)

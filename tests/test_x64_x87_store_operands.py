@@ -8,10 +8,10 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-import capstone
 import gtirb
 
 from teapot.arch import X64Architecture
+from teapot.arch.decoders import x64_decoder
 from teapot.passes.common.dift.x64 import X64DiftPropagationPass
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
@@ -41,8 +41,7 @@ READS = (
 class X64X87StoreTests(unittest.TestCase):
     def setUp(self):
         self.arch = X64Architecture()
-        self.decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
-        self.decoder.detail = True
+        self.decoder = x64_decoder()
 
     def decode(self, encoded):
         return next(self.decoder.disasm(bytes.fromhex(encoded), 0x1000))

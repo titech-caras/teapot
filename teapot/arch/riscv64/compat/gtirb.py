@@ -16,6 +16,8 @@ import gtirb
 from gtirb_capstone import instructions
 from gtirb_capstone.instructions import MemoryAccess
 
+from teapot.arch.decoders import riscv64_decoder
+
 
 def _module_is_riscv64(module: gtirb.Module) -> bool:
     if module is None or "archInfo" not in module.aux_data:
@@ -40,11 +42,9 @@ def install_riscv64_decoder_compat() -> None:
             else:
                 endian = capstone.CS_MODE_LITTLE_ENDIAN
 
-            mode = capstone.CS_MODE_RISCV64 | capstone.CS_MODE_RISCVC | endian | opts
-            key = ("teapot-riscv64", mode)
+            key = ("teapot-riscv64", endian | opts)
             if key not in self._cs:
-                self._cs[key] = cs = capstone.Cs(capstone.CS_ARCH_RISCV, mode)
-                cs.detail = True
+                self._cs[key] = riscv64_decoder(endian | opts)
             return self._cs[key]
 
         return original_get_block_decoder(self, block, opts)

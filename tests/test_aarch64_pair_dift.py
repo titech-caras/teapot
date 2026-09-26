@@ -6,11 +6,11 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-import capstone
 import gtirb
 import llvmlite.binding as llvm
 
 from teapot.arch import AArch64Architecture
+from teapot.arch.decoders import aarch64_decoder
 from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE
 from teapot.passes.common.dift.aarch64 import AArch64DiftPropagationPass
 from teapot.passes.text.dift.aarch64 import AArch64TextDiftPropagationLLVMPass
@@ -23,9 +23,7 @@ class AArch64PairDiftTests(unittest.TestCase):
         if compiler is None or qemu is None:
             self.skipTest("AArch64 compiler and QEMU required")
         arch = AArch64Architecture()
-        decoder = capstone.Cs(
-            capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
-        decoder.detail = True
+        decoder = aarch64_decoder()
         manager = SimpleNamespace(abi=arch.abi)
         layout = SimpleNamespace(xor_mask=0)
         common = AArch64DiftPropagationPass(

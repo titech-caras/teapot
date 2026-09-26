@@ -9,13 +9,13 @@ import unittest
 import warnings
 from unittest.mock import Mock
 
-import capstone
 import gtirb
 from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_functions import Function
 from gtirb_rewriting import Pass, PassManager, Patch
 
 from teapot.arch.x64.architecture import X64Architecture
+from teapot.arch.decoders import x64_decoder
 from teapot.configs.runtime import ROB_LEN, SCRATCHPAD_SIZE
 from teapot.passes.transient.x64_rep import X64TransientRepPass
 from teapot.passes.transient.transient_insert_restore_points_pass import TransientInsertRestorePointsPass
@@ -27,8 +27,7 @@ from test_live_register_preservation import make_module
 class X64TransientRepTests(unittest.TestCase):
     def setUp(self):
         self.arch = X64Architecture()
-        self.decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
-        self.decoder.detail = True
+        self.decoder = x64_decoder()
 
     def test_rep_has_dynamic_not_static_cost(self):
         for code in ("f3a4", "67f348a5", "f2ae", "f3a6"):

@@ -1,16 +1,13 @@
 import unittest
 
-import capstone
-from capstone import CS_ARCH_X86, CS_MODE_64
-
 from teapot.arch.x64.architecture import X64Architecture
+from teapot.arch.decoders import x64_decoder
 
 
 class X64VectorStoreOperandTests(unittest.TestCase):
     @staticmethod
     def _decode(encoded: str):
-        decoder = capstone.Cs(CS_ARCH_X86, CS_MODE_64)
-        decoder.detail = True
+        decoder = x64_decoder()
         return next(decoder.disasm(bytes.fromhex(encoded), 0x1000))
 
     def setUp(self):

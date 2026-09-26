@@ -1,9 +1,7 @@
 import unittest
 
-import capstone
-from capstone import CS_ARCH_RISCV, CS_MODE_RISCV64
-
 from teapot.arch.riscv64.architecture import RISCV64Architecture
+from teapot.arch.decoders import riscv64_decoder
 
 
 class RISCV64AtomicOperandTests(unittest.TestCase):
@@ -17,8 +15,7 @@ class RISCV64AtomicOperandTests(unittest.TestCase):
 
     def setUp(self):
         self.arch = RISCV64Architecture()
-        self.decoder = capstone.Cs(CS_ARCH_RISCV, CS_MODE_RISCV64)
-        self.decoder.detail = True
+        self.decoder = riscv64_decoder()
 
     def _decode(self, encoded):
         return next(self.decoder.disasm(bytes.fromhex(encoded), 0x1000))

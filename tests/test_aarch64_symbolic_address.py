@@ -4,17 +4,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import capstone
 import gtirb
 from gtirb_rewriting import Assembler
 
 from teapot.arch import AArch64Architecture
+from teapot.arch.decoders import aarch64_decoder
 
 
 class AArch64SymbolicAddressTests(unittest.TestCase):
     def _snippet(self, spacing, scale, offset):
-        decoder = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_LITTLE_ENDIAN)
-        decoder.detail = True
+        decoder = aarch64_decoder()
         inst = next(decoder.disasm(bytes.fromhex("20004139"), 0x1000))
         self.assertEqual(inst.mnemonic, "ldrb")
         module = gtirb.Module(

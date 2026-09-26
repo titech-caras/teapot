@@ -8,13 +8,13 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-import capstone
 import gtirb
 from gtirb_functions import Function
 from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_rewriting import InsertionContext, RewritingContext
 
 from teapot.arch.x64.architecture import X64Architecture
+from teapot.arch.decoders import x64_decoder
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 from teapot.passes.common.dift.x64 import X64DiftPropagationPass
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
@@ -27,8 +27,7 @@ class X64RepDiftTests(unittest.TestCase):
         self.dift = X64DiftPropagationPass(
             SimpleNamespace(abi=self.arch.abi), None, None, self.arch,
             dift_layout=SimpleNamespace(xor_mask=1 << 32))
-        self.decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
-        self.decoder.detail = True
+        self.decoder = x64_decoder()
 
     def test_only_repeat_string_opcodes_are_classified(self):
         for encoding in ("f3c3", "f390", "f30f1006", "f20f1006", "a4"):
