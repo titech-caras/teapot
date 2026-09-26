@@ -32,7 +32,9 @@ class AArch64DiftPatchesMixin:
                 and inst.operands[1].type == CS_OP_IMM:
             return True
         if len(inst.operands) >= 3 and all(op.type == CS_OP_REG for op in inst.operands[:3]):
-            return inst.operands[1].reg == inst.operands[2].reg and mnemonic in {"eor", "sub"}
+            rhs = inst.operands[2]
+            return (inst.operands[1].reg == rhs.reg and mnemonic in {"eor", "sub"}
+                    and rhs.shift.value == 0 and rhs.ext == 0)
         return False
 
     def dift_or_reg_tag_snippet(self, tag_reg, tmp_reg, reg: Register) -> str:
