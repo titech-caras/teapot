@@ -39,6 +39,11 @@ def validate(binary, objects, *, isa='X64', mode=None):
 
         def address(name):
             matches = symbols.get(name, [])
+            if len(matches) > 1:
+                # A same-named LOCAL definition in another component takes no part in
+                # symbol resolution (e.g. libssl's internal WPACKET_* copy next to the
+                # export-all libcrypto's global WPACKET_* exports).
+                matches = [s for s in matches if s["st_info"]["bind"] != "STB_LOCAL"]
             assert len(matches) == 1, ("symbol is not a unique definition", name)
             return matches[0]["st_value"]
 
