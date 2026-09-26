@@ -7,6 +7,7 @@ from teapot.arch.aarch64.operands import (
     aarch64_access_displacement,
     aarch64_base_register_writeback,
     aarch64_data_memory_operands,
+    aarch64_register_number,
 )
 from teapot.passes.preprocessing.split_lo12 import symbolize_split_lo12
 from teapot.utils.misc import symbol_address
@@ -165,12 +166,9 @@ class NormalizeAArch64RelocationsPass(Pass):
 
     @staticmethod
     def _register(name):
-        aliases = {"fp": 29, "lr": 30, "ip0": 16, "ip1": 17}
-        if name in aliases:
-            return aliases[name]
-        if len(name) > 1 and name[0] in ("x", "w") and name[1:].isdigit():
-            return int(name[1:])
-        return name
+        # Numbered registers compare by number, so a w view matches its x register; others by name.
+        number = aarch64_register_number(name)
+        return name if number is None else number
 
     @staticmethod
     def _normalized_attributes(module: gtirb.Module, symexpr: gtirb.SymAddrConst):

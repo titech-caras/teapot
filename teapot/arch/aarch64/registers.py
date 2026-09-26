@@ -6,6 +6,8 @@ from teapot.arch.aarch64.operands import (
     aarch64_atomic_read_operand_indices,
     aarch64_atomic_written_operand_indices,
     aarch64_is_atomic_rmw_mnemonic,
+    aarch64_register_alias,
+    aarch64_x_register_name,
 )
 
 
@@ -15,28 +17,11 @@ class AArch64RegisterMixin:
 
     def register_from_name(self, abi, name: str, flag_name=None):
         if name is not None:
-            name = name.lower()
-            if name == "fp":
-                name = "x29"
-            elif name == "lr":
-                name = "x30"
-            elif name == "wsp":
-                name = "sp"
+            name = aarch64_register_alias(name)
         return super().register_from_name(abi, name, flag_name)
 
     def x_register_name(self, reg) -> str:
-        name = getattr(reg, "name", str(reg)).lower()
-        if name.startswith("w") and name[1:].isdigit():
-            return "x" + name[1:]
-        if name == "wsp":
-            return "sp"
-        if name == "wzr":
-            return "xzr"
-        if name == "fp":
-            return "x29"
-        if name == "lr":
-            return "x30"
-        return name
+        return aarch64_x_register_name(getattr(reg, "name", str(reg)))
 
     def access_registers(self, abi, inst, acc_type: int) -> Set:
         # Capstone 6.0.0-Alpha11 reports a CAS's base register as written and leaves out the compare

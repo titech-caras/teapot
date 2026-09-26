@@ -20,21 +20,11 @@ from capstone import CS_OP_IMM, CS_OP_REG
 
 from teapot.arch.aarch64.architecture import AArch64Architecture
 from teapot.arch.aarch64.control_flow import AARCH64_CALL_MNEMONICS
-from teapot.arch.aarch64.operands import aarch64_base_register_writeback, aarch64_data_memory_operands
+from teapot.arch.aarch64.operands import (
+    aarch64_base_register_writeback, aarch64_data_memory_operands, aarch64_register_number)
 
 CALLEE_SAVED = frozenset(range(19, 29))
 LO12 = gtirb.SymbolicExpression.Attribute.LO12
-
-
-def _regnum(name):
-    if name is None:
-        return None
-    aliases = {'fp': 29, 'lr': 30}
-    if name in aliases:
-        return aliases[name]
-    if len(name) > 1 and name[0] in 'xw' and name[1:].isdigit():
-        return int(name[1:])
-    return None
 
 
 def _symbol_address(symbol):
@@ -66,7 +56,7 @@ class _Module:
     def access(self, inst):
         # Use the same corrected effects as instrumentation. Raw Capstone CAS
         # effects mistake the memory base for the overwritten compare register.
-        return tuple({_regnum(reg.name) for reg in
+        return tuple({aarch64_register_number(reg.name) for reg in
                       self.arch.access_registers(self.arch.abi, inst, kind)} - {None}
                      for kind in (0, 1))
 
@@ -75,13 +65,13 @@ def _page_offset(inst, reg):
     """Immediate page offset if inst uses reg as an ADRP page base, else None."""
     ops = inst.operands
     if inst.mnemonic == 'add' and len(ops) == 3 and ops[1].type == CS_OP_REG and \
-            _regnum(inst.reg_name(ops[1].reg)) == reg and ops[2].type == CS_OP_IMM:
+            aarch64_register_number(inst.reg_name(ops[1].reg)) == reg and ops[2].type == CS_OP_IMM:
         shift = ops[2].shift
         if getattr(shift, 'type', 0) and getattr(shift, 'value', 0):
             return None
         return ops[2].imm if 0 <= ops[2].imm < 4096 else None
     memory = aarch64_data_memory_operands(inst)
-    if len(memory) == 1 and _regnum(inst.reg_name(memory[0].mem.base)) == reg and \
+    if len(memory) == 1 and aarch64_register_number(inst.reg_name(memory[0].mem.base)) == reg and \
             not memory[0].mem.index and not aarch64_base_register_writeback(inst) and 0 <= memory[0].mem.disp < 4096:
         return memory[0].mem.disp
     return None
@@ -159,7 +149,7 @@ def symbolize_split_lo12(module, decoder):
             if target is None:
                 continue
             target += addend
-            reg = _regnum(inst.reg_name(inst.operands[0].reg))
+            reg = aarch64_register_number(inst.reg_name(inst.operands[0].reg))
             page = inst.operands[1].imm
             work = [(block, index + 1)]
             visited = set()

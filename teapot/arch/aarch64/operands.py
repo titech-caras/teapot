@@ -9,6 +9,34 @@ from teapot.utils.registers import get_register
 from teapot.datacls.stack_access import StackAccess
 
 
+# Assembler spellings of general-purpose registers. Capstone itself prints x29, x30, x16, x17 and sp,
+# but register names also come from Teapot's own operand strings.
+_AARCH64_REGISTER_ALIASES = {"fp": "x29", "lr": "x30", "ip0": "x16", "ip1": "x17", "wsp": "sp"}
+
+
+def aarch64_register_alias(name: str) -> str:
+    """The lowercase name with fp, lr, ip0, ip1 and wsp resolved; w registers stay w registers."""
+    name = name.lower()
+    return _AARCH64_REGISTER_ALIASES.get(name, name)
+
+
+def aarch64_x_register_name(name: str) -> str:
+    """The 64-bit name of a general-purpose register: aliases resolve, wN becomes xN and wzr xzr."""
+    name = aarch64_register_alias(name)
+    if name.startswith("w") and name[1:].isdigit():
+        return "x" + name[1:]
+    return "xzr" if name == "wzr" else name
+
+
+def aarch64_register_number(name) -> Optional[int]:
+    """0-30 for x0-x30, their w views and their aliases; None for sp, the zero register and anything else."""
+    if name is None:
+        return None
+    name = aarch64_x_register_name(name)
+    if name.startswith("x") and name[1:].isdigit() and int(name[1:]) <= 30:
+        return int(name[1:])
+    return None
+
 def _vector_arrangement(vas):
     """(lanes, element bytes) of a vector arrangement, or None.
 
@@ -172,15 +200,9 @@ class AArch64OperandMixin:
 
     @staticmethod
     def aarch64_reg_name(abi, name: str) -> str:
-        name = name.lower()
-        if name == "fp":
-            name = "x29"
-        elif name == "lr":
-            name = "x30"
+        name = aarch64_register_alias(name)
         if name in ("xzr", "wzr"):
             return "xzr"
-        if name == "wsp":
-            name = "sp"
         return get_register(abi, name).name
 
     @staticmethod
@@ -386,11 +408,7 @@ class AArch64OperandMixin:
         for reg_id in (mem_operand.mem.base, mem_operand.mem.index):
             if not reg_id:
                 continue
-            reg_name = inst.reg_name(reg_id).lower()
-            if reg_name.startswith("w") and reg_name[1:].isdigit():
-                reg_name = "x" + reg_name[1:]
-            if reg_name == "wsp":
-                reg_name = "sp"
+            reg_name = aarch64_x_register_name(inst.reg_name(reg_id))
             if reg_name not in {"sp", "xzr"}:
                 result.add(reg_name)
         return result

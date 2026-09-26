@@ -10,6 +10,7 @@ from gtirb_rewriting import RewritingContext
 from capstone import CS_OP_IMM, CS_OP_REG
 
 from teapot.arch.aarch64.architecture import AArch64Architecture
+from teapot.arch.aarch64.operands import aarch64_register_number
 from teapot.passes.mixins import VisitorPassMixin
 from teapot.utils.misc import distinguish_edges, generate_distinct_label_name, get_or_insert_symbol
 
@@ -487,25 +488,7 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
     def _destination_register_number(instruction) -> Optional[int]:
         if not instruction.operands or instruction.operands[0].type != CS_OP_REG:
             return None
-
-        reg_name = instruction.reg_name(instruction.operands[0].reg)
-        if reg_name == "fp":
-            return 29
-        if reg_name == "lr":
-            return 30
-        if reg_name.startswith("w"):
-            reg_name = "x" + reg_name[1:]
-        if not reg_name.startswith("x"):
-            return None
-
-        try:
-            reg_num = int(reg_name[1:])
-        except ValueError:
-            return None
-
-        if reg_num < 0 or reg_num > 30:
-            return None
-        return reg_num
+        return aarch64_register_number(instruction.reg_name(instruction.operands[0].reg))
 
     @staticmethod
     def _encode_adrp_add(reg_num: int) -> bytes:

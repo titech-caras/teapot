@@ -7,6 +7,7 @@ from gtirb_rewriting import Pass
 from gtirb_rewriting._modify.edit import edit_byte_interval
 
 from teapot.arch.aarch64.control_flow import AARCH64_CALL_MNEMONICS
+from teapot.arch.aarch64.operands import aarch64_register_number
 from teapot.utils.misc import symbol_address
 from teapot.utils.return_abi import POINTER_RETURNS, has_pointer_return_contract
 
@@ -68,15 +69,6 @@ class WidenAArch64ByteJumpTablesPass(Pass):
         return tables
 
     @staticmethod
-    def _register_number(name):
-        aliases = {'fp': 29, 'lr': 30, 'ip0': 16, 'ip1': 17}
-        if name in aliases:
-            return aliases[name]
-        if len(name) > 1 and name[0] in ('x', 'w') and name[1:].isdigit():
-            return int(name[1:])
-        return None
-
-    @staticmethod
     def _function(module, block):
         blocks = module.aux_data.get('functionBlocks')
         entries = module.aux_data.get('functionEntries')
@@ -117,7 +109,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                         # a hoisted base in one survives the call unchanged.
                         continue
                     return None
-                writes = {self._register_number(inst.reg_name(r)) for r in inst.regs_access()[1]}
+                writes = {aarch64_register_number(inst.reg_name(r)) for r in inst.regs_access()[1]}
                 if register not in writes:
                     continue
                 word = int.from_bytes(inst.bytes, 'little')
@@ -137,7 +129,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                         if (candidate.mnemonic in AARCH64_CALL_MNEMONICS and
                                 source not in CALLEE_SAVED):
                             break
-                        if source in {self._register_number(candidate.reg_name(r))
+                        if source in {aarch64_register_number(candidate.reg_name(r))
                                       for r in candidate.regs_access()[1]}:
                             high = candidate
                             break
@@ -217,7 +209,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                 visiting = visiting | {current}
                 for offset, inst in enumerate(instructions):
                     reads, writes = inst.regs_access()
-                    if register in {self._register_number(inst.reg_name(r)) for r in reads}:
+                    if register in {aarch64_register_number(inst.reg_name(r)) for r in reads}:
                         return None
                     if inst.mnemonic in AARCH64_CALL_MNEMONICS:
                         effect = call_input_effect(current, offset, register, visiting)
@@ -227,7 +219,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                         return None
                     if inst.mnemonic in ('ret', 'retaa', 'retab'):
                         return False
-                    if register in {self._register_number(inst.reg_name(r)) for r in writes}:
+                    if register in {aarch64_register_number(inst.reg_name(r)) for r in writes}:
                         return True
                 successors = [edge for edge in current.outgoing_edges
                               if edge.label is None or edge.label.type != gtirb.Edge.Type.Call]
@@ -252,7 +244,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                 for index in range(start, len(instructions)):
                     inst = instructions[index]
                     reads, writes = inst.regs_access()
-                    if (register in {self._register_number(inst.reg_name(r)) for r in reads} and
+                    if (register in {aarch64_register_number(inst.reg_name(r)) for r in reads} and
                             (block, index, register) not in loads):
                         raise ValueError('unrecognized register use of widened byte jump-table base')
                     if (inst.mnemonic in AARCH64_CALL_MNEMONICS and
@@ -267,7 +259,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                                 register, root[0].address, inst.address))
                     if inst.mnemonic in ('svc', 'hvc', 'smc'):
                         raise ValueError('byte jump-table base escapes through a system call')
-                    if register in {self._register_number(inst.reg_name(r)) for r in writes}:
+                    if register in {aarch64_register_number(inst.reg_name(r)) for r in writes}:
                         break
                     if inst.mnemonic in ('ret', 'retaa', 'retab'):
                         if register in (0, 1):
