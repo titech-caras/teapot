@@ -3,6 +3,7 @@ from capstone import CS_OP_IMM, CS_OP_MEM, CS_OP_REG
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_rewriting import Pass, RewritingContext
 
+from teapot.passes.preprocessing.split_lo12 import symbolize_split_lo12
 from teapot.utils.misc import symbol_address
 
 
@@ -19,7 +20,8 @@ class NormalizeAArch64RelocationsPass(Pass):
     real target in symbolForwarding. Add the GOT attribute expected by the
     AArch64 pprinter so adrp/ldr pairs stay as :got:/:got_lo12: references.
 
-    Linker-relaxed ADRPs are restored first (see _restore_relaxed_adrp).
+    Linker-relaxed ADRPs are restored first (see _restore_relaxed_adrp), and raw
+    page-offset users of split ADRPs are symbolized (see split_lo12.py).
     """
 
     def __init__(self, decoder: GtirbInstructionDecoder):
@@ -31,6 +33,8 @@ class NormalizeAArch64RelocationsPass(Pass):
             return
 
         self._restore_relaxed_adrp(module)
+        # DDisasm can leave page-offset users of a hoisted ADRP raw (split_lo12.py).
+        self.symbolized_split_lo12 = symbolize_split_lo12(module, self.decoder)
         self._instructions = {
             inst.address: inst
             for block in module.code_blocks
