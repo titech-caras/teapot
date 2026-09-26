@@ -2,8 +2,8 @@
 
 This is an isolated prototype, not the default backend or a production merge.
 The user approved replacing the first marker with BTI and requested AArch64
-only for now. The earlier literal-marker objection in this directory's historical
-README is therefore superseded for this opt-in path. x64 and RV64 remain software.
+only for now; this supersedes the earlier literal-marker objection for this opt-in
+path. x64 and RV64 remain software.
 
 ## Contract
 
@@ -176,16 +176,7 @@ Workspace `/home/lin/teapot-multiarch`:
   memory evidence and serial timing. `runtime-mte-v1/Testing/Temporary/LastTest.log`
   retains the 21 MTE runtime results.
 
-The activation fixtures are packaged here. After configuring an AArch64 runtime
-build (for its generated include header), run:
-
-```sh
-python3 experiments/hardware_targets/run_activation_gates.py \
-  --runtime-build /absolute/path/to/runtime-build \
-  --out /absolute/path/to/new-gate-output
-```
-
-These artifacts are local to this server; Git alone does not transfer them.
+These artifacts are local to the evaluation server; Git does not carry them.
 
 ## Architectural references
 
