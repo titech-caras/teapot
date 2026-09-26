@@ -8,6 +8,9 @@ from teapot.configs.slots import AARCH64_SHADOW_STACK_INDIRECT_TARGET_OFFSET
 from teapot.utils.misc import generate_distinct_label_name
 
 
+AARCH64_CALL_MNEMONICS = frozenset(("bl", "blr", "blraa", "blrab", "blraaz", "blrabz"))
+
+
 class AArch64ControlFlowPatchesMixin:
     def skipped_text_restore_guard_patch(self):
         """Guard untransformed text without relying on initialized scratch state."""

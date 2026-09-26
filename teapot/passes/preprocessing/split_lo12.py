@@ -18,6 +18,8 @@ Anything else is left unchanged. Runs before instrumentation, so both copies get
 import gtirb
 from capstone import CS_OP_IMM, CS_OP_REG
 
+from teapot.arch.aarch64.architecture import AArch64Architecture
+from teapot.arch.aarch64.control_flow import AARCH64_CALL_MNEMONICS
 from teapot.arch.aarch64.operands import aarch64_base_register_writeback, aarch64_data_memory_operands
 
 CALLEE_SAVED = frozenset(range(19, 29))
@@ -48,6 +50,7 @@ class _Module:
     def __init__(self, module, decoder):
         self.module = module
         self.decoder = decoder
+        self.arch = AArch64Architecture()
         self.cache = {}
 
     def insns(self, block):
@@ -60,9 +63,12 @@ class _Module:
         interval = block.byte_interval
         return interval.symbolic_expressions.get(inst.address - interval.address)
 
-    @staticmethod
-    def access(inst):
-        return tuple({_regnum(inst.reg_name(r)) for r in regs} for regs in inst.regs_access())
+    def access(self, inst):
+        # Use the same corrected effects as instrumentation. Raw Capstone CAS
+        # effects mistake the memory base for the overwritten compare register.
+        return tuple({_regnum(reg.name) for reg in
+                      self.arch.access_registers(self.arch.abi, inst, kind)} - {None}
+                     for kind in (0, 1))
 
 
 def _page_offset(inst, reg):
@@ -113,7 +119,7 @@ def _reaching_definitions(state, block, index, reg):
                 found.add(key)
                 defined = True
                 break
-            if inst.mnemonic in ('bl', 'blr') and position != end - 1 and reg not in CALLEE_SAVED:
+            if inst.mnemonic in AARCH64_CALL_MNEMONICS and reg not in CALLEE_SAVED:
                 return None
         if defined:
             continue
@@ -125,7 +131,7 @@ def _reaching_definitions(state, block, index, reg):
             if kind == gtirb.cfg.Edge.Type.Call or not isinstance(edge.source, gtirb.CodeBlock):
                 return None   # function entry: the register is an input
             source_stream = state.insns(edge.source)
-            if source_stream and source_stream[-1].mnemonic in ('bl', 'blr') and reg not in CALLEE_SAVED:
+            if source_stream and source_stream[-1].mnemonic in AARCH64_CALL_MNEMONICS and reg not in CALLEE_SAVED:
                 return None
             predecessors.append(edge.source)
         if not predecessors:
@@ -176,7 +182,7 @@ def symbolize_split_lo12(module, decoder):
                             interval.symbolic_expressions[use.address - interval.address] = \
                                 gtirb.SymAddrConst(addend, symbol, {LO12})
                             fixed += 1
-                    if reg in writes or (use.mnemonic in ('bl', 'blr') and reg not in CALLEE_SAVED):
+                    if reg in writes or (use.mnemonic in AARCH64_CALL_MNEMONICS and reg not in CALLEE_SAVED):
                         alive = False
                         break
                 if not alive:

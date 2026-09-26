@@ -14,6 +14,11 @@ ADD_X1_AB8 = 0x912AE021         # add x1, x1, #0xab8
 MOV_X22_0 = 0xD2800016          # mov x22, #0
 BL_SELF = 0x94000000            # bl . (target irrelevant)
 RET = 0xD65F03C0
+CAS_X22 = (0xC8B67C20, 0xC8F67C20, 0xC8F6FC20, 0xC8B6FC20,
+           0x08B67C20, 0x48B67C20, 0x88B67C20)
+# cas/casa/casal/casl x22,x0,[x1], casb/cash/cas w22,w0,[x1]
+CALLS = (BL_SELF, 0xD63F0040, 0xD73F0843, 0xD73F0C43, 0xD63F085F, 0xD63F0C5F)
+# bl, blr x2, blraa/blrab x2,x3, blraaz/blrabz x2
 
 
 class SplitLo12Tests(unittest.TestCase):
@@ -74,6 +79,51 @@ class SplitLo12Tests(unittest.TestCase):
             [[ADRP_X22_3000], [ADD_X22_AC0, RET]], [(0, 1, gtirb.Edge.Type.Fallthrough)])
         self.assertEqual(self.run_fix(module), 0)
         self.assertIsNone(self.expr(code, blocks[1]))
+
+    def test_compare_exchange_redefines_the_compare_register(self):
+        for word in CAS_X22:
+            for split in (False, True):
+                with self.subTest(word=hex(word), split=split):
+                    words = [[ADRP_X22_3000, word, ADD_X22_AB8, RET]]
+                    edges = []
+                    if split:
+                        words = [[ADRP_X22_3000], [word, ADD_X22_AB8, RET]]
+                        edges = [(0, 1, gtirb.Edge.Type.Fallthrough)]
+                    module, code, _, _ = self.build(words, edges)
+                    self.assertEqual(self.run_fix(module), 0)
+                    self.assertEqual(set(code.symbolic_expressions), {0})
+
+    def test_compare_exchange_does_not_redefine_its_memory_base(self):
+        module, code, _, symbol = self.build(
+            [[ADRP_X22_3000, 0xC8A07EC1, ADD_X22_AB8, RET]], [])  # cas x0,x1,[x22]
+        self.assertEqual(self.run_fix(module), 1)
+        self.assertEqual(code.symbolic_expressions[8], gtirb.SymAddrConst(0, symbol, {LO12}))
+
+    def test_all_calls_kill_caller_saved_bases_but_preserve_callee_saved_bases(self):
+        for call in CALLS:
+            for adrp, add, expected in ((ADRP_X1_3000, ADD_X1_AB8, 0),
+                                        (ADRP_X22_3000, ADD_X22_AB8, 1)):
+                for split in (False, True):
+                    with self.subTest(call=hex(call), adrp=hex(adrp), split=split):
+                        words = [[adrp, call, add, RET]]
+                        edges = []
+                        if split:
+                            words = [[adrp, call], [add, RET]]
+                            edges = [(0, 1, gtirb.Edge.Type.Fallthrough)]
+                        module, code, _, symbol = self.build(words, edges)
+                        self.assertEqual(self.run_fix(module), expected)
+                        self.assertEqual(code.symbolic_expressions.get(8),
+                                         gtirb.SymAddrConst(0, symbol, {LO12}) if expected else None)
+
+    def test_call_on_another_incoming_path_blocks_recovery(self):
+        for call in CALLS:
+            with self.subTest(call=hex(call)):
+                module, code, blocks, _ = self.build(
+                    [[ADRP_X1_3000], [call], [ADD_X1_AB8, RET]],
+                    [(0, 1, gtirb.Edge.Type.Branch), (0, 2, gtirb.Edge.Type.Branch),
+                     (1, 2, gtirb.Edge.Type.Fallthrough)])
+                self.assertEqual(self.run_fix(module), 0)
+                self.assertIsNone(self.expr(code, blocks[2]))
 
 
 if __name__ == '__main__':

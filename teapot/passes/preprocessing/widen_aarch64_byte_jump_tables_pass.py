@@ -6,6 +6,7 @@ from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_rewriting import Pass
 from gtirb_rewriting._modify.edit import edit_byte_interval
 
+from teapot.arch.aarch64.control_flow import AARCH64_CALL_MNEMONICS
 from teapot.utils.misc import symbol_address
 from teapot.utils.return_abi import POINTER_RETURNS, has_pointer_return_contract
 
@@ -110,7 +111,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                 return None
             for position in range(stop - 1, -1, -1):
                 inst = instructions[position]
-                if inst.mnemonic in ('bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz'):
+                if inst.mnemonic in AARCH64_CALL_MNEMONICS:
                     if register in CALLEE_SAVED:
                         # AAPCS64: every conforming callee preserves x19-x28, so
                         # a hoisted base in one survives the call unchanged.
@@ -133,7 +134,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                     high = None
                     for earlier in range(position - 1, -1, -1):
                         candidate = instructions[earlier]
-                        if (candidate.mnemonic in ('bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz') and
+                        if (candidate.mnemonic in AARCH64_CALL_MNEMONICS and
                                 source not in CALLEE_SAVED):
                             break
                         if source in {self._register_number(candidate.reg_name(r))
@@ -218,7 +219,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                     reads, writes = inst.regs_access()
                     if register in {self._register_number(inst.reg_name(r)) for r in reads}:
                         return None
-                    if inst.mnemonic in ('bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz'):
+                    if inst.mnemonic in AARCH64_CALL_MNEMONICS:
                         effect = call_input_effect(current, offset, register, visiting)
                         if effect is not False:
                             return effect
@@ -254,7 +255,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                     if (register in {self._register_number(inst.reg_name(r)) for r in reads} and
                             (block, index, register) not in loads):
                         raise ValueError('unrecognized register use of widened byte jump-table base')
-                    if (inst.mnemonic in ('bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz') and
+                    if (inst.mnemonic in AARCH64_CALL_MNEMONICS and
                             register not in CALLEE_SAVED):
                         # A callee-saved base is not an argument and survives the
                         # call (AAPCS64), so it stays tracked past it unchanged.
@@ -293,8 +294,7 @@ class WidenAArch64ByteJumpTablesPass(Pass):
                     if not successors:
                         # A block ending in a call with no fallthrough (DDisasm's
                         # no-return analysis, e.g. abort) ends every path through it.
-                        if instructions and instructions[-1].mnemonic in (
-                                'bl', 'blr', 'blraa', 'blrab', 'blraaz', 'blrabz'):
+                        if instructions and instructions[-1].mnemonic in AARCH64_CALL_MNEMONICS:
                             continue
                         raise ValueError('unproved byte jump-table base lifetime')
                     pending.extend((successor, 0, register) for successor in successors)
