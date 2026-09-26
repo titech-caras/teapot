@@ -51,8 +51,8 @@ def aarch64_base_register_writeback(inst) -> bool:
 
 
 def aarch64_is_literal_operand(operand) -> bool:
-    """A PC-relative literal (``ldr x0, <label>``): Capstone 6 reports a MEM operand with no base or
-    index register and the target address as its displacement; Capstone 5 an immediate."""
+    """A PC-relative literal (``ldr x0, <label>``): Capstone reports a MEM operand with no base or
+    index register and the target address as its displacement."""
     return operand.type == CS_OP_MEM and not operand.mem.base and not operand.mem.index
 
 
@@ -64,8 +64,8 @@ def aarch64_data_memory_operands(inst):
 def aarch64_access_displacement(inst, mem_operand) -> int:
     """Displacement of the address a memory operand accesses.
 
-    A post-indexed access reads or writes the unmodified base. Capstone 6 reports the increment as the
-    MEM operand's displacement; Capstone 5 as a separate immediate, with displacement 0."""
+    A post-indexed access reads or writes the unmodified base; Capstone reports the increment as the
+    MEM operand's displacement."""
     return 0 if getattr(inst, "post_index", False) else mem_operand.mem.disp
 
 
@@ -102,7 +102,7 @@ class AArch64OperandMixin:
     @staticmethod
     def memory_operand(inst):
         # A literal load reads a constant from the code's literal pool; its address is fixed by the
-        # layout, not computed from registers, and Capstone 5 did not report it as a memory operand.
+        # layout, not computed from registers.
         return next(iter(aarch64_data_memory_operands(inst)), None)
 
     def saved_return_registers(self):
@@ -112,14 +112,12 @@ class AArch64OperandMixin:
         operands = inst.operands
         mem = self.memory_operand(inst)
         if mem is not None and aarch64_base_register_writeback(inst):
+            if operands[-1].type != CS_OP_MEM or mem.mem.index:
+                # A register increment (`ld1 {v0.16b}, [x0], x2`).
+                return None
+            # The pre-index offset or the post-index increment.
             base = self.register_from_name(self.abi, inst.reg_name(mem.mem.base))
-            if operands[-1].type == CS_OP_IMM:
-                # Capstone 5's post-index increment.
-                return base, base, operands[-1].imm
-            if operands[-1].type == CS_OP_MEM and not mem.mem.index:
-                # Pre-index offset, and Capstone 6's post-index increment.
-                return base, base, mem.mem.disp
-            return None
+            return base, base, mem.mem.disp
         if len(operands) < 2 or any(op.type != CS_OP_REG for op in operands[:2]):
             return None
         if any(inst.reg_name(op.reg).startswith("w") for op in operands[:2]):
@@ -201,8 +199,8 @@ class AArch64OperandMixin:
         for operand in inst.operands:
             if operand.type != CS_OP_REG:
                 continue
-            # List members are v<n> in Capstone 5 and q<n>/d<n> with a vector flag in Capstone 6.
-            if not (getattr(operand, "is_vreg", False) or inst.reg_name(operand.reg).lower().startswith("v")):
+            # List members are q<n>/d<n> registers with Capstone's vector flag.
+            if not getattr(operand, "is_vreg", False):
                 continue
 
             arrangement = _vector_arrangement(getattr(operand, "vas", 0))
@@ -250,7 +248,7 @@ class AArch64OperandMixin:
             name = inst.reg_name(op.reg).lower()
             if name == "wzr" or name.startswith(("w", "s")):
                 reg_sizes.append(4)
-            elif name in {"fp", "lr", "sp", "xzr"} or name.startswith(("x", "d")):
+            elif name in {"sp", "xzr"} or name.startswith(("x", "d")):
                 reg_sizes.append(8)
             elif name.startswith("q"):
                 reg_sizes.append(16)

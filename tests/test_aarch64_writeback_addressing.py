@@ -6,10 +6,10 @@ from teapot.arch.decoders import aarch64_decoder
 
 
 class AArch64WritebackAddressingTests(unittest.TestCase):
-    """Pre/post-indexed accesses, independent of how Capstone reports the increment.
+    """Pre/post-indexed accesses.
 
-    Capstone 5 gives `[x1], #8` a zero displacement plus an immediate operand; Capstone 6 folds the
-    increment into the displacement and sets post_index. It also sets writeback for tied operands.
+    Capstone folds a post-index increment into the displacement and sets post_index; it also sets
+    writeback for tied operands, which update no base register.
     """
 
     # encoding, accessed displacement, base register writeback
@@ -58,8 +58,8 @@ class AArch64WritebackAddressingTests(unittest.TestCase):
         self.assertNotIn("add", snippet)
 
     def test_literal_loads_are_not_data_memory_operands(self):
-        # Capstone 6 reports `ldr x0, <label>` as a MEM operand without registers, Capstone 5 as an
-        # immediate. Neither is an access through registers that needs logging or checks.
+        # Capstone reports `ldr x0, <label>` as a MEM operand without registers. It is not an access
+        # through registers that needs logging or checks.
         from teapot.passes.preprocessing.split_lo12 import _page_offset
         for encoded in ("80000058", "42000098", "0001009c", "800000d8", "e1ffff18"):
             inst = self.decode(encoded)

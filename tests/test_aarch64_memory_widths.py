@@ -35,7 +35,7 @@ class AArch64MemoryWidthTests(unittest.TestCase):
                 self.assertEqual(arch.mem_operand_size(inst, arch.memory_operand(inst)), size)
 
     def test_structure_access_width_follows_the_register_list(self):
-        # Capstone 5 names list members v0, v1, ...; Capstone 6 names them q0/d0 with a vector flag.
+        # Capstone names list members q0/d0, ... with a vector flag.
         decoder = aarch64_decoder()
         arch = AArch64Architecture()
         cases = (
