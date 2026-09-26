@@ -76,17 +76,24 @@ class RISCV64OperandMixin:
         if not operands or operands[0].type != CS_OP_REG:
             return None
         dst = self.register_from_name(self.abi, inst.reg_name(operands[0].reg))
+        if inst.mnemonic in {"c.addi", "c.addi16sp"} and len(operands) == 2 and operands[1].type == CS_OP_IMM:
+            return dst, dst, operands[1].imm
         if inst.mnemonic in {"mv", "c.mv"} and len(operands) == 2 and operands[1].type == CS_OP_REG:
-            return dst, self.register_from_name(self.abi, inst.reg_name(operands[1].reg)), 0
-        if (inst.mnemonic in {"addi", "c.addi4spn"} and len(operands) == 3 and
+            source, delta = operands[1], 0
+        elif (inst.mnemonic in {"addi", "c.addi4spn"} and len(operands) == 3 and
                 operands[1].type == CS_OP_REG and operands[2].type == CS_OP_IMM):
             # Without the type check on operand 1, Capstone's operand union
             # would reinterpret an immediate as a register id and fabricate a
             # frame assignment that was never written.
-            return dst, self.register_from_name(self.abi, inst.reg_name(operands[1].reg)), operands[2].imm
-        if inst.mnemonic in {"c.addi", "c.addi16sp"} and len(operands) == 2 and operands[1].type == CS_OP_IMM:
-            return dst, dst, operands[1].imm
-        return None
+            source, delta = operands[1], operands[2].imm
+        else:
+            return None
+        src = self.register_from_name(self.abi, inst.reg_name(source.reg))
+        if dst is None or src is None:
+            # A copy from zero is a constant load (Capstone 6 spells li as `addi rd, zero, imm`), and a
+            # write to zero is a nop: neither assigns one register from another.
+            return None
+        return dst, src, delta
 
     @staticmethod
     def mem_operand_base_name(inst, operand) -> Optional[str]:
