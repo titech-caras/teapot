@@ -6,7 +6,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-import capstone_gt
+import capstone
 import gtirb
 import llvmlite.binding as llvm
 
@@ -23,8 +23,8 @@ class AArch64PairDiftTests(unittest.TestCase):
         if compiler is None or qemu is None:
             self.skipTest("AArch64 compiler and QEMU required")
         arch = AArch64Architecture()
-        decoder = capstone_gt.Cs(
-            capstone_gt.CS_ARCH_ARM64, capstone_gt.CS_MODE_ARM)
+        decoder = capstone.Cs(
+            capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
         decoder.detail = True
         manager = SimpleNamespace(abi=arch.abi)
         layout = SimpleNamespace(xor_mask=0)

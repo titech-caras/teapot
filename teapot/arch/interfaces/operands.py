@@ -2,7 +2,7 @@ from abc import ABC
 from typing import Optional
 
 import gtirb
-from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM
+from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM
 
 
 class ArchitectureOperandMixin(ABC):

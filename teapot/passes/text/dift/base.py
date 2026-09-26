@@ -5,7 +5,7 @@ from typing import Any, List, Optional, Set
 
 import gtirb
 import llvmlite.binding as llvm
-from capstone_gt import CsInsn
+from capstone import CsInsn
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_functions import Function
 from gtirb_live_register_analysis import LiveRegisterManager

@@ -5,7 +5,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-import capstone_gt
+import capstone
 import gtirb
 from gtirb_rewriting import Assembler
 import llvmlite.binding as llvm
@@ -51,8 +51,8 @@ class TextDiftCodegenTests(unittest.TestCase):
         assembler = Assembler(module, allow_undef_symbols=True)
         assembler.assemble(snippet)
         data = assembler.finalize().text_section.data
-        decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_RISCV,
-                                capstone_gt.CS_MODE_RISCV64 | capstone_gt.CS_MODE_RISCVC)
+        decoder = capstone.Cs(capstone.CS_ARCH_RISCV,
+                                capstone.CS_MODE_RISCV64 | capstone.CS_MODE_RISCVC)
         instructions = list(decoder.disasm(data, 0))
         self.assertEqual(sum(inst.size for inst in instructions), len(data))
         self.assertTrue(instructions)

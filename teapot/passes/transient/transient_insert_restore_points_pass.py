@@ -3,7 +3,7 @@ from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext, Patch, AllFunctionsScope, FunctionPosition, BlockPosition
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_live_register_analysis import LiveRegisterManager
-from capstone_gt import CsInsn
+from capstone import CsInsn
 from typing import List
 import itertools
 

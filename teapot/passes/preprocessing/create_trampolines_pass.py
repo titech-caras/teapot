@@ -2,7 +2,7 @@ import gtirb
 from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext, Patch
 from gtirb_capstone.instructions import GtirbInstructionDecoder
-from capstone_gt import CsInsn
+from capstone import CsInsn
 
 from teapot.arch.architecture import Architecture
 from teapot.configs.blacklist import is_blacklisted_function

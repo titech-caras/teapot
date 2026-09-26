@@ -1,6 +1,6 @@
 from typing import Set
 
-from capstone_gt import CS_OP_MEM, CS_OP_REG
+from capstone import CS_OP_MEM, CS_OP_REG
 
 from teapot.arch.aarch64.operands import (
     aarch64_atomic_read_operand_indices,

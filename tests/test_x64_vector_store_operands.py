@@ -1,7 +1,7 @@
 import unittest
 
-import capstone_gt
-from capstone_gt import CS_ARCH_X86, CS_MODE_64
+import capstone
+from capstone import CS_ARCH_X86, CS_MODE_64
 
 from teapot.arch.x64.architecture import X64Architecture
 
@@ -9,7 +9,7 @@ from teapot.arch.x64.architecture import X64Architecture
 class X64VectorStoreOperandTests(unittest.TestCase):
     @staticmethod
     def _decode(encoded: str):
-        decoder = capstone_gt.Cs(CS_ARCH_X86, CS_MODE_64)
+        decoder = capstone.Cs(CS_ARCH_X86, CS_MODE_64)
         decoder.detail = True
         return next(decoder.disasm(bytes.fromhex(encoded), 0x1000))
 

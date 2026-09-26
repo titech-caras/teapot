@@ -1,7 +1,7 @@
 from typing import Optional
 
 import gtirb
-from capstone_gt import CS_AC_WRITE, CsInsn
+from capstone import CS_AC_WRITE, CsInsn
 from gtirb_functions import Function
 from gtirb_rewriting import InsertionContext, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax

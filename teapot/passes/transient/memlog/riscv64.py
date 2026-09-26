@@ -1,4 +1,4 @@
-from capstone_gt import CsInsn
+from capstone import CsInsn
 
 from teapot.passes.transient.memlog.base import TransientMemlogPassBase
 

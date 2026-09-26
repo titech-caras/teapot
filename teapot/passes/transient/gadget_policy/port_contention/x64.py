@@ -1,7 +1,7 @@
 from typing import Optional
 
 import gtirb
-from capstone_gt import CS_AC_READ, CS_OP_MEM, CS_OP_REG
+from capstone import CS_AC_READ, CS_OP_MEM, CS_OP_REG
 from gtirb_rewriting import InsertionContext, patch_constraints
 from gtirb_rewriting.assembly import X86Syntax
 

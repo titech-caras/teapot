@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Optional, Set
 
 import gtirb
-from capstone_gt import CS_AC_READ, CS_OP_MEM, CS_OP_REG, CsInsn
+from capstone import CS_AC_READ, CS_OP_MEM, CS_OP_REG, CsInsn
 from gtirb_functions import Function
 from gtirb_rewriting import InsertionContext, Patch, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax

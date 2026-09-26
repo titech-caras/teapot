@@ -1,5 +1,5 @@
 import gtirb
-from capstone_gt import CsInsn
+from capstone import CsInsn
 from gtirb_functions import Function
 from gtirb_rewriting import InsertionContext
 from gtirb_rewriting.assembly import Register

@@ -1,5 +1,5 @@
 from gtirb_rewriting import Register
-from capstone_gt import CS_OP_IMM, CS_OP_REG
+from capstone import CS_OP_IMM, CS_OP_REG
 
 
 class X64DiftPatchesMixin:

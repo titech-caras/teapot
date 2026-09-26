@@ -1,6 +1,6 @@
 import unittest
 
-import capstone_gt
+import capstone
 from gtirb_live_register_analysis.analysis import LiveRegisterAnalyzer
 from teapot.arch.x64.architecture import X64Architecture
 
@@ -8,7 +8,7 @@ from teapot.arch.x64.architecture import X64Architecture
 class X64TestRegisterInputsTests(unittest.TestCase):
     def test_test_register_sources_are_read_not_written(self):
         arch = X64Architecture()
-        decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_X86, capstone_gt.CS_MODE_64)
+        decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
         decoder.detail = True
         analyzer = LiveRegisterAnalyzer(arch.abi, decoder=None)
         rsi = arch.abi.get_register('rsi')

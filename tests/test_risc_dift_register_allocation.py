@@ -2,7 +2,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
-import capstone_gt
+import capstone
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture
 from teapot.configs.slots import (
@@ -55,11 +55,11 @@ class RISCDiftRegisterAllocationTests(unittest.TestCase):
         for arch, dift in self._passes():
             with self.subTest(arch=arch.name):
                 if arch.name == "aarch64":
-                    decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_ARM64, capstone_gt.CS_MODE_ARM)
+                    decoder = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
                     encoded = bytes.fromhex("000040f9")  # ldr x0,[x0]
                 else:
                     arch.install_decoder_compat()
-                    decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_RISCV, capstone_gt.CS_MODE_RISCV64)
+                    decoder = capstone.Cs(capstone.CS_ARCH_RISCV, capstone.CS_MODE_RISCV64)
                     encoded = bytes.fromhex("83b20200")  # ld t0,0(t0)
                 decoder.detail = True
                 inst = next(decoder.disasm(encoded, 0x1000))

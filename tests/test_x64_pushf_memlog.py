@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-import capstone_gt
+import capstone
 import gtirb
 
 from teapot.arch import X64Architecture
@@ -20,7 +20,7 @@ from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
 class X64PushfMemlogTests(unittest.TestCase):
     def setUp(self):
         self.arch = X64Architecture()
-        self.decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_X86, capstone_gt.CS_MODE_64)
+        self.decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
         self.decoder.detail = True
 
     def decode(self, encoded):

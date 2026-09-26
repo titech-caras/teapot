@@ -2,7 +2,7 @@ import gtirb
 from gtirb_functions import Function
 from gtirb_rewriting import InsertionContext, Patch, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax
-from capstone_gt import CsInsn
+from capstone import CsInsn
 from typing import Optional, Set
 
 from teapot.passes.transient.memlog.base import TransientMemlogPassBase

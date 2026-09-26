@@ -1,7 +1,7 @@
 from dataclasses import replace
 import warnings
 
-from capstone_gt import CS_AC_READ, CS_OP_MEM
+from capstone import CS_AC_READ, CS_OP_MEM
 from gtirb_rewriting import Patch
 
 from teapot.configs.blacklist import is_blacklisted_function

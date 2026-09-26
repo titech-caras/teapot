@@ -4,7 +4,7 @@ from gtirb_rewriting import Pass, RewritingContext
 from gtirb_rewriting.assembly import Register
 from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_capstone.instructions import GtirbInstructionDecoder
-from capstone_gt import CsInsn
+from capstone import CsInsn
 
 from typing import List, Set
 

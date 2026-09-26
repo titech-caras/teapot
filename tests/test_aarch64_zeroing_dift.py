@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 import unittest
 
-import capstone_gt
+import capstone
 import gtirb
 from gtirb_rewriting import Assembler
 
@@ -14,7 +14,7 @@ class AArch64ZeroingDiftTests(unittest.TestCase):
     def test_only_unmodified_identical_sources_clear_taint(self):
         arch = AArch64Architecture()
         _, module, _, _, _ = make_module(arch, gtirb.Module.ISA.ARM64, b"\x1f\x20\x03\xd5")
-        decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_ARM64, capstone_gt.CS_MODE_ARM)
+        decoder = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
         decoder.detail = True
         text = AArch64TextDiftPropagationLLVMPass(SimpleNamespace(abi=arch.abi), None, None,
                                                  arch, dift_layout=SimpleNamespace(xor_mask=0))

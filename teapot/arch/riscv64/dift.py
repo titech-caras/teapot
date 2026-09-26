@@ -1,4 +1,4 @@
-from capstone_gt import CS_OP_IMM, CS_OP_REG
+from capstone import CS_OP_IMM, CS_OP_REG
 from gtirb_rewriting.assembly import Register
 
 

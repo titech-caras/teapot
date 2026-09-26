@@ -1,9 +1,9 @@
 import re
 
-import capstone_gt.x86
+import capstone.x86
 import gtirb
-from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM, CS_OP_REG
-from capstone_gt.x86 import X86_REG_INVALID, X86_REG_RIP
+from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM, CS_OP_REG
+from capstone.x86 import X86_REG_INVALID, X86_REG_RIP
 from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
 
 
@@ -39,7 +39,7 @@ class X64OperandMixin:
     _SEGMENT_OVERRIDE_RE = re.compile(r"(?i)(?<![0-9A-Za-z_])(fs|gs):")
     _REGISTER_NAMES = frozenset(
         name[len("X86_REG_"):].lower()
-        for name in dir(capstone_gt.x86)
+        for name in dir(capstone.x86)
         if name.startswith("X86_REG_")
     )
 
@@ -207,5 +207,5 @@ class X64OperandMixin:
     def mem_operand_uses_dynamic_address(mem_operand) -> bool:
         return not (
             mem_operand.mem.base in (X86_REG_INVALID, X86_REG_RIP) and
-            mem_operand.mem.index == capstone_gt.x86.X86_REG_INVALID
+            mem_operand.mem.index == capstone.x86.X86_REG_INVALID
         )

@@ -9,7 +9,7 @@ import unittest
 import warnings
 from unittest.mock import Mock
 
-import capstone_gt
+import capstone
 import gtirb
 from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_functions import Function
@@ -27,7 +27,7 @@ from test_live_register_preservation import make_module
 class X64TransientRepTests(unittest.TestCase):
     def setUp(self):
         self.arch = X64Architecture()
-        self.decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_X86, capstone_gt.CS_MODE_64)
+        self.decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
         self.decoder.detail = True
 
     def test_rep_has_dynamic_not_static_cost(self):

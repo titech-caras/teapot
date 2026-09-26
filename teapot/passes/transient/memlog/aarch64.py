@@ -1,5 +1,5 @@
 import gtirb
-from capstone_gt import CsInsn
+from capstone import CsInsn
 from typing import Optional
 
 from teapot.passes.transient.memlog.base import TransientMemlogPassBase

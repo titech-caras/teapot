@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Optional, Set
 
 import gtirb
-from capstone_gt import CsInsn
+from capstone import CsInsn
 from gtirb_rewriting import InsertionContext, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax
 

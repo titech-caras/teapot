@@ -1,7 +1,7 @@
 from typing import Optional
 
 import gtirb
-from capstone_gt import CS_OP_MEM
+from capstone import CS_OP_MEM
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 

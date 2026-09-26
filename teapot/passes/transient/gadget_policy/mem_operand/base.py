@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import List, Set
 
 import gtirb
-from capstone_gt import CS_OP_MEM, CS_OP_REG, CsInsn
+from capstone import CS_OP_MEM, CS_OP_REG, CsInsn
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_functions import Function
 from gtirb_live_register_analysis import LiveRegisterManager

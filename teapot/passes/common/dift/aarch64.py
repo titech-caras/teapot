@@ -1,7 +1,7 @@
 from typing import Optional, Set, Tuple
 
 import gtirb
-from capstone_gt import CS_OP_MEM, CS_OP_REG
+from capstone import CS_OP_MEM, CS_OP_REG
 from gtirb_rewriting import InsertionContext
 from gtirb_rewriting.assembly import Register
 

@@ -7,7 +7,7 @@ import gtirb
 from gtirb_rewriting import _auxdata_offsetmap
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_rewriting import RewritingContext
-from capstone_gt import CS_OP_IMM, CS_OP_REG
+from capstone import CS_OP_IMM, CS_OP_REG
 
 from teapot.arch.aarch64.architecture import AArch64Architecture
 from teapot.passes.mixins import VisitorPassMixin

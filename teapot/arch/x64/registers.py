@@ -1,5 +1,5 @@
-from capstone_gt import CS_OP_REG
-from capstone_gt.x86 import X86_REG_EFLAGS
+from capstone import CS_OP_REG
+from capstone.x86 import X86_REG_EFLAGS
 from gtirb_rewriting import Register
 
 

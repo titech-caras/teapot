@@ -20,7 +20,7 @@ from capstone.arm64 import (
     ARM64_VAS_8B,
     ARM64_VAS_8H,
 )
-from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, CsInsn
+from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, CsInsn
 
 from teapot.utils.registers import get_register
 from teapot.datacls.stack_access import StackAccess

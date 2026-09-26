@@ -6,7 +6,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-import capstone_gt
+import capstone
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
 from teapot.configs.runtime import MEMORY_HISTORY_ENTRY_SIZE, MEMORY_HISTORY_SIZE_OFFSET
@@ -21,7 +21,7 @@ class MemlogEntryTests(unittest.TestCase):
         for width in (1, 2, 3, 4, 7, 8, 10, 16, 24, 64):
             with self.subTest(arch=arch.name, width=width), tempfile.TemporaryDirectory() as directory:
                 if arch.name == "aarch64":
-                    decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_ARM64, capstone_gt.CS_MODE_ARM)
+                    decoder = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
                     decoder.detail = True
                     inst = next(decoder.disasm(bytes.fromhex("030000f9"), 0x1000))
                     memlog = AArch64TransientMemlogPass(

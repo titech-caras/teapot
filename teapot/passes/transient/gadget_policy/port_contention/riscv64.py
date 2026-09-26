@@ -1,7 +1,7 @@
 from typing import Optional
 
 import gtirb
-from capstone_gt import CS_OP_MEM, CsInsn
+from capstone import CS_OP_MEM, CsInsn
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.tags import TAG_SECRET, TAG_SECRET_INDIRECT

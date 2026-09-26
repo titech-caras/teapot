@@ -8,7 +8,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-import capstone_gt
+import capstone
 import gtirb
 from gtirb_functions import Function
 from gtirb_live_register_analysis import LiveRegisterManager
@@ -27,7 +27,7 @@ class X64RepDiftTests(unittest.TestCase):
         self.dift = X64DiftPropagationPass(
             SimpleNamespace(abi=self.arch.abi), None, None, self.arch,
             dift_layout=SimpleNamespace(xor_mask=1 << 32))
-        self.decoder = capstone_gt.Cs(capstone_gt.CS_ARCH_X86, capstone_gt.CS_MODE_64)
+        self.decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
         self.decoder.detail = True
 
     def test_only_repeat_string_opcodes_are_classified(self):

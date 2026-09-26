@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import FrozenSet, Optional, Set, Tuple
 
 import gtirb
-from capstone_gt import CsInsn
+from capstone import CsInsn
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_functions import Function
 from gtirb_live_register_analysis import LiveRegisterManager

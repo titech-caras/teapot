@@ -4,7 +4,7 @@ from itertools import count
 from typing import Optional, Set
 
 import gtirb
-from capstone_gt import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, CsInsn
+from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, CsInsn
 from gtirb_rewriting.assembly import Register
 
 from teapot.configs.runtime import SYMBOL_SUFFIX

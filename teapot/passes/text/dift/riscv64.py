@@ -1,6 +1,6 @@
 import re
 
-from capstone_gt import CsInsn
+from capstone import CsInsn
 from gtirb_rewriting import InsertionContext
 
 from teapot.configs.slots import (
