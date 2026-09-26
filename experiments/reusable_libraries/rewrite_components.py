@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binary-only x64 component rewriting with validated, content-addressed reuse.
+"""Binary-only component rewriting with validated, content-addressed reuse.
 
 An experimental link driver, not support for executing independently loaded
 instrumented DSOs. Only the selected-library converter's supported ELF subset

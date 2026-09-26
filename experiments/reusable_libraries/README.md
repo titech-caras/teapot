@@ -1,235 +1,92 @@
-# Reusable instrumented x64 components (experimental)
+# Reusable instrumented components (experimental)
 
-Current acceptance (September 23): match ordinary program behavior and report
-sites by function, kind, static-site ordinal and tag. Counter values and effects
-near the ROB cutoff need not equal a whole-program rewrite. A warm cache must
-produce a byte-identical executable. Historical exact-counter experiments below
-remain evidence, not additional requirements. Resolved-plan and deferred-restore
-experiments are parked; this path does not lift or split a per-test monolith.
+`rewrite_components.py` instruments an executable and the shared libraries it selects as separate components,
+caches each instrumented component by content, and leaves one final link to combine them with a single runtime. A
+library instrumented once is reused by every executable with the same binding contract; the executable itself is
+always rewritten and relinked. `validate_link.py` checks the structure of the linked result.
 
-This is an opt-in, binary-only **final-link** experiment. It is not support for
-loading instrumented DSOs independently. Existing Teapot CLI behavior and all
-non-component defaults are unchanged. Do not use a cached object with an
-arbitrary linker script/runtime or call the internal `LinkedComponent` API
-without the driver's input checks.
+This is a final-link pipeline. Its output is one non-PIE executable, never an instrumented DSO that could be loaded
+on its own. The input contract is the selected-library converter's (`tools/sharedlib/README.md`): a non-PIE
+executable, the selected compiled shared libraries and explicitly supplied external ELFs, all x86-64, AArch64 or
+RV64. Whatever that contract does not cover is refused before anything is lifted.
 
-The input contract is the selected-library converter's narrow x64 ELF subset:
-one non-PIE executable, selected compiled DSOs, and explicitly supplied external
-ELFs. Selected symbol versions, custom lifecycle and ordinary libc nonlocal jumps
-use the converter's explicit opt-ins. Unsupported TLS, IFUNC, runtime lookup,
-exception unwinding, PIE and other architectures are rejected. Workload source and
-original application objects/archives are not converter inputs. See
-`tools/sharedlib/README.md` in the separately integrated converter changeset.
+## Modes
 
-## Implementation
+The instrumentation mode fixes the DIFT layout, the AArch64 tag storage and the ASan runtime that the final link
+must use (`targets.py`).
 
-1. Validate the complete binding/dependency/startup contract before lifting.
-   Each selected exported function must be uniquely recovered in `.text`.
-2. Lift original inputs separately and retain original DDisasm liveness/CFI in
-   `lift.gtirb`. Do not print/re-lift an ordinary monolith before instrumenting
-   individual components.
-3. Preserve standalone DDisasm ABI liveness, including live arguments/results.
-   Do not force all-live masks or import a linked caller's liveness. Missing
-   instruction masks still mean all-live in the register manager.
-4. Run all default instrumentation, ROB 250, nesting off, x64 LA48/ASan layout.
-   Exported normal entries receive the complete existing marker/redirection
-   before normal-path stack poisoning, in the same rewriting round. Direct
-   transfers to validated providers can continue into their instrumented code;
-   nonzero symbol addends do not receive that exemption. Unknown/external
-   transfers, barriers and syscalls retain their existing rollback/checks.
-5. Preserve shared symbolic references and CFI, then print/assemble real ET_REL
-   objects. The only assembly postprocessing is the existing section-flags
-   script, whose hash is part of the cache recipe.
-6. Resolve application-wide normal/transient bounds at final link. Runtime
-   `.text`, PLT, init/fini and trampolines are excluded from those ranges.
-   Every component uses a link-time coverage-index base and distinct guard
-   storage. The base is calculated from the actual guard-start symbol **after
-   input-section alignment**, not the location counter before `KEEP`.
-7. Link one matching runtime and dynamic ASan afterwards. Final ELF checks
-   verify bounds, full exported markers, coverage offsets/non-overlap, selected
-   definitions, reconstructed CFI, ASan-first ordering and absent selected DSOs.
-   Successful structural checks are explicitly not behavior verification.
+| Mode | ISA | DIFT layout | Tag storage | ASan runtime |
+| --- | --- | --- | --- | --- |
+| `x64` (x86-64 default) | X64 | `x64-la48-asan-new` | shadow | `libasan.so.8` |
+| `aarch64-vma42` (AArch64 default) | ARM64 | `aarch64-vma42` | shadow | `libasan.so.5` |
+| `aarch64-vma39` | ARM64 | `aarch64-vma39` | shadow | `libasan.so.5` |
+| `aarch64-vma48` | ARM64 | `aarch64-vma48` | shadow | `libasan.so.5` |
+| `aarch64-vma42-mte` | ARM64 | `aarch64-vma42` | MTE | none |
+| `aarch64-vma48-mte` | ARM64 | `aarch64-vma48` | MTE | none |
+| `riscv64` (RV64 default) | RISCV64 | `riscv64-sv39` | shadow | `libasan.so.8` |
 
-## Instrumentation cache
+## Rewriting
 
-Immutable content-addressed entries contain original/instrumented IR, raw/fixed
-assembly, the instrumented object, command logs and SHA-256 manifests. Recipes
-include input ELF bytes, role/initializer priority, complete selected dependency
-contents and binding names, external provider bytes, Teapot/rewriter/LRA Python
-sources, converter/driver/section-fix hashes, frontend/native libraries, fixed
-image identity, pass options, standalone ABI liveness policy, ROB/nesting/layout,
-and matching runtime/wrapper archives. Corrupt artifacts fail hash validation;
-objects copied to an output directory do not alias the cached files.
-
-A library recipe deliberately excludes unrelated executable **bytes**, but not
-its provider-name/binding contract. Different main programs with the same
-validated contract can therefore reuse exactly the same instrumented libraries.
-Changing a selected library or the contract conservatively invalidates the set.
-The final executable is always relinked and structurally checked. This cache is
-distinct from the ordinary IR/object cache in `tools/sharedlib`.
-
-## Evidence and limitations
-
-Evidence is retained under `workers/reusable-library-20260921/`, with independent
-test evidence under `workers/baseline-unit-20260921/` and
-`workers/baseline-runtime-20260921/`. The root coordinator's `STATUS.md` records
-which revision has completed which checks. Earlier artifacts remain identifiable
-and are not silently relabelled as passing a later contract.
-
-- Original fixtures cover cross-library direct/indirect calls, shared data and
-  function pointers, alignment, unwinding and tail calls.
-- Root GDB traces of the cross-call fixture demonstrate direct, register-
-  indirect and tail transfers into another component's transient code at depth
-  one. Final shared counters show speculative writes did not leak. New revisions
-  require their own execution checks.
-- The unwind fixture's original depth is 6; both instrumentation strategies
-  report 7. Root traces identify the extra returned frame as ASan's backtrace
-  interceptor. The original-vs-instrumented stdout comparison is therefore not
-  called an exact match; the two instrumented strategies match each other.
-- Preliminary libhtp component runs pass all 118 approved inputs with strict
-  status/stdout/application-log/non-report-stderr checks. All 810 observed
-  reports match the static/link-before runs by function, kind, static report-call
-  ordinal, tag and checkpoint-function sequence. These preliminary runs preceded
-  the explicit all-live contract and are retained as comparison evidence only.
-- **Full report equivalence is not established.** In the preliminary run,
-  instruction counters differ for 177/810 reports against the static baseline:
-  176 are -11 in `htp_utf8_decode_allow_overlong`, one is -3 in
-  `htp_list_array_get`. The same basic-block costs are still charged, but at
-  different positions. Preserved metadata marks the UTF-8 return flags live in
-  the linked monolith and dead in the original DSO; the existing restore-point
-  pass chooses different flag-safe insertion points. This prompted the stricter
-  caller-independent contract above. The all-live revision must be compared
-  independently; it does not magically restore baseline counter timing.
-- Link-before conversion also expands a reachable four-byte NOP into four
-  one-byte NOPs before re-lifting (86 reports gain 3). Direct component rewriting
-  avoids that extra lift. No assembly filter hides the difference. Counter
-  placement/instruction differences can change observations near ROB=250, so
-  corpus agreement is not a proof of identical cutoff behavior on untested paths.
-- No AArch64/MTE/RISC-V component implementation, parallel execution, nested
-  speculation, independently loaded DSO runtime, arbitrary constructor ordering
-  or full C++ exception support is claimed.
-
-## Workspace reproduction
-
-These launchers intentionally use the dated evaluation workspace's pinned tools
-and runtime. Use fresh output directories; retain failure logs. Containers have
-no network, read-only inputs/toolchains, 16-GiB memory and four-CPU limits, and
-`--rm`. Only the output/cache are writable. Do not expose workload build trees
-through the ELF-only input directory.
-
-```sh
-python3 experiments/reusable_libraries/run_workspace.py \
-  --workspace /home/lin/teapot-multiarch \
-  --inputs /absolute/elf-only-input-directory \
-  --executable main --select libalpha.so --select libbeta.so \
-  --out /absolute/fresh-output-directory \
-  --cache /absolute/component-cache
+```
+python3 experiments/reusable_libraries/rewrite_components.py \
+    --executable APP --select libfoo.so [--select ...] --external libc.so.6 [--external ...] \
+    --out OUT --cache CACHE [--mode MODE] --converter tools/sharedlib/convert.py \
+    --teapot TEAPOT --rewriting GTIRB_REWRITING --lra LIVE_REGISTER_ANALYSIS \
+    --runtime-contract CONTRACT.json --ddisasm DDISASM --pprinter GTIRB_PPRINTER [--cc CC] [--jobs N] \
+    [--resolve-selected-versions] [--preserve-selected-lifecycle] [--preserve-nonlocal-jumps] \
+    [--preserve-weak-imports]
 ```
 
-The launcher records exact commands, input/tool/runtime hashes and the final
-structural-validation result. Behavior and report comparison are separate
-steps. Native x64 validation uses `setarch x86_64 -R` and
-`ASAN_OPTIONS=detect_leaks=0:abort_on_error=1`, without suppressing ASan link-order
-checks. Object manifest `rewrite_seconds` records the original cold build, not
-time spent on a cache hit.
+`--teapot`, `--rewriting` and `--lra` name the source trees whose Python files enter the cache key. The runtime
+contract is a JSON description of the runtime the objects will be linked with, for example the hashes of its
+archives; it is stored in the key as given. The four opt-in flags are the converter's.
 
-## Final v3 checks (September 21)
+For each component the driver:
 
-- Expanded Teapot suite: **147/147** (`reusable-teapot-full-147` in the unit
-  worker). Existing defaults are included in this regression screen.
-- All-live cross-call fixtures A and B: **9/9 each**, matching original status,
-  stdout and non-report stderr; exactly one expected runtime header. B reused
-  both instrumented library objects, byte-identically, while rewriting its
-  changed executable. Root's `cross-component-A3.trace.log` verifies real
-  transient direct/indirect/tail execution and rollback for this revision.
-- All-live libhtp: **118/118** strict comparisons, 396 MDS / 94 CACHE / 320 PORT
-  reports (`reusable-libhtp-v3-corpus` in the runtime worker). Binary SHA-256:
-  `9c81304936714a45f45dfe8b3c22fdc9918d1cc54fa25aec9d5242208269a426`.
-- Fresh v3 attribution matches sites/tags/checkpoint functions for **118/118**;
-  counters match on **29/118** complete inputs. There are 177 changed report
-  instances versus static and 263 versus converted link-before, with the same
-  difference pattern described above. All-live preservation did not eliminate
-  the existing insertion-point/NOP differences. It is not full cutoff equivalence.
-- A warm libhtp run hit both instrumented component entries and produced the
-  byte-identical final executable in **3.43 seconds**, including validation and
-  relinking. The cold rewrite portions alone took 9.87 seconds for the harness
-  and 192.62 seconds for libhtp. These are observed single-run timings, not a
-  controlled speedup benchmark. Native corpus process-wall sums were 2.48 seconds
-  for components and 2.75 for the earlier link-before run, also not a rigorous
-  runtime-overhead comparison.
-- A private copied-cache corruption test was refused with
-  `cached artifact hash mismatch: component.o`; no executable was produced.
-  Original cache hashes remained unchanged (`cache-integrity-negative` in the
-  unit worker). Neither the real cache nor accepted binaries were corrupted.
+1. Validates the binding, dependency and startup contract. Each selected exported function must be recovered
+   uniquely in `.text`.
+2. Lifts the original ELF on its own and keeps DDisasm's standalone ABI liveness and CFI. Missing liveness masks
+   mean all-live; the liveness of a particular linked caller is never imported.
+3. Runs every default Teapot pass with ROB 250 and nesting off, in the mode's layout. Exported entries receive the
+   complete indirect-branch marker before normal-path stack poisoning. Direct transfers to a validated provider may
+   continue into its instrumented code; unknown or external transfers keep their rollback and checks.
+4. Prints and assembles a real `ET_REL` object. The only assembly postprocessing is `scripts/fix_asm.sed`.
 
-The separate link-before NOP issue is now fixed in a fresh printer validation:
-`workers/nop-boundaries-20260921/libhtp-validation-v1/` passes all 118 inputs
-before and after instrumentation, and `report-comparison-v1/` matches all 810
-static-baseline reports including counters. The printer preserves multi-byte
-NOP encodings rather than turning them into several instructions. Old artifacts
-and the measurements below are unchanged. This does **not** fix reusable v3's
-liveness-dependent check placement or its 177 counter differences against the
-static baseline; no budget policy has been changed. A fresh native timing
-comparison using the NOP-preserving binary passes all 5,192 strict runs. Its
-median 118-input round is 2.351 s, versus 2.351 s for static and 2.413 s for
-reusable v3. Median paired reusable/static and reusable/new-converted ratios
-are 1.030 and 1.031. Evidence:
-`workers/baseline-runtime-20260921/timing-compare-nop-preserved-20260921/`.
-As below, this includes process startup and I/O on a shared host; reuse is a
-build-cache benefit, not a demonstrated runtime acceleration or cutoff fix.
+`OUT` then holds `component-000.o` (the executable), one object per selected library, any lifecycle support objects,
+the linker script `layout.ld`, and the `components.json` and `inputs.json` manifests.
 
-The remaining promotion gate is report/cutoff policy, plus broader supported-
-input and architecture coverage. This is an independently reviewable prototype,
-not a default-path replacement or a claim of identical behavior on every input.
+## Linking and validation
 
-## Cutoff probe and repeated native timings
+Link `component-000.o`, the library objects (or an archive of them) and the support objects as a non-PIE executable
+without start files, using `OUT/layout.ld`, one runtime built for the same mode (libcheckpoint with its DIFT
+wrapper archives, and honggfuzz's libhfuzz) and the mode's ASan runtime. The script gathers every component's
+normal and transient code into two application-wide ranges and gives each component its own coverage-guard
+storage, based on the guard-start symbol after input-section alignment.
 
-The cutoff limitation is now **observed**, not merely hypothetical. The
-coordinator's `workers/root/baseline-20260921/probe-rob-cutoff.py` runs each
-accepted executable in a fresh debugger-owned process. At one real depth-one
-checkpoint entry to `htp_utf8_decode_allow_overlong`, it replaces counter 5 with
-one of six values: 5, 225, 226, 230, 236, 237. It changes neither executable bytes
-nor the emitted instrumentation. This is a controlled process-state experiment,
-not an ordinary testcase pass or proof that every injected state arises from an
-unmodified input.
+```
+python3 experiments/reusable_libraries/validate_link.py --binary APP.instrumented --objects OUT \
+    --out validation.json --isa ISA --mode MODE
+```
 
-| Injected counter | Static / link-before target reports | Reusable v3 target reports |
-|---|---|---|
-| 5, 225 | MDS ordinal 0, CACHE ordinal 4, MDS ordinal 8 | Same three sites |
-| 226, 230, 236 | MDS ordinal 0 only | All three sites |
-| 237 | MDS ordinal 0 only | MDS ordinal 0 only |
+The validator checks the two ranges and that no other code falls inside them, every exported entry and its marker,
+the coverage-guard bases and that no two components' guards overlap, the selected definitions, the reconstructed
+FDEs, and the ASan runtime's place in `DT_NEEDED` (or its absence in MTE modes), with no selected SONAME still
+needed. Passing it is a structural
+result, not behavior verification.
 
-All 18 cases exit successfully, retain one injected checkpoint, preserve the
-ordinary dynamic application's log, and leave executable hashes unchanged.
-Evidence is in `rob-cutoff-probe-v1/`, independently checked in the runtime
-worker's corrected `cutoff-audit-v2-20260921/`. Only the listed discrete counters
-were tested.
-The static/link-before pass charges an 11-instruction block before the later
-reports, while the reusable build charges it after them. Both eventually check
-the same cost, but the report observations differ. Therefore **v3 is not a
-report-equivalent replacement for the static/link-before mode**. The existing
-restore-point pass uses liveness to choose positions; changing preservation
-assumptions can move checks. Do not loosen preservation or suppress counters to
-hide this result. Default-path behavior and passing artifacts remain unchanged.
+## Cache
 
-A separate CPU-pinned native timing comparison used one warmup and ten timed
-118-input rounds per variant, with a deterministic shuffled variant order per
-round. All 5,192 processes passed strict ordinary-behavior checks; timing includes
-process startup and application/report I/O. The machine was shared with other
-workloads. These are workload measurements, not general-purpose performance
-claims or evidence of cutoff equivalence.
+Each cache entry is immutable and content-addressed. It holds the original and instrumented IR, the raw and fixed
+assembly, the object, the command logs and SHA-256 manifests, and every file is re-hashed on a hit. The key covers
+the input ELF bytes, its role and initializer priority, the selected and external libraries' bytes and binding
+names, the Teapot, gtirb-rewriting and live-register-analysis sources, the converter, the driver, `fix_asm.sed`,
+DDisasm, gtirb-pprinter and the assembler, the runtime contract, the pass options, the ROB length, the mode and its
+layout. A library's key leaves out the executable's bytes but not its binding contract, so another program with the
+same contract reuses the same instrumented library. This cache is separate from the converter's cache of ordinary
+IR and objects.
 
-| Variant | Median seconds / 118 inputs | Min–max | IQR |
-|---|---:|---:|---:|
-| Original dynamic | 0.442 | 0.422–0.449 | 0.010 |
-| Static Teapot | 2.342 | 2.285–2.384 | 0.046 |
-| Converted, link-before | 2.325 | 2.282–2.385 | 0.042 |
-| Reusable v3 | 2.408 | 2.313–2.466 | 0.060 |
+## Limitations
 
-The median of paired per-round reusable/static ratios is 1.031; reusable/
-link-before is 1.035. This does not establish a runtime speedup: reuse saves
-instrumentation work, and v3's all-live policy adds preservation overhead. Raw
-rounds, commands, hashes and machine information are retained in the runtime
-worker's `timing-compare-20260921/`. A stable budget-check placement policy needs
-separate design and validation before promotion; no such semantic change is
-silently included in this prototype.
+- Restore points are placed from each component's standalone liveness. Near the ROB limit, instruction counters,
+  and so which reports appear, can therefore differ from a whole-program rewrite of the same program.
+- No nested speculation, no parallel execution and no constructor ordering beyond the converter's contract.
