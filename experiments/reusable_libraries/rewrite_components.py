@@ -29,6 +29,7 @@ from teapot.configs.runtime import ROB_LEN, SYMBOL_SUFFIX
 from teapot.datacls.linked_component import LinkedComponent
 from teapot.arch import module_isa_name
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
+from teapot.utils.serialization import compact_for_pprinter
 from experiments.reusable_libraries.targets import for_machine
 
 
@@ -173,6 +174,12 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         module.aux_data.pop("elfDynamicInit", None)
         module.aux_data.pop("elfDynamicFini", None)
     instrumented = directory / "instrumented.gtirb"
+    # Match --compact-output on the whole-program path. Analysis-only CFG and
+    # code-width metadata can otherwise push a large component past protobuf's
+    # message-size limit before the pretty-printer ever sees it.
+    compact_stats = compact_for_pprinter(ir)
+    dump(directory / "compaction.json", asdict(compact_stats))
+    print("[teapot] compact component output " + json.dumps(asdict(compact_stats)), flush=True)
     ir.save_protobuf(instrumented)
     printer = [args.pprinter, "--ir", instrumented, "--asm", directory / "raw.S",
                "--policy", "complete", "--shared", "no"]
@@ -187,7 +194,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]),
                     item['machine'], converter.eh_cfi_entries)
     recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "fixed.S", "component.o",
-                "proven-data-decoder-warnings.json", "selected-version-bindings.json"]
+                "proven-data-decoder-warnings.json", "selected-version-bindings.json", "compaction.json"]
     if args.preserve_selected_lifecycle:
         recorded.append("lifecycle.json")
     if isa == 'ARM64':
