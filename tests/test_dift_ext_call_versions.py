@@ -7,7 +7,6 @@ from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_rewriting import _auxdata
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
-from teapot.configs.blacklist import DIFT_WRAPPER_FUNCTIONS
 from teapot.passes.preprocessing.dift_ext_call_pass import DiftExtCallPass
 
 
@@ -117,22 +116,12 @@ class DiftExtCallVersionTests(unittest.TestCase):
         self.assertEqual(symbol.name, "memcpy")
 
     def test_inflate_lifecycle_calls_are_wrapped(self):
-        for name in ("inflate", "inflateInit_", "inflateInit2_", "inflateReset", "inflateReset2",
+        # The pass renames exactly the names this predicate accepts; the renaming itself is
+        # checked by test_only_wrapped_symbols_lose_their_versions.
+        lifecycle = ("inflate", "inflateInit_", "inflateInit2_", "inflateReset", "inflateReset2",
                      "inflateResetKeep", "inflateEnd", "inflateCopy", "inflateSetDictionary",
-                     "inflatePrime", "inflateSync"):
-            with self.subTest(name=name):
-                self.assertIn(name, DIFT_WRAPPER_FUNCTIONS)
-                module = gtirb.Module(name="zlib")
-                section = gtirb.Section(name=".text", module=module)
-                symbol = gtirb.Symbol(name=name, module=module)
-                versions = {symbol: (2, False)}
-                _auxdata.elf_symbol_versions.set(module, ({}, {}, versions))
-                transform = DiftExtCallPass(section, None)
-                transform.begin_module(module, [], None)
-                transform.symbols_to_rename.add(symbol)
-                transform.end_module(module, [])
-                self.assertEqual(symbol.name, name + "__dift_wrapper__")
-                self.assertNotIn(symbol, versions)
+                     "inflatePrime", "inflateSync")
+        self.assertEqual([name for name in lifecycle if DiftExtCallPass.should_ignore_dift_wrapper(name)], [])
 
     def test_assembly_fixup_keeps_symbol_versions(self):
         script = Path(__file__).resolve().parents[1] / "scripts/fix_asm.sed"
