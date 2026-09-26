@@ -113,7 +113,7 @@ executable is always relinked and instrumented afresh.
 | Stage | Key / reuse boundary |
 | --- | --- |
 | Recovered IR | Input ELF contents and basename; DDisasm binary and loaded native libraries; frontend source/patch provenance; frontend options |
-| Ordinary ET_REL | Above plus converter source hash, role/array priority, complete executable/selected/external contents and ordering, printing policy, printer/compiler/assembler/ar/linker identities, native dependencies, Python executable/package contents, and source provenance |
+| Ordinary ET_REL | Above plus converter source hash, role/array priority, the selected/external contents and ordering (and, for the executable's own object, the executable's contents), printing policy, printer/compiler/assembler/ar/linker identities, native dependencies, Python executable/package contents, and source provenance. A selected library's key leaves out the executable, so another executable with the same libraries reuses its object |
 
 Every cached artifact has a SHA-256 entry in its manifest. Retrieval checks the recipe, the exact file set and hashes,
 rejects symlinks and copies rather than hardlinks. Entries are installed atomically and never overwritten; corruption

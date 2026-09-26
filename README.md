@@ -27,9 +27,6 @@ rewrite preparation reduces runtime and peak memory on large RV64 modules.
 The Docker image verifies this API while building. For local development, mount
 the fork at `/workspace/gtirb-rewriting`; the image's `PYTHONPATH` gives that
 checkout precedence over the installed pinned package.
-The current review changes also require the local LRA refresh/preservation and
-rewriting metadata APIs. Use the mounted forks until their reviewed revisions
-are published and pinned; the older installed image does not provide these APIs.
 
 Teapot also requires `llvmlite` for generating optimized DIFT instrumentation.
 Text DIFT uses LLVM `-O3` lowering, targeting RV64IMAFD on RISC-V and Armv8-A
@@ -70,8 +67,10 @@ runtime build (adjust `/opt/teapot-runtime` to its install prefix):
 export TEAPOT_AARCH64_SHADOW_STACK_CONFIG=/opt/teapot-runtime/include/aarch64_shadow_stack.h
 export TEAPOT_DIFT_LAYOUT_FILE=/opt/teapot-runtime/share/libcheckpoint/DiftLayoutData.cmake
 ```
-These files remain owned by libcheckpoint; the Python package does not carry
-independent copies of runtime constants.
+These files remain owned by libcheckpoint. Other runtime constants, among them
+the scratchpad and memory-history layout, are copied by hand into
+`teapot/configs/runtime.py` and `teapot/configs/slots.py` and must match
+`libcheckpoint/include/checkpoint.h`.
 
 See [`libcheckpoint/README.md`](libcheckpoint/README.md) for runtime
 build options, shared AArch64 shadow-stack configuration, ASan/MTE tag-storage requirements, DIFT layout profiles,
@@ -109,7 +108,6 @@ sysroot is left unchanged.
   Noncanonical REPNE copy/load/store encodings trigger a warning and rollback
   before transient execution, rather than aborting the rewrite. Transient REP
   requires checkpoints enabled to enforce its iteration budget.
-  Use the local printer's string-prefix preservation fix when rebuilding.
 - AArch64 GPR LDP/LDNP/LDPSW/STP/STNP use separate per-element tags in both
   common and LLVM text DIFT, including all bytes of each element. This does not
   establish equivalent precision for vector or atomic-pair transfers.
@@ -171,7 +169,8 @@ runtime target rather than the default `checkpoint` target.
 
 3. Dump the assembly of the instrumented GTIRB file. 
 Then, apply a sedscript to the assembly file due to limitations of `gtirb-pprinter`.
-If using the provided Dockerfile, the script is available at `/teapot-scripts/fix_asm.sed`.
+The script is `scripts/fix_asm.sed` in this checkout; the image does not contain it, so mount the checkout
+(the image expects it at `/workspace/teapot`).
 ```shell
 gtirb-pprinter --ir a.inst.gtirb --asm a.inst.S
 sed -i -f scripts/fix_asm.sed a.inst.S 
