@@ -365,8 +365,8 @@ class TeapotPipeline:
         pass_manager = PassManager()
         if self.options.enable_asan:
             pass_manager.add(AsanStackPass(
-                self.reg_manager, self.transient_section, self.decoder, self.arch, True,
-                dift_layout=self.dift_layout, tag_storage=self.options.aarch64_tag_storage))
+                self.reg_manager, self.transient_section, self.decoder, self.arch, self.options.enable_memlog,
+                dift_layout=self.dift_layout, tag_storage=self.options.aarch64_tag_storage, transient=True))
         if self.options.enable_gadgets:
             pass_manager.add(TransientCoveragePass(
                 self.reg_manager, self.transient_section, self.decoder, self.guard_section, self.arch,
@@ -389,7 +389,8 @@ class TeapotPipeline:
             create_guards(self.guard_section, 0)
         if self.options.enable_dift:
             pass_manager.add(self.arch.create_transient_dift_pass(
-                self.reg_manager, self.transient_section, self.decoder, self.dift_layout))
+                self.reg_manager, self.transient_section, self.decoder, self.dift_layout,
+                insert_memlog=self.options.enable_memlog))
         if self.options.enable_memlog:
             pass_manager.add(self.arch.create_transient_memlog_pass(
                 self.reg_manager, self.transient_section, self.decoder))

@@ -57,10 +57,10 @@ class X64Architecture(
         return X64TextDiftPropagationLLVMPass(
             reg_manager, section, decoder, self, dift_layout=dift_layout)
 
-    def create_transient_dift_pass(self, reg_manager, section, decoder, dift_layout):
+    def create_transient_dift_pass(self, reg_manager, section, decoder, dift_layout, *, insert_memlog=True):
         from teapot.passes.common.dift.x64 import X64DiftPropagationPass
         return X64DiftPropagationPass(
-            reg_manager, section, decoder, self, dift_layout=dift_layout, insert_memlog=True,
+            reg_manager, section, decoder, self, dift_layout=dift_layout, insert_memlog=insert_memlog,
             instrument_rep=False)
 
     def transient_instruction_passes(self, reg_manager, section, decoder, dift_layout, options):

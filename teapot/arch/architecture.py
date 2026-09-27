@@ -69,7 +69,7 @@ class Architecture(
     def transient_instruction_passes(self, reg_manager, section, decoder, dift_layout, options):
         return []
 
-    def create_transient_dift_pass(self, reg_manager, section, decoder, dift_layout):
+    def create_transient_dift_pass(self, reg_manager, section, decoder, dift_layout, *, insert_memlog=True):
         raise NotImplementedError(f"{self.name} does not define transient DIFT pass")
 
     def create_transient_memlog_pass(self, reg_manager, section, decoder):

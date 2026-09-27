@@ -213,7 +213,7 @@ class SavedReturnSlotTests(unittest.TestCase):
         ir, _, blocks, _, decoder, registers = self.make_function(arch, [
             "mov x30,x0\nstp x29,x30,[sp,#-16]!\nldp x29,x30,[sp],#16\nret"])
         original = bytes(blocks[0].byte_interval.contents)
-        stack_pass = AsanStackPass(registers, blocks[0].section, decoder, arch, True)
+        stack_pass = AsanStackPass(registers, blocks[0].section, decoder, arch, True, transient=True)
         passes = PassManager()
         passes.add(stack_pass)
         output = io.StringIO()
@@ -233,7 +233,7 @@ class SavedReturnSlotTests(unittest.TestCase):
                 with self.subTest(arch=arch.name, storage=storage):
                     ir, module, blocks, _, decoder, registers = self.make_function(arch, [code])
                     original = bytes(blocks[0].byte_interval.contents)
-                    stack_pass = AsanStackPass(registers, blocks[0].section, decoder, arch, True,
+                    stack_pass = AsanStackPass(registers, blocks[0].section, decoder, arch, True, transient=True,
                         dift_layout=SimpleNamespace(asan_shadow_offset=0), tag_storage=storage)
                     passes = PassManager()
                     passes.add(ImportSymbolsPass(arch.checkpoint_lib_symbols()))
