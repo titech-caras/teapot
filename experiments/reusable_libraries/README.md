@@ -68,10 +68,12 @@ storage, based on the guard-start symbol after input-section alignment.
 
 ```
 python3 experiments/reusable_libraries/validate_link.py --binary APP.instrumented --objects OUT \
-    --out validation.json --isa ISA --mode MODE
+    --out validation.json [--isa ISA] [--mode MODE]
 ```
 
-The validator checks the two ranges and that no other code falls inside them, every exported entry and its marker,
+The validator derives ISA, mode, DIFT layout and tag storage from the manifests and checks every component agrees.
+Optional `--isa` and `--mode` arguments assert the requested contract; a mismatch is an error, not a mode override.
+Older manifests without this contract must be rebuilt. It checks the two ranges and that no other code falls inside them, every exported entry and its marker,
 the coverage-guard bases and that no two components' guards overlap, the selected definitions, the reconstructed
 FDEs, and the ASan runtime's place in `DT_NEEDED` (or its absence in MTE modes), with no selected SONAME still
 needed. Passing it is a structural

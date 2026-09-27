@@ -7,7 +7,7 @@ from pathlib import Path
 
 from elftools.dwarf.callframe import FDE
 from elftools.elf.elffile import ELFFile
-from experiments.reusable_libraries.targets import TARGETS, MODES, mode_for
+from experiments.reusable_libraries.targets import TARGETS, MODES, mode_for, mode_metadata
 
 
 def validate_dynamic_symbol_names(elf):
@@ -21,15 +21,39 @@ def validate_dynamic_symbol_names(elf):
             'dynamic symbol name is outside its string table', offset, len(strings))
 
 
-def validate(binary, objects, *, isa='X64', mode=None):
-    target = TARGETS[isa]
-    mode, mode_spec = mode_for(isa, mode)
-    asan = mode_spec['asan']
+def validate_mode_contract(manifest, *, isa=None, mode=None):
+    """Derive the build contract and refuse requests or components that differ."""
+    fields = ('isa', 'mode', 'dift_layout', 'tag_storage')
+    if any(field not in manifest for field in fields):
+        raise ValueError('component manifest has no complete build mode; rebuild it with the current driver')
+    actual_isa, actual_mode = manifest['isa'], manifest['mode']
+    if actual_isa not in TARGETS or actual_mode not in MODES:
+        raise ValueError(f'unsupported manifest ISA/mode: {actual_isa}/{actual_mode}')
+    expected = mode_metadata(actual_isa, actual_mode)
+    if any(manifest[field] != expected[field] for field in fields):
+        raise ValueError('manifest DIFT layout or tag storage does not match its build mode')
+    if isa is not None and isa != actual_isa:
+        raise ValueError(f'ISA mismatch: built {actual_isa}, requested {isa}')
+    if mode is not None and mode != actual_mode:
+        raise ValueError(f'mode mismatch: built {actual_mode}, requested {mode}')
+    for component in manifest['components']:
+        if any(component.get(field) != expected[field] for field in fields):
+            raise ValueError('component build mode mismatch: ' + component.get('component_id', '<unknown>'))
+    return actual_isa, actual_mode
+
+
+def validate(binary, objects, *, isa=None, mode=None):
     manifest = json.loads((objects / "components.json").read_text())
+    isa, mode = validate_mode_contract(manifest, isa=isa, mode=mode)
+    target = TARGETS[isa]
+    _, mode_spec = mode_for(isa, mode)
+    asan = mode_spec['asan']
     inputs = json.loads((objects / "inputs.json").read_text())
     with binary.open("rb") as stream:
         elf = ELFFile(stream)
-        assert elf["e_type"] == "ET_EXEC" and elf["e_machine"] == target['machine']
+        if elf['e_machine'] != target['machine']:
+            raise ValueError(f"binary ISA mismatch: built {target['machine']}, found {elf['e_machine']}")
+        assert elf["e_type"] == "ET_EXEC"
         assert elf.elfclass == 64 and elf.little_endian
         validate_dynamic_symbol_names(elf)
         symbols = {}
@@ -78,7 +102,6 @@ def validate(binary, objects, *, isa='X64', mode=None):
         assert 0 <= (guard_end - guard_start) // 4 < 0x80000000
         guard_ranges = []
         for component in manifest["components"]:
-            assert component.get('isa', isa) == isa
             key = component["component_id"]
             start, end = (address("__guard_" + kind + "__teapot___" + key) for kind in ("start", "end"))
             assert guard_start <= start <= end <= guard_end
@@ -119,7 +142,7 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--objects", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument('--isa', choices=tuple(TARGETS), default='X64')
+    parser.add_argument('--isa', choices=tuple(TARGETS), help='optional assertion against the recorded build ISA')
     parser.add_argument('--mode', choices=tuple(MODES))
     args = parser.parse_args()
     result = validate(args.binary, args.objects, isa=args.isa, mode=args.mode)

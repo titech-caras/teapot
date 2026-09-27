@@ -5,12 +5,32 @@ from teapot.arch import module_isa_name
 from teapot.arch.aarch64.architecture import AArch64Architecture
 from teapot.arch.riscv64.architecture import RISCV64Architecture
 from teapot.arch.x64.architecture import X64Architecture
-from experiments.reusable_libraries.targets import TARGETS, for_machine
-from experiments.reusable_libraries.validate_link import validate_dynamic_symbol_names
+from experiments.reusable_libraries.targets import TARGETS, MODES, for_machine, mode_metadata
+from experiments.reusable_libraries.validate_link import validate_dynamic_symbol_names, validate_mode_contract
 from unittest.mock import Mock
 
 
 class ComponentArchitecturesTests(unittest.TestCase):
+    def test_manifest_derives_mode_and_rejects_mixed_objects(self):
+        for mode, spec in MODES.items():
+            contract = mode_metadata(spec['isa'], mode)
+            manifest = dict(contract, components=[dict(contract, component_id='test')])
+            with self.subTest(mode=mode):
+                self.assertEqual(validate_mode_contract(manifest), (spec['isa'], mode))
+                for wrong_mode in MODES:
+                    if mode != wrong_mode:
+                        with self.assertRaisesRegex(ValueError, 'mode mismatch'):
+                            validate_mode_contract(manifest, mode=wrong_mode)
+                wrong_isa = 'X64' if spec['isa'] != 'X64' else 'ARM64'
+                with self.assertRaisesRegex(ValueError, 'ISA mismatch'):
+                    validate_mode_contract(manifest, isa=wrong_isa)
+                for field, wrong in (('dift_layout', 'other'), ('tag_storage', 'other'), ('mode', 'other')):
+                    mixed = dict(manifest, components=[dict(manifest['components'][0], **{field: wrong})])
+                    with self.assertRaisesRegex(ValueError, 'component build mode mismatch'):
+                        validate_mode_contract(mixed)
+        with self.assertRaisesRegex(ValueError, 'no complete build mode'):
+            validate_mode_contract({'components': []})
+
     def test_dynamic_symbol_name_bounds_are_checked_before_execution(self):
         for strings, offset, valid in ((b'\0api\0', 1, True),
                                        (b'\0api\0', 5, False),

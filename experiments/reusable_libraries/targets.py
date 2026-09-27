@@ -38,3 +38,8 @@ def for_machine(machine):
     if len(matches) != 1:
         raise ValueError('unsupported component ELF architecture: ' + machine)
     return matches[0]
+
+
+def mode_metadata(isa, name=None):
+    name, mode = mode_for(isa, name)
+    return dict(isa=isa, mode=name, dift_layout=mode['layout'], tag_storage=mode['tag_storage'])

@@ -35,7 +35,7 @@ from teapot.datacls.dift_layout import LAYOUTS, _layout_data_path
 from teapot.arch import module_isa_name
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.utils.serialization import compact_for_pprinter
-from experiments.reusable_libraries.targets import for_machine, mode_for, MODES
+from experiments.reusable_libraries.targets import for_machine, mode_for, mode_metadata, MODES
 
 
 def sha(path):
@@ -256,7 +256,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         recorded.append("lifecycle.json")
     if isa == 'ARM64':
         recorded.append('pointer-return-contracts.json')
-    result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"], 'isa': isa,
+    result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"],
+              **mode_metadata(isa, args.mode),
               "exports": sorted(own_exports), "linked_exports": sorted(exports(item, converter, False)),
               "guard_count": guard_count,
               "rewrite_seconds": rewrite_seconds, "liveness": "ddisasm",
@@ -406,6 +407,7 @@ def main():
         shutil.copyfile(Path(component["cache_path"]) / "component.o",
                         args.out / ("component-{:03d}.o".format(index)))
     dump(args.out / "components.json", {"components": components, "total_guards": total_guards,
+                                       **mode_metadata(isa, args.mode),
                                        "link_support": link_support,
                                        "status": "objects_ready_final_link_and_behavior_not_yet_verified"})
     print(json.dumps({"components": len(components), "cache_hits": sum(c["cache_hit"] for c in components),
