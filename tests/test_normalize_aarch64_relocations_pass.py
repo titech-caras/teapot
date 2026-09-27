@@ -2,6 +2,7 @@ import unittest
 
 import gtirb
 from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 
 from teapot.passes.preprocessing.normalize_aarch64_relocations_pass import (
     NormalizeAArch64RelocationsPass,
@@ -93,6 +94,19 @@ class NormalizeAArch64RelocationsPassTests(unittest.TestCase):
         self.assertEqual(code.symbolic_expressions[0], gtirb.SymAddrConst(0, got_symbol, {GOT}))
         self.assertEqual(code.symbolic_expressions[4], gtirb.SymAddrConst(0, got_symbol, {GOT, LO12}))
         self.assertNotIn(8, code.symbolic_expressions)
+
+    def test_shared_decoder_observes_restored_adrp_in_the_same_round(self):
+        module, code, got_symbol, page = self.relaxed_adrp_fixture(
+            (self.ADR_X2_3000, self.LDR_X2_X2_FC0, self.LDR_X0_X2))
+        code.symbolic_expressions[4] = gtirb.SymAddrAddr(1, 0, got_symbol, page)
+        block = next(iter(module.code_blocks))
+        decoder = CachedGtirbInstructionDecoder(module.isa)
+        self.assertEqual(next(decoder.get_instructions(block)).mnemonic, 'adr')
+        normalize = NormalizeAArch64RelocationsPass(decoder)
+        normalize.begin_module(module, (), None)
+        self.assertEqual(normalize.restored_adrp, 1)
+        self.assertEqual(next(decoder.get_instructions(block)).mnemonic, 'adrp')
+        self.assertEqual(normalize._instructions[block.address].mnemonic, 'adrp')
 
     def test_relaxed_adrp_with_other_base_use_is_left_alone(self):
         # x2 is also read as a plain page base before being redefined.

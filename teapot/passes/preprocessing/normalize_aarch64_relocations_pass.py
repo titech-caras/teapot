@@ -124,6 +124,11 @@ class NormalizeAArch64RelocationsPass(Pass):
                 for use_offset, _ in uses:
                     interval.symbolic_expressions[use_offset] = gtirb.SymAddrConst(
                         addend, symbol, {gtirb.SymbolicExpression.Attribute.LO12})
+                # Normalization edits bytes directly, before the pass manager's
+                # usual analysis refresh. The next normalizer must see ADRP.
+                cache = getattr(self.decoder, "cache", None)
+                if cache is not None:
+                    cache.pop(block.uuid, None)
                 self.restored_adrp += 1
 
     def _relaxed_page_uses(self, interval, following, base, page):
