@@ -59,16 +59,5 @@ class X64DiftPatchesMixin:
         )
 
     @staticmethod
-    def dift_apply_queued_tag_snippet(tag_reg: Register, addr_reg: Register, tmp_reg, done_label: str) -> str:
-        asm = f"cmp byte ptr dift_reg_queue_pending, 0\nje {done_label}\nmov byte ptr dift_reg_queue_pending, 0\n"
-        for offset in range(0, 48, 8):
-            asm += f"""
-                mov {tag_reg}, qword ptr dift_reg_queued_tags+{offset}
-                or qword ptr dift_reg_tags+{offset}, {tag_reg}
-                mov qword ptr dift_reg_queued_tags+{offset}, 0
-            """
-        return asm
-
-    @staticmethod
     def dift_shadow_addr_snippet(addr_reg: Register, tmp_reg, xor_mask: int) -> str:
         return "".join(f"btc {addr_reg}, {bit}\n" for bit in range(64) if xor_mask & (1 << bit))

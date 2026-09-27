@@ -7,7 +7,6 @@ from teapot.configs.slots import (
     RISCV64_ORIGINAL_TP_OFFSET,
     SCRATCHPAD_FIRST_SPILL_OFFSET,
 )
-from teapot.passes.common.dift.riscv64 import RISCV64DiftPropagationPass
 from teapot.passes.text.dift.base import (
     TextDiftLLVMBase,
     TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT,
@@ -16,7 +15,7 @@ from teapot.passes.text.dift.base import (
 )
 
 
-class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase, RISCV64DiftPropagationPass):
+class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase):
     EXPECTED_ARCH = "riscv64"
     ASM_RETURN_BRANCH = "j"
     TARGET_TRIPLE = "riscv64-unknown-linux-gnu"

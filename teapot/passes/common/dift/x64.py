@@ -3,14 +3,13 @@ from typing import Optional, Set
 
 import gtirb
 from capstone import CS_OP_MEM, CS_OP_REG, CsInsn
-from gtirb_functions import Function
-from gtirb_rewriting import InsertionContext, Patch, patch_constraints
+from gtirb_rewriting import Patch, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.slots import ScratchpadSlots
 from teapot.configs.tags import TAG_SECRET, TAG_SECRET_INDIRECT
-from teapot.passes.common.dift.base import DiftPropagationBase
+from teapot.passes.common.dift.base import DiftPassBase
 
 
 @dataclass(frozen=True)
@@ -32,13 +31,9 @@ class X64RepStringEffects:
     source_segment: Optional[str]
 
 
-class X64DiftPropagationPass(DiftPropagationBase):
+class X64DiftOperandHelpers(DiftPassBase):
     EXPECTED_ARCH = "x64"
     section: gtirb.Section
-
-    def __init__(self, *args, instrument_rep=True, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.instrument_rep = instrument_rep
 
     def _rep_string_effects(self, inst: CsInsn) -> Optional[X64RepStringEffects]:
         kind = self.arch.rep_string_kind(inst)
@@ -266,131 +261,3 @@ class X64DiftPropagationPass(DiftPropagationBase):
             mem_read_operand_str=mem_operand_read_str,
             mem_write_operand_str=mem_operand_write_str,
             mem_write_size=mem_operand_write_size or 0)
-
-    def visit_inst(self, inst: CsInsn, inst_idx: int, inst_offset: int,
-                   block: gtirb.CodeBlock, function: Function = None,
-                   live_registers: Set[Register] = None):
-        if self.arch.dift_should_skip_instruction(inst):
-            return
-
-        rep_effects = self._rep_string_effects(inst)
-        if rep_effects is not None:
-            if self.instrument_rep:
-                self._insert_rep_dift(rep_effects, inst, inst_idx, inst_offset, block, function)
-            return
-
-        effects = self._x64_instruction_effects(block, inst)
-        if effects is None:
-            return
-
-        if len(effects.regs_write) > 0 or effects.mem_write_operand_str:
-            if not effects.clear_dest_tags:
-                if effects.regs_read == effects.regs_write and not effects.mem_read_operand_str and not effects.mem_write_operand_str:
-                    # Reg instruction that does not involve tag propagation
-                    return
-                if (effects.mem_read_operand_str == effects.mem_write_operand_str
-                        and len(effects.regs_read) == 0 and len(effects.regs_write) == 0):
-                    # Mem instruction that does not involve tag propagation
-                    return
-
-            self.insert_at(block, inst_offset, Patch.from_function(
-                self.allocate_registers(function, block, inst_idx)(
-                    self._build_dift_patch(effects.regs_read, effects.regs_write,
-                                           conditional=effects.conditional,
-                                           clear_dest_tags=effects.clear_dest_tags,
-                                           mem_read_operand_str=effects.mem_read_operand_str,
-                                           mem_write_operand_str=effects.mem_write_operand_str,
-                                           mem_write_size=effects.mem_write_size)
-                )
-            ))
-
-    def _build_dift_patch(self, regs_read: Set[Register], regs_write: Set[Register], *,
-                          conditional: Optional[str] = None,
-                          clear_dest_tags: bool = False,  # Ignore tag propagation and zero out the tags
-                          mem_read_operand_str: Optional[str] = None,
-                          mem_write_operand_str: Optional[str] = None,
-                          mem_write_size: Optional[int] = None):
-        if self.insert_memlog and mem_write_operand_str:
-            scratch_registers = 4
-        elif mem_read_operand_str or mem_write_operand_str:
-            scratch_registers = 3
-        else:
-            scratch_registers = 2
-
-        @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
-        def patch(ctx: InsertionContext):
-            # FIXME: refactor please
-
-            if self.insert_memlog and mem_write_operand_str:
-                r1, r2, r3, r4 = ctx.scratch_registers
-            elif mem_read_operand_str or mem_write_operand_str:
-                r2, r3, r4 = ctx.scratch_registers
-                r1 = None
-            else:
-                r3, r4, = ctx.scratch_registers
-                r1, r2 = None, None
-
-            dift_done_label = f".L__dift_done{SYMBOL_SUFFIX}"
-
-            asm = ""
-
-            if mem_read_operand_str:
-                asm += self.arch.effective_address_snippet(
-                    r2, mem_read_operand_str, r3)
-                asm += self.arch.dift_shadow_addr_snippet(
-                    r2, None, self.dift_layout.xor_mask)
-
-            asm += self.arch.clear_register_snippet(r4)
-
-            if not clear_dest_tags:
-                for reg in self._ordered_registers(regs_read):
-                    asm += self.arch.dift_or_reg_tag_snippet(r4, None, reg)
-
-                if mem_read_operand_str:
-                    asm += f"or {r4:8l}, [{r2}]\n"
-
-            for reg in self._ordered_registers(regs_write):
-                asm += self.arch.dift_store_reg_tag_snippet(r4, None, reg)
-
-            if mem_write_operand_str:
-                if mem_write_operand_str != mem_read_operand_str:
-                    asm += self.arch.effective_address_snippet(
-                        r2, mem_write_operand_str, r3)
-                    asm += self.arch.dift_shadow_addr_snippet(
-                        r2, None, self.dift_layout.xor_mask)
-
-                if mem_write_size > 1:
-                    asm += f"""
-                        mov {r3}, 0x0101010101010101
-                        imul {r4}, {r3}
-                    """
-
-                remaining_size = mem_write_size
-                while remaining_size:
-                    chunk_size = 1 << min(3, remaining_size.bit_length() - 1)
-                    r4_ext = r4.sizes["8l" if chunk_size == 1 else str(chunk_size * 8)]
-                    if self.insert_memlog:
-                        asm += self.arch.memlog_snippet(
-                            r2, r1, r3, chunk_size, no_clobber_addr=True)
-                    asm += f"""
-                        mov [{r2}], {r4_ext}
-                        add {r2}, {chunk_size}
-                    """
-                    remaining_size -= chunk_size
-
-            # Check if the memory operand policy pass requests a tag update
-            if mem_read_operand_str:
-                asm += self.arch.dift_apply_queued_tag_snippet(r4, r3, None, dift_done_label)
-
-            asm += f"""
-            {dift_done_label}:
-                nop
-            """
-
-            asm = self.arch.conditional_patch_wrapper(
-                asm, conditional, label_key="dift",
-                skip_label_name=dift_done_label, insert_skip_label=False)
-
-            return asm
-
-        return patch

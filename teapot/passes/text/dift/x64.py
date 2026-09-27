@@ -8,7 +8,7 @@ from gtirb_rewriting import InsertionContext, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax
 
 from teapot.configs.runtime import SCRATCHPAD_SIZE
-from teapot.passes.common.dift.x64 import X64DiftPropagationPass
+from teapot.passes.common.dift.x64 import X64DiftOperandHelpers
 from teapot.passes.text.dift.base import TextDiftInstructionEffects, TextDiftLLVMBase
 
 
@@ -18,7 +18,7 @@ class X64LLVMRegisterUsage:
     has_reg_spill: bool
 
 
-class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
+class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftOperandHelpers):
     EXPECTED_ARCH = "x64"
     TARGET_TRIPLE = "x86_64-unknown-linux-gnu"
     ASM_RETURN_BRANCH = "jmp"

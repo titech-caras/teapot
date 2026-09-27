@@ -12,7 +12,7 @@ import gtirb
 
 from teapot.arch import X64Architecture
 from teapot.arch.decoders import x64_decoder
-from teapot.passes.common.dift.x64 import X64DiftPropagationPass
+from teapot.passes.transient.lazy_dift import X64TransientDiftLLVMPass
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
 
@@ -69,7 +69,7 @@ class X64X87StoreTests(unittest.TestCase):
         # Register-only arithmetic, FPU initialization, WAIT and FNSTSW AX.
         # Capstone (5 and 6.0) omits the FPU group from the last of these.
         encodings += ["d8c1", "dec1", "dbe3", "d9e8", "9b", "dfe0", "dbf1"]
-        for cls in (X64DiftPropagationPass, X64TextDiftPropagationLLVMPass):
+        for cls in (X64TransientDiftLLVMPass, X64TextDiftPropagationLLVMPass):
             visitor = cls(SimpleNamespace(abi=self.arch.abi), None, None, self.arch)
             visitor._x64_instruction_effects = mock.Mock(side_effect=AssertionError("taint requested"))
             visitor.insert_at = mock.Mock()
@@ -77,6 +77,9 @@ class X64X87StoreTests(unittest.TestCase):
                 inst = self.decode(encoded)
                 with self.subTest(pass_name=cls.__name__, instruction=str(inst)):
                     self.assertTrue(self.arch.dift_should_skip_instruction(inst))
+                    visitor._reset()
+                    visitor.port_reader = None
+                    visitor._current_instructions = [inst]
                     visitor.visit_inst(inst, 0, 0, gtirb.CodeBlock(size=inst.size))
             visitor._x64_instruction_effects.assert_not_called()
             visitor.insert_at.assert_not_called()
@@ -147,7 +150,7 @@ class X64X87StoreTests(unittest.TestCase):
         passes.add(X64TransientMemlogPass(manager, block.section, manager.analyzer.decoder, self.arch))
         # "No taint" must not mean clearing memory tags, nor should stores
         # require a mapped taint shadow just to get rollback logging.
-        passes.add(X64DiftPropagationPass(manager, block.section, manager.analyzer.decoder, self.arch))
+        passes.add(X64TransientDiftLLVMPass(manager, block.section, manager.analyzer.decoder, self.arch))
         passes.run(ir)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

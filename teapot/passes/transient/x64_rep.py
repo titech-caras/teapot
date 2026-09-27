@@ -8,12 +8,12 @@ from teapot.configs.blacklist import is_blacklisted_function
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.slots import ScratchpadSlots
 from teapot.configs.tags import TAG_SECRET, TAG_SECRET_INDIRECT
-from teapot.passes.common.dift.x64 import X64DiftPropagationPass
+from teapot.passes.common.dift.x64 import X64DiftOperandHelpers
 from teapot.passes.mixins import InstVisitorPassMixin
 from teapot.passes.transient.gadget_policy.mem_operand.x64 import X64TransientMemOperandPoliciesPass
 
 
-class X64TransientRepPass(X64DiftPropagationPass):
+class X64TransientRepPass(X64DiftOperandHelpers):
     """Execute one string element per budget unit, with reversible side effects."""
 
     def __init__(self, *args, enable_dift=True, enable_checkpoints=True,

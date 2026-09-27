@@ -7,7 +7,7 @@ from teapot.configs.slots import (
     AARCH64_SHADOW_STACK_TEXT_DIFT_CAPTURE_OFFSET,
     AARCH64_SHADOW_STACK_TEXT_DIFT_LLVM_OFFSET,
 )
-from teapot.passes.common.dift.aarch64 import AArch64DiftPropagationPass
+from teapot.passes.common.dift.aarch64 import AArch64DiftOperandHelpers
 from teapot.passes.text.dift.base import (
     TextDiftLLVMBase,
     TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT,
@@ -17,7 +17,7 @@ from teapot.passes.text.dift.base import (
 from teapot.utils.registers import registers_in_abi_order
 
 
-class AArch64TextDiftPropagationLLVMPass(TextDiftLLVMBase, AArch64DiftPropagationPass):
+class AArch64TextDiftPropagationLLVMPass(TextDiftLLVMBase, AArch64DiftOperandHelpers):
     EXPECTED_ARCH = "aarch64"
     ASM_RETURN_BRANCH = "b"
     TARGET_TRIPLE = "aarch64-unknown-linux-gnu"

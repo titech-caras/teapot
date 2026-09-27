@@ -36,9 +36,5 @@ class ArchitectureDiftMixin(ABC):
         pass
 
     @abstractmethod
-    def dift_apply_queued_tag_snippet(self, tag_reg, addr_reg, tmp_reg, done_label: str):
-        pass
-
-    @abstractmethod
     def dift_shadow_addr_snippet(self, addr_reg, tmp_reg, xor_mask: int) -> str:
         pass

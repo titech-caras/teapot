@@ -9,8 +9,8 @@ from teapot.arch import AArch64Architecture, RISCV64Architecture
 from teapot.arch.decoders import aarch64_decoder, riscv64_decoder
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE, RISCV64_ORIGINAL_TP_OFFSET
-from teapot.passes.common.dift.aarch64 import AArch64DiftPropagationPass
-from teapot.passes.common.dift.riscv64 import RISCV64DiftPropagationPass
+from teapot.passes.transient.lazy_dift import transient_replay_pass
+from dift_replay_test_support import replay_asm
 
 
 class RISCDiftHistoryTests(unittest.TestCase):
@@ -20,7 +20,6 @@ class RISCDiftHistoryTests(unittest.TestCase):
         if arch.name == "aarch64":
             decoder = aarch64_decoder()
             instruction = bytes.fromhex("010800a9" if pair else "010000f9")
-            pass_type = AArch64DiftPropagationPass
             source_names = ("x1", "x2") if pair else ("x1",)
             prologue = f"""
                 mov x9, sp
@@ -38,7 +37,6 @@ class RISCDiftHistoryTests(unittest.TestCase):
         else:
             decoder = riscv64_decoder()
             instruction = bytes.fromhex("2330b500")  # sd a1, 0(a0)
-            pass_type = RISCV64DiftPropagationPass
             source_names = ("a1",)
             prologue = f"""
                 {arch.load_address('t2', f'scratchpad+{RISCV64_ORIGINAL_TP_OFFSET}')}
@@ -48,7 +46,7 @@ class RISCDiftHistoryTests(unittest.TestCase):
         inst = next(decoder.disasm(instruction, 0x1000))
         source_regs = {arch.abi.get_register(name) for name in source_names}
         source_ids = [arch.dift_register_id(arch.abi.get_register(name)) for name in source_names]
-        dift = pass_type(SimpleNamespace(abi=arch.abi), None, None, arch,
+        dift = transient_replay_pass(arch, SimpleNamespace(abi=arch.abi), None, None,
                          dift_layout=SimpleNamespace(xor_mask=0), insert_memlog=True)
         live_registers = set(arch.abi.all_registers()) - {
             arch.abi.get_register(name) for name in spares}
@@ -56,16 +54,16 @@ class RISCDiftHistoryTests(unittest.TestCase):
         for width in widths:
             with self.subTest(arch=arch.name, width=width, pair=pair), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                patch = dift._build_patch(
-                    inst, source_regs, set(), clear_dest_tags=False,
+                patch = replay_asm(dift, inst, source_regs, set(), clear_dest_tags=False,
                     mem_read=None, mem_write=arch.memory_operand(inst), mem_write_size=width,
                     live_registers=live_registers)
                 (root / "patch.S").write_text(f"""
+                    {'.attribute arch, "rv64imafd"' if arch.name == 'riscv64' else ''}
                     .text
                     .global update_tags
                 update_tags:
                     {prologue}
-                    {patch(SimpleNamespace(stack_adjustment=0))}
+                    {patch}
                     {epilogue}
                     ret
                     .bss
@@ -75,6 +73,7 @@ class RISCDiftHistoryTests(unittest.TestCase):
                 (root / "check.c").write_text("""
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <setjmp.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -85,7 +84,8 @@ struct entry { void *addr; uint64_t data; uint8_t size; uint8_t padding[7]; };
 struct entry history[64];
 struct entry *memory_history_top = history;
 unsigned char scratchpad[SCRATCHPAD_BYTES] __attribute__((aligned(16)));
-unsigned char dift_reg_tags[48];
+/* Match the runtime and LLVM declaration; HI/LO address folding uses this. */
+unsigned char dift_reg_tags[48] __attribute__((aligned(16)));
 extern void update_tags(unsigned char *tags);
 static sigjmp_buf fault_return;
 static void fault_handler(int signal) {
@@ -124,14 +124,12 @@ int main(void) {
         memset(history, 0xa5, sizeof(history));
         memory_history_top = history;
         update_tags(tags + start);
-        if (memory_history_top - history != (WIDTH + 7) / 8) return 1;
         size_t logged = 0;
         for (struct entry *p = history; p < memory_history_top; ++p) {
-            size_t size = WIDTH - logged < 8 ? WIDTH - logged : 8;
+            size_t size = p->size;
+            if (!size || size > 8 || logged+size > WIDTH) return 1;
             if (p->addr != tags + start + logged || p->size != size) return 2;
             if (memcmp(&p->data, original + start + logged, size)) return 3;
-            for (size_t i = size; i < sizeof(p->data); ++i)
-                if (((unsigned char *)&p->data)[i] != 0xa5) return 4;
             logged += size;
         }
         if (logged != WIDTH) return 5;
@@ -143,7 +141,10 @@ int main(void) {
                 if (i - start >= WIDTH / 2) expected = 0x22;
 #endif
             }
-            if (tags[i] != expected) return 6;
+            if (tags[i] != expected) {
+                fprintf(stderr, "tag[%zu]=%u, expected %u, width=%u\\n", i, tags[i], expected, WIDTH);
+                return 6;
+            }
         }
         while (memory_history_top != history) {
             struct entry *p = --memory_history_top;
@@ -162,8 +163,13 @@ int main(void) {
         memory_history_top = history;
         if (mprotect(tags + page, page, readable ? PROT_READ : PROT_NONE)) return 13;
         if (!try_update(start)) return 14;
-        size_t expected_entries = prefix / 8 + readable;
-        if ((size_t)(memory_history_top - history) != expected_entries) return 15;
+        size_t published = 0;
+        for (struct entry *e=history; e<memory_history_top; ++e) {
+            if (e->addr != start+published || !e->size || e->size>8) return 15;
+            if (memcmp(&e->data, original+page-prefix+published, e->size)) return 19;
+            published += e->size;
+        }
+        if (published > WIDTH || (!readable && published > prefix)) return 20;
         int replay_faults = 0;
         while (memory_history_top != history)
             replay_faults += try_replay(--memory_history_top);

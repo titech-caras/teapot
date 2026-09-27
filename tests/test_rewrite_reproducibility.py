@@ -12,9 +12,9 @@ from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_rewriting import Assembler, PassManager
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
-from teapot.passes.common.dift.aarch64 import AArch64DiftPropagationPass
-from teapot.passes.common.dift.riscv64 import RISCV64DiftPropagationPass
-from teapot.passes.common.dift.x64 import X64DiftPropagationPass
+from teapot.passes.transient.lazy_dift import AArch64TransientDiftLLVMPass
+from teapot.passes.transient.lazy_dift import RISCV64TransientDiftLLVMPass
+from teapot.passes.transient.lazy_dift import X64TransientDiftLLVMPass
 from teapot.passes.text.dift.aarch64 import AArch64TextDiftPropagationLLVMPass
 from teapot.passes.text.dift.riscv64 import RISCV64TextDiftPropagationLLVMPass
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
@@ -26,13 +26,13 @@ VARIANTS = (
     (X64Architecture, gtirb.Module.ISA.X64,
      ".intel_syntax noprefix\nmov rax,[rdi+rcx*8]\nimul rax,rsi\nadd rax,rdx\n"
      "xchg rax,rbx\nmov [rdi+8],rax\nret",
-     X64DiftPropagationPass, X64TextDiftPropagationLLVMPass),
+     X64TransientDiftLLVMPass, X64TextDiftPropagationLLVMPass),
     (AArch64Architecture, gtirb.Module.ISA.ARM64,
      "add x0,x1,x2\neor x3,x4,x5\nldp x6,x7,[x8]\nstp x6,x7,[x9]\nldr x10,[x8,x9]\nret",
-     AArch64DiftPropagationPass, AArch64TextDiftPropagationLLVMPass),
+     AArch64TransientDiftLLVMPass, AArch64TextDiftPropagationLLVMPass),
     (RISCV64Architecture, gtirb.Module.ISA.ValidButUnsupported,
      ".option norvc\nadd a0,a1,a2\nxor a3,a4,a5\nld t0,8(a0)\nsd a3,8(a1)\nret",
-     RISCV64DiftPropagationPass, RISCV64TextDiftPropagationLLVMPass),
+     RISCV64TransientDiftLLVMPass, RISCV64TextDiftPropagationLLVMPass),
 )
 
 
@@ -95,7 +95,7 @@ class RewriteReproducibilityTests(unittest.TestCase):
                 code = assembler.finalize().text_section.data
                 block.byte_interval.contents = code
                 block.byte_interval.size = block.size = len(code)
-                for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "dift_reg_queue_pending", "old_rsp"):
+                for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "dift_reg_queue_pending", "old_rsp", "memory_history_top"):
                     gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
                 manager = LiveRegisterManager(module, abi)
                 for index, inst in enumerate(manager.analyzer.decoder.get_instructions(block)):
@@ -105,7 +105,7 @@ class RewriteReproducibilityTests(unittest.TestCase):
                 input_path = root / "input.gtirb"
                 ir.save_protobuf(input_path)
                 for mode in (0, 1, 2):
-                    with self.subTest(arch=arch.name, mode=("common", "llvm", "full")[mode]):
+                    with self.subTest(arch=arch.name, mode=("transient", "text", "full")[mode]):
                         outputs = []
                         for seed in (1, 2, 42):
                             output = root / f"{mode}-{seed}.json"

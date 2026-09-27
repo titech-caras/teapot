@@ -65,26 +65,6 @@ class AArch64DiftPatchesMixin:
             """
         return asm
 
-    def dift_apply_queued_tag_snippet(self, tag_reg, addr_reg, tmp_reg, done_label: str) -> str:
-        asm = f"""
-            {self.load_address(tmp_reg, "dift_reg_queue_pending")}
-            ldrb {tag_reg:32}, [{tmp_reg}]
-            cbz {tag_reg:32}, {done_label}
-            strb wzr, [{tmp_reg}]
-        """
-        for offset in range(0, 48, 8):
-            asm += f"""
-                {self.load_address(tmp_reg, f"dift_reg_queued_tags+{offset}")}
-                ldr {tag_reg}, [{tmp_reg}]
-                {self.load_address(addr_reg, f"dift_reg_tags+{offset}")}
-                ldr {tmp_reg}, [{addr_reg}]
-                orr {tmp_reg}, {tmp_reg}, {tag_reg}
-                str {tmp_reg}, [{addr_reg}]
-                {self.load_address(addr_reg, f"dift_reg_queued_tags+{offset}")}
-                str xzr, [{addr_reg}]
-            """
-        return asm
-
     def dift_shadow_addr_snippet(self, addr_reg, tmp_reg, xor_mask: int) -> str:
         asm = f"ubfx {addr_reg}, {addr_reg}, #0, #56\n"
         if xor_mask == 0:

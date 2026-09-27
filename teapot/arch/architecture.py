@@ -70,7 +70,10 @@ class Architecture(
         return []
 
     def create_transient_dift_pass(self, reg_manager, section, decoder, dift_layout, *, insert_memlog=True):
-        raise NotImplementedError(f"{self.name} does not define transient DIFT pass")
+        from teapot.passes.transient.lazy_dift import transient_replay_pass
+        return transient_replay_pass(
+            self, reg_manager, section, decoder, dift_layout=dift_layout,
+            insert_memlog=insert_memlog)
 
     def create_transient_memlog_pass(self, reg_manager, section, decoder):
         raise NotImplementedError(f"{self.name} does not define transient memlog pass")

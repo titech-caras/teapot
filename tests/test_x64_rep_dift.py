@@ -12,11 +12,12 @@ import gtirb
 from gtirb_functions import Function
 from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_rewriting import InsertionContext, RewritingContext
+from gtirb_rewriting.assembly import X86Syntax
 
 from teapot.arch.x64.architecture import X64Architecture
 from teapot.arch.decoders import x64_decoder
 from teapot.configs.runtime import SCRATCHPAD_SIZE
-from teapot.passes.common.dift.x64 import X64DiftPropagationPass
+from teapot.passes.common.dift.x64 import X64DiftOperandHelpers
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from test_live_register_preservation import make_module
 
@@ -24,12 +25,15 @@ from test_live_register_preservation import make_module
 def wrapped_patch(arch, patch):
     # Exercise the real all-live ABI spill path, not hand-picked scratch GPRs.
     allocation = arch.abi._allocate_patch_registers(patch.constraints)
-    prologue, epilogue, _ = arch.abi._create_prologue_and_epilogue(
+    prologue, epilogue, adjustment = arch.abi._create_prologue_and_epilogue(
         patch.constraints, allocation, True)
-    body = patch(InsertionContext(None, None, None, 0, scratch_registers=allocation.scratch_registers))
+    body = patch(InsertionContext(None, None, None, adjustment,
+                                  scratch_registers=allocation.scratch_registers))
+    syntax = (".intel_syntax noprefix" if patch.constraints.x86_syntax == X86Syntax.INTEL
+              else ".att_syntax prefix")
     return (
         ".att_syntax prefix\n" + "\n".join(s.code for s in prologue) +
-        "\n.intel_syntax noprefix\n" + body +
+        "\n" + syntax + "\n" + body +
         "\n.att_syntax prefix\n" + "\n".join(s.code for s in epilogue) +
         "\n.intel_syntax noprefix\n")
 
@@ -84,7 +88,7 @@ def runner_function(name, encoding, before, after):
 class X64RepDiftTests(unittest.TestCase):
     def setUp(self):
         self.arch = X64Architecture()
-        self.dift = X64DiftPropagationPass(
+        self.dift = X64DiftOperandHelpers(
             SimpleNamespace(abi=self.arch.abi), None, None, self.arch,
             dift_layout=SimpleNamespace(xor_mask=1 << 32))
         self.decoder = x64_decoder()
@@ -130,7 +134,7 @@ class X64RepDiftTests(unittest.TestCase):
                                 names.append(name)
                                 before = after = ""
                                 if mode != "original":
-                                    dift = X64DiftPropagationPass(
+                                    dift = X64DiftOperandHelpers(
                                         SimpleNamespace(abi=self.arch.abi), None, None, self.arch,
                                         dift_layout=SimpleNamespace(xor_mask=1 << 32),
                                         insert_memlog=mode == "history")
@@ -164,7 +168,7 @@ class X64RepDiftTests(unittest.TestCase):
         # Values flow into REP, out of REP into ordinary LLVM DIFT, then into
         # another REP. Also exercise a REP ending a physical fallthrough block.
         source = Path(__file__).with_name("fixtures") / "x64_rep_dift_batches.c"
-        for cls in (X64DiftPropagationPass, X64TextDiftPropagationLLVMPass):
+        for cls in (X64TextDiftPropagationLLVMPass,):
             for split, adjacent, encoding in product(
                     (False, True), (False, True), ("f3a4", "f3a5", "6567f348a5", "6766f3a5")):
                 with self.subTest(mode=cls.__name__, split=split, adjacent=adjacent,

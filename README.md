@@ -160,7 +160,7 @@ sysroot is left unchanged.
   before transient execution, rather than aborting the rewrite. Transient REP
   requires checkpoints enabled to enforce its iteration budget.
 - AArch64 GPR LDP/LDNP/LDPSW/STP/STNP use separate per-element tags in both
-  common and LLVM text DIFT, including all bytes of each element. This does not
+  transient and normal LLVM DIFT, including all bytes of each element. This does not
   establish equivalent precision for vector or atomic-pair transfers.
   Scalar pre/post-indexed loads and stores also keep address writeback tags
   separate from transferred data tags, retaining first-byte load sampling.

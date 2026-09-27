@@ -13,7 +13,8 @@ from teapot.arch import AArch64Architecture
 from teapot.arch.aarch64.operands import aarch64_access_displacement
 from teapot.arch.decoders import aarch64_decoder
 from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE
-from teapot.passes.common.dift.aarch64 import AArch64DiftPropagationPass
+from teapot.passes.transient.lazy_dift import transient_replay_pass
+from dift_replay_test_support import replay_asm
 from teapot.passes.text.dift.aarch64 import AArch64TextDiftPropagationLLVMPass
 
 
@@ -27,8 +28,8 @@ class AArch64PairDiftTests(unittest.TestCase):
         decoder = aarch64_decoder()
         manager = SimpleNamespace(abi=arch.abi)
         layout = SimpleNamespace(xor_mask=0)
-        common = AArch64DiftPropagationPass(
-            manager, None, None, arch, dift_layout=layout)
+        common = transient_replay_pass(arch,
+            manager, None, None, dift_layout=layout, insert_memlog=False)
         text = AArch64TextDiftPropagationLLVMPass(
             manager, None, None, arch, dift_layout=layout)
         for encoding, mnemonic, width, store in cases:
@@ -47,8 +48,7 @@ class AArch64PairDiftTests(unittest.TestCase):
                 base_setup = (
                     f"{'sub' if displacement >= 0 else 'add'} x{base_reg}, x0, #{abs(displacement)}\n"
                     f"{arch.load_address('x10', 'test_stack_top')}\nmov sp, x10")
-            patch = common._build_patch(
-                inst, effects.regs_read, effects.regs_write,
+            patch = replay_asm(common, inst, effects.regs_read, effects.regs_write, block=block,
                 clear_dest_tags=effects.clear_dest_tags,
                 mem_read=effects.mem_read, mem_write=effects.mem_write,
                 mem_write_size=effects.mem_write_size)
@@ -78,7 +78,7 @@ class AArch64PairDiftTests(unittest.TestCase):
                         common_update:
                             mov x9, sp
                             {base_setup}
-                            {patch(SimpleNamespace(stack_adjustment=0))}
+                            {patch}
                             mov sp, x9
                             ret
                             .bss
@@ -106,7 +106,7 @@ class AArch64PairDiftTests(unittest.TestCase):
                             capture_output=True, text=True, timeout=10)
                         self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
 
-    def test_common_and_llvm_keep_pair_elements_distinct(self):
+    def test_transient_and_text_keep_pair_elements_distinct(self):
         self._check_cases((
             ("400440a9", "ldp", 8, False),
             ("40044029", "ldp", 4, False),

@@ -98,11 +98,6 @@ class AArch64Architecture(
         return AArch64TextDiftPropagationLLVMPass(
             reg_manager, section, decoder, self, dift_layout=dift_layout)
 
-    def create_transient_dift_pass(self, reg_manager, section, decoder, dift_layout, *, insert_memlog=True):
-        from teapot.passes.common.dift.aarch64 import AArch64DiftPropagationPass
-        return AArch64DiftPropagationPass(
-            reg_manager, section, decoder, self, dift_layout=dift_layout, insert_memlog=insert_memlog)
-
     def create_transient_memlog_pass(self, reg_manager, section, decoder):
         from teapot.passes.transient.memlog.aarch64 import AArch64TransientMemlogPass
         return AArch64TransientMemlogPass(reg_manager, section, decoder, self)

@@ -14,7 +14,7 @@ from gtirb_rewriting.assembly import Register
 from teapot.arch.architecture import Architecture
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 from teapot.configs.slots import ScratchpadSlots
-from teapot.passes.common.dift.base import DiftPropagationBase
+from teapot.passes.common.dift.base import DiftPassBase
 
 
 TEXT_DIFT_CAPTURE_SCRATCH_SAVE_OFFSET = ScratchpadSlots.TEXT_DIFT_CAPTURE_SCRATCH_SAVE
@@ -36,7 +36,7 @@ class TextDiftInstructionEffects:
     conditional: Optional[str] = None
 
 
-class TextDiftLLVMBase(DiftPropagationBase):
+class TextDiftLLVMBase(DiftPassBase):
     DIFT_REG_TAGS_TYPE = "[48 x i8]"
     SCRATCHPAD_ARR_TYPE = f"[{SCRATCHPAD_SIZE // 8} x i64]"
     TAG_TYPE = "i8"
