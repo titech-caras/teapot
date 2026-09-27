@@ -31,6 +31,16 @@ class RelaxationOptionTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('gtirb-pprinter') and shutil.which('gcc'),
                          'printer/compiler unavailable')
     def test_x64_long_jrcxz_still_assembles_with_arm_switch(self):
+        self.check_long_count_branch(b'\xe3\x00')
+
+    @unittest.skipUnless(shutil.which('gtirb-pprinter') and shutil.which('gcc'),
+                         'printer/compiler unavailable')
+    def test_x64_loop_family_relaxes_without_changing_the_condition(self):
+        for opcode in (0xe0, 0xe1, 0xe2):
+            with self.subTest(opcode=hex(opcode)):
+                self.check_long_count_branch(bytes([opcode, 0]))
+
+    def check_long_count_branch(self, encoding):
         module = gtirb.Module(name='jrcxz', isa=gtirb.Module.ISA.X64,
                              file_format=gtirb.Module.FileFormat.ELF,
                              byte_order=gtirb.Module.ByteOrder.Little)
@@ -38,7 +48,7 @@ class RelaxationOptionTests(unittest.TestCase):
         section = gtirb.Section(name='.text', module=module,
             flags={gtirb.Section.Flag.Readable, gtirb.Section.Flag.Executable})
         interval = gtirb.ByteInterval(address=0x1000, section=section,
-                                      contents=b'\xe3\x00' + b'\x90' * 300 + b'\xc3')
+                                      contents=encoding + b'\x90' * 300 + b'\xc3')
         branch = gtirb.CodeBlock(size=2, byte_interval=interval)
         fallthrough = gtirb.CodeBlock(size=300, offset=2, byte_interval=interval)
         target = gtirb.CodeBlock(size=1, offset=302, byte_interval=interval)

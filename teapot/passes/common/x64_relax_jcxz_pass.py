@@ -9,9 +9,9 @@ from teapot.utils.misc import (
 
 
 class X64RelaxJcxzPass(Pass):
-    """Expand x86 count-zero branches, whose encoding is always rel8."""
+    """Expand x86 count-zero and LOOP branches, whose encoding is always rel8."""
 
-    SHORT_COUNT_BRANCHES = {"jcxz", "jecxz", "jrcxz"}
+    SHORT_COUNT_BRANCHES = {"jcxz", "jecxz", "jrcxz", "loop", "loope", "loopne"}
 
     def __init__(self, decoder, arch):
         self.decoder = decoder
