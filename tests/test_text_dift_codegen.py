@@ -35,6 +35,22 @@ class TextDiftCodegenTests(unittest.TestCase):
         return pass_type(SimpleNamespace(abi=arch.abi), None, None, arch,
                          dift_layout=SimpleNamespace(xor_mask=0))
 
+    def test_independent_replays_can_reuse_each_target(self):
+        # A builder's per-run callbacks must not outlive their LLVM analyses.
+        for arch, kind in ((X64Architecture(), X64TextDiftPropagationLLVMPass),
+                           (AArch64Architecture(), AArch64TextDiftPropagationLLVMPass),
+                           (RISCV64Architecture(), RISCV64TextDiftPropagationLLVMPass)):
+            dift = self._pass(arch, kind)
+            for offset in range(4):
+                with self.subTest(arch=arch.name, batch=offset):
+                    body = f"store i8 {offset}, ptr getelementptr ([48 x i8], ptr @dift_reg_tags, i64 0, i64 {offset})"
+                    module = dift._parse_and_optimize_llvm(dift._format_llvm_ir(
+                        body, target_triple=dift.target_triple))
+                    module.verify()
+                    asm = dift._extract_function_asm(dift.target_machine.emit_assembly(module))
+                    self.assertIn("dift_reg_tags", asm)
+                    self.assertTrue(dift._get_register_usage(asm))
+
     def test_riscv64_uses_hardware_multiply_without_compression(self):
         dift = self._pass(RISCV64Architecture(), RISCV64TextDiftPropagationLLVMPass)
         module = llvm.parse_assembly("""
@@ -72,11 +88,11 @@ class TextDiftCodegenTests(unittest.TestCase):
     def test_aarch64_allows_neon(self):
         dift = self._pass(AArch64Architecture(), AArch64TextDiftPropagationLLVMPass)
         module = llvm.parse_assembly("""
-            define void @func(<16 x i8>* %a, <16 x i8>* %b) {
-                %x = load <16 x i8>, <16 x i8>* %a, align 1
-                %y = load <16 x i8>, <16 x i8>* %b, align 1
+            define void @func(ptr %a, ptr %b) {
+                %x = load <16 x i8>, ptr %a, align 1
+                %y = load <16 x i8>, ptr %b, align 1
                 %z = or <16 x i8> %x, %y
-                store <16 x i8> %z, <16 x i8>* %a, align 1
+                store <16 x i8> %z, ptr %a, align 1
                 ret void
             }
         """)

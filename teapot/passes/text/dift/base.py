@@ -56,30 +56,25 @@ class TextDiftLLVMBase(DiftPropagationBase):
             self._init_llvm_target(self.TARGET_TRIPLE)
 
     def _init_llvm_native(self):
-        llvm.initialize()
         llvm.initialize_native_target()
         llvm.initialize_native_asmprinter()
-        self._init_llvm_pass_manager()
         self.target_triple = None
         self.target_machine = llvm.Target.from_default_triple().create_target_machine(
             "", self.TARGET_FEATURES, 3, "static"
         )
+        self._init_llvm_pass_manager()
 
     def _init_llvm_target(self, target_triple: str):
-        llvm.initialize()
         llvm.initialize_all_targets()
         llvm.initialize_all_asmprinters()
-        self._init_llvm_pass_manager()
         self.target_triple = target_triple
         self.target_machine = llvm.Target.from_triple(target_triple).create_target_machine(
             features=self.TARGET_FEATURES, opt=3, codemodel="small"
         )
+        self._init_llvm_pass_manager()
 
     def _init_llvm_pass_manager(self):
-        pmb = llvm.create_pass_manager_builder()
-        pmb.opt_level = 3
-        self.pm = llvm.create_module_pass_manager()
-        pmb.populate(self.pm)
+        self.pipeline_options = llvm.create_pipeline_tuning_options(speed_level=3)
 
     def _format_llvm_ir(self, body: str, *, target_triple=None) -> str:
         target = f'target triple = "{target_triple}"\n\n' if target_triple else ""
@@ -104,7 +99,15 @@ attributes #0 = {{ "no-builtins" }}
 
     def _parse_and_optimize_llvm(self, ir: str):
         ir_parsed = llvm.parse_assembly(ir)
-        self.pm.run(ir_parsed)
+        # Give optimization the same layout as cross-target code generation.
+        ir_parsed.data_layout = str(self.target_machine.target_data)
+        ir_parsed.verify()
+        # llvmlite installs per-run instrumentation callbacks on the builder.
+        # Reusing it for independent modules retains callbacks to dead analysis
+        # managers (and crashes on the next batch). Keep both objects per batch.
+        with llvm.create_pass_builder(self.target_machine, self.pipeline_options) as builder:
+            with builder.getModulePassManager() as manager:
+                manager.run(ir_parsed, builder)
         return ir_parsed
 
     def _reset(self):
@@ -124,7 +127,7 @@ attributes #0 = {{ "no-builtins" }}
     def _build_gep(self, type, ptr, offset, *, ptr_type=None):
         if ptr_type is None:
             ptr_type = type
-        return f"getelementptr inbounds ({ptr_type}, {ptr_type}* @{ptr}, i64 0, i64 {offset})"
+        return f"getelementptr inbounds ({ptr_type}, ptr @{ptr}, i64 0, i64 {offset})"
 
     def _alloca(self, type):
         return self._build_inst(f"alloca {type}")
@@ -136,10 +139,10 @@ attributes #0 = {{ "no-builtins" }}
         return ", !alias.scope !2, !noalias !0"
 
     def _load(self, type, v, *, dift_mem: bool = False):
-        return self._build_inst(f"load {type}, {type}* {v}{self._alias_metadata(dift_mem)}")
+        return self._build_inst(f"load {type}, ptr {v}{self._alias_metadata(dift_mem)}")
 
-    def _inttoptr(self, type, v, ptr_type):
-        return self._build_inst(f"inttoptr {type} {v} to {ptr_type}*")
+    def _inttoptr(self, type, v):
+        return self._build_inst(f"inttoptr {type} {v} to ptr")
 
     def _icmp(self, opt, type, v1, v2):
         return self._build_inst(f"icmp {opt} {type} {v1}, {v2}")
@@ -154,7 +157,7 @@ attributes #0 = {{ "no-builtins" }}
         return self._build_inst(f"add {type} {v1}, {v2}")
 
     def _store(self, type, v, ptr, *, dift_mem: bool = False):
-        self.llvm_ir.append(f"store {type} {v}, {type}* {ptr}{self._alias_metadata(dift_mem)}")
+        self.llvm_ir.append(f"store {type} {v}, ptr {ptr}{self._alias_metadata(dift_mem)}")
 
     def _br(self, l):
         self.llvm_ir.append(f"br label {l}")
@@ -455,7 +458,7 @@ attributes #0 = {{ "no-builtins" }}
             byte_addr = mem_addr if idx == 0 else self._add(self.SCRATCHPAD_ELEM_TYPE, mem_addr, idx)
             memtag_addr = self._inttoptr(self.SCRATCHPAD_ELEM_TYPE, self._xor(
                 self.SCRATCHPAD_ELEM_TYPE, byte_addr, self.dift_layout.xor_mask
-            ), self.TAG_TYPE)
+            ))
             self._store(self.TAG_TYPE, self._or(self.TAG_TYPE, self._load(self.TAG_TYPE, tag),
                                               self._load(self.TAG_TYPE, memtag_addr, dift_mem=True)), tag)
 
@@ -464,7 +467,7 @@ attributes #0 = {{ "no-builtins" }}
             byte_addr = mem_addr if idx == 0 else self._add(self.SCRATCHPAD_ELEM_TYPE, mem_addr, idx)
             memtag_addr = self._inttoptr(self.SCRATCHPAD_ELEM_TYPE, self._xor(
                 self.SCRATCHPAD_ELEM_TYPE, byte_addr, self.dift_layout.xor_mask
-            ), self.TAG_TYPE)
+            ))
             self._store(self.TAG_TYPE, tag, memtag_addr, dift_mem=True)
 
     def _build_store_values_patch(self, inst: CsInsn, capture_operands, scratch_plan=None,

@@ -4,6 +4,6 @@ gtirb-rewriting @ git+https://github.com/lin-toto/gtirb-rewriting.git@e47b9e40b2
 gtirb-functions>=1.0.9
 gtirb-capstone>=1.1.2
 gtirb-live-register-analysis @ git+https://github.com/lin-toto/gtirb-live-register-analysis@c8f799ce6f70217709e8444ac6351be46b837dbb
-# LLVM 14: text DIFT emits typed-pointer IR and uses the legacy pass manager, both gone in later llvmlite.
-llvmlite==0.43.0
+# LLVM 22: text DIFT uses opaque pointers and the new pass manager.
+llvmlite==0.49.0
 pyelftools>=0.31
