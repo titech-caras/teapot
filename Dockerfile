@@ -20,16 +20,16 @@ FROM scratch AS lief-src
 ADD --keep-git-dir=true https://github.com/lief-project/LIEF.git#60c648a447c81d857ec4d2d4476537b662037a80 /
 
 FROM scratch AS pprinter-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#6ffb8d9883f3ac31c031db51e64df31bff549682 /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#d8061163584e1be33b26ba4f6ac8220a606bdc1f /
 
 FROM scratch AS ddisasm-src
-ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#efef9146f7990f96145ba66f0e7903fdbaee5139 /
+ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#1bb4e039684679cee2eecbdcf0d8cde015aef127 /
 
 FROM scratch AS rewriting-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#d8664789fa0f7cbed321d5bde60c96234cadb731 /
 
 FROM scratch AS lra-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#490ec2dcd3af5ecf661fc2864f06eb3e4026743f /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#81acbd9384be4fffd29fca6c94da5cb467b7223f /
 
 FROM --platform=linux/amd64 ubuntu:24.04 AS frontend-build-base
 ENV DEBIAN_FRONTEND=noninteractive
@@ -106,7 +106,7 @@ RUN cmake -S /src/pprinter -B /build/pprinter -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DGTIRB_PPRINTER_BUILD_SHARED_LIBS=ON -DGTIRB_PPRINTER_STATIC_DRIVERS=OFF \
     -DGTIRB_PPRINTER_ENABLE_TESTS=OFF \
-    -DGTIRB_PPRINTER_BUILD_REVISION=6ffb8d9883f3ac31c031db51e64df31bff549682 \
+    -DGTIRB_PPRINTER_BUILD_REVISION=d8061163584e1be33b26ba4f6ac8220a606bdc1f \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
     && cmake --build /build/pprinter --target gtirb-pprinter gtirb-layout \
@@ -126,7 +126,7 @@ RUN cmake -S /src/ddisasm -B /build/ddisasm -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
-    -DDDISASM_BUILD_REVISION=efef9146f7990f96145ba66f0e7903fdbaee5139 \
+    -DDDISASM_BUILD_REVISION=1bb4e039684679cee2eecbdcf0d8cde015aef127 \
     -DDDISASM_ENABLE_TESTS=OFF -DDDISASM_GENERATE_MANY=ON \
     -DDDISASM_X86_64=ON -DDDISASM_ARM_64=ON \
     -DDDISASM_RISCV_32=ON -DDDISASM_RISCV_64=ON \
