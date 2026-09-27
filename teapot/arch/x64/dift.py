@@ -28,10 +28,18 @@ class X64DiftPatchesMixin:
 
     @staticmethod
     def dift_clears_destination_tags(inst) -> bool:
-        if (inst.mnemonic.startswith("xor")
-                and inst.operands[0].type == CS_OP_REG
-                and inst.operands[1].type == CS_OP_REG
-                and inst.operands[0].reg == inst.operands[1].reg):
+        mnemonic = inst.mnemonic.split()[-1]
+        operands = inst.operands
+        # Only bitwise/vector XORs and integer SUB have an unconditional zero
+        # result here. Floating SUB may produce NaNs. A merging writemask keeps
+        # old lanes, so do not treat the EVEX mask operand as a zeroing idiom.
+        source_indices = ((0, 1) if mnemonic in {'xor', 'sub', 'pxor', 'xorps', 'xorpd'}
+                          and len(operands) == 2 else
+                          (1, 2) if mnemonic in {'vpxor', 'vpxord', 'vpxorq', 'vxorps', 'vxorpd'}
+                          and len(operands) == 3 else None)
+        if (source_indices is not None
+                and all(operands[i].type == CS_OP_REG for i in source_indices)
+                and operands[source_indices[0]].reg == operands[source_indices[1]].reg):
             return True
         return (
             (inst.mnemonic in ("mov", "push") or inst.mnemonic.startswith("cmov"))
