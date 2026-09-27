@@ -20,6 +20,7 @@ class X64LLVMRegisterUsage:
 
 class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
     EXPECTED_ARCH = "x64"
+    TARGET_TRIPLE = "x86_64-unknown-linux-gnu"
     ASM_RETURN_BRANCH = "jmp"
     ALLOCATE_INST_PATCH_REGISTERS = True
     ALLOCATE_BLOCK_PATCH_REGISTERS = True
@@ -43,7 +44,6 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
     def __init__(self, reg_manager, section, decoder, arch, *, dift_layout=None):
         super().__init__(reg_manager, section, decoder, arch, dift_layout=dift_layout, insert_memlog=False)
         assert not self.insert_memlog
-        self._init_llvm_native()
 
     def visit_inst(self, inst, inst_idx, inst_offset, block, function=None, live_registers=None):
         effects = self._rep_string_effects(inst)

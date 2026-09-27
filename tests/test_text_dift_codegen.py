@@ -4,21 +4,33 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 import gtirb
 from gtirb_rewriting import Assembler
 import llvmlite.binding as llvm
 
-from teapot.arch import AArch64Architecture, RISCV64Architecture
+from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
 from teapot.arch.decoders import riscv64_decoder
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE, RISCV64_ORIGINAL_TP_OFFSET
 from teapot.passes.text.dift.aarch64 import AArch64TextDiftPropagationLLVMPass
 from teapot.passes.text.dift.riscv64 import RISCV64TextDiftPropagationLLVMPass
+from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from test_live_register_preservation import make_module
 
 
 class TextDiftCodegenTests(unittest.TestCase):
+    def test_x64_codegen_ignores_the_host_target(self):
+        with mock.patch.object(llvm.Target, 'from_default_triple',
+                               side_effect=AssertionError('host target must not be used')):
+            dift = self._pass(X64Architecture(), X64TextDiftPropagationLLVMPass)
+        self.assertEqual(dift.target_triple, 'x86_64-unknown-linux-gnu')
+        module = llvm.parse_assembly('define i64 @func(i64 %a) { ret i64 %a }')
+        assembly = dift.target_machine.emit_assembly(module)
+        self.assertIn('%rdi', assembly)
+        self.assertIn('%rax', assembly)
+
     def _pass(self, arch, pass_type):
         return pass_type(SimpleNamespace(abi=arch.abi), None, None, arch,
                          dift_layout=SimpleNamespace(xor_mask=0))
