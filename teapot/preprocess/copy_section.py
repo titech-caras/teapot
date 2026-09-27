@@ -223,6 +223,26 @@ def copy_section(section: gtirb.Section, name: str,
             raise TypeError(symbolic_expression)
         byte_interval_copy.symbolic_expressions[pos] = symbolic_expression_copy
 
+    # GNU's AArch64 assembler folds GOT references to local defined symbols
+    # into section+offset relocations. That adds the code offset to the GOT
+    # slot, not to its stored pointer. Preserve a distinct, non-preemptible GOT
+    # target without exporting copied implementation symbols to other DSOs.
+    if section.module.isa == gtirb.Module.ISA.ARM64:
+        copied_got_targets = {
+            symbol
+            for expression in byte_interval_copy.symbolic_expressions.values()
+            if gtirb.SymbolicExpression.Attribute.GOT in expression.attributes
+            for symbol in expression.symbols
+        }
+        if copied_got_targets:
+            info = section.module.aux_data.setdefault("elfSymbolInfo", gtirb.AuxData(
+                {}, "mapping<UUID,tuple<uint64_t,string,string,string,uint64_t>>"))
+            for symbol in symbol_list:
+                copied = symbol_copy_mapping[symbol.uuid]
+                if copied in copied_got_targets:
+                    kind = info.data.get(symbol, (0, "NOTYPE", "LOCAL", "DEFAULT", 0))[1]
+                    info.data[copied] = (0, kind, "GLOBAL", "HIDDEN", 0)
+
     new_edges = []
     for edge in section.ir.cfg:
         if isinstance(edge.source, gtirb.CodeBlock) and edge.source.byte_interval.section.name == section.name:
