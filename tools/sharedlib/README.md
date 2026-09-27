@@ -40,7 +40,8 @@ before instrumentation. There is no PIC instrumentation and no loadable instrume
 - `--preserve-selected-lifecycle` keeps custom init/fini callbacks and arrays of the selected libraries; RISC-V uses its
   array-based startup contract. Interleaving with sibling or external libraries' lifecycles is not established.
 - `--preserve-nonlocal-jumps` allows the original libc context-restoration calls instead of redirecting them to Teapot
-  rollback.
+  rollback. This covers `longjmp`, `_longjmp`, `siglongjmp`, `setcontext`, `swapcontext`, and their glibc internal
+  and fortified aliases. Without the opt-in these entries are refused; C++ exception unwinding remains unsupported.
 - `--preserve-weak-imports` keeps undefined weak bindings and the original breadth-first external dependency scope.
   Supplied but unneeded providers are not linked; replaceable weak definitions and ambiguous selected exports are still
   refused.

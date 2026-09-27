@@ -30,8 +30,13 @@ from elftools.dwarf.callframe import FDE
 CONTRACT = 'teapot-selected-elf64-v2'
 LOOKUP = {'dlopen', 'dlmopen', 'dlsym', 'dlvsym', 'dlclose', 'dlinfo',
           'dl_iterate_phdr', '__libc_dlopen_mode'}
+# Public entry points and glibc's internal/fortified aliases all bypass an
+# ordinary return. Keep one family for both rejection and the explicit opt-in.
+NONLOCAL_JUMPS = {'longjmp', '_longjmp', 'siglongjmp', '__longjmp', '__siglongjmp',
+                 '__longjmp_chk', '__libc_longjmp', '__libc_siglongjmp',
+                 'setcontext', '__setcontext', 'swapcontext', '__swapcontext'}
 UNWIND_UNSUPPORTED = {'__cxa_throw', '__cxa_rethrow', '__cxa_atexit',
-                      '_Unwind_Resume', 'longjmp', 'siglongjmp', '__longjmp_chk'}
+                      '_Unwind_Resume'} | NONLOCAL_JUMPS
 CRT_WEAK = {'__gmon_start__', '_ITM_registerTMCloneTable',
             '_ITM_deregisterTMCloneTable', '__cxa_finalize'}
 RELOCS_X64 = {1, 6, 7, 8}  # 64, GLOB_DAT, JUMP_SLOT, RELATIVE; COPY is excluded.
@@ -861,7 +866,7 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
         if preserve_selected_lifecycle:
             unsupported_unwind.discard('__cxa_atexit')
         if preserve_nonlocal_jumps:
-            unsupported_unwind -= {'longjmp', 'siglongjmp', '__longjmp_chk'}
+            unsupported_unwind -= NONLOCAL_JUMPS
         if all_names & unsupported_unwind:
             reject('NONLOCAL_UNWIND', path, ', '.join(sorted(all_names & unsupported_unwind)))
         for sec in elf.iter_sections():
