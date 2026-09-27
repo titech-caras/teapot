@@ -78,6 +78,26 @@ def exports(item, converter, functions_only=True):
     return frozenset(names)
 
 
+def component_bindings(item, converter, context):
+    """Keep only providers which this ELF can name, plus its own entries.
+
+    In particular, unrelated executable exports do not change a library's
+    call policy. Versioned imports use the same identities as the converter.
+    """
+    names = set(exports(item, converter))
+    selected_sonames = {name for name, _ in context['selected_libraries']}
+    for symbol in item['symbols']:
+        if symbol['section'] != 'SHN_UNDEF':
+            continue
+        library = symbol.get('version_library')
+        if (item.get('resolve_selected_versions') and symbol.get('version')
+                and library in selected_sonames):
+            names.add(converter.selected_version_name(library, symbol['name'], symbol['version']))
+        else:
+            names.add(converter.reconstructed_symbol_name(symbol, item))
+    return sorted((name, owner) for name, owner in context['bindings'] if name in names)
+
+
 def validate_object(path, component_id, expected_exports, expected_fdes,
                     machine='EM_X86_64', cfi_reader=None):
     isa, target = for_machine(machine)
@@ -217,7 +237,12 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
     # Provider names/types and dependency bytes affect the binding decision.
     # The executable's own bytes are deliberately not in a *library* key: a
     # different main with the same binding contract can reuse this exact object.
-    key_data = {"format": "teapot-x64-components-v1", "input_sha256": item["sha256"],
+    bindings = component_bindings(item, converter, context)
+    context = dict(context, bindings=bindings)
+    # Use exactly the contract in the key; never instrument with the larger
+    # caller-specific export set and then cache under a narrowed identity.
+    selected_symbols = frozenset(name for name, _ in bindings)
+    key_data = {"format": "teapot-components-v2", "input_sha256": item["sha256"],
                 "role": item["role"], "priority": priority, "context": context}
     key_data = json.loads(json.dumps(key_data, sort_keys=True))
     key = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
