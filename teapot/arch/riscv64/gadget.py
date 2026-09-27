@@ -10,6 +10,11 @@ _REPORT_CALLER_SAVED_GPRS = (
     10, 11, 12, 13, 14, 15, 16, 17,  # a0-a7
     28, 29, 30, 31,  # t3-t6
 )
+_REPORT_CALLER_SAVED_FPRS = (
+    *range(8),  # ft0-ft7
+    *range(10, 18),  # fa0-fa7
+    *range(28, 32),  # ft8-ft11
+)
 
 
 class RISCV64GadgetPatchesMixin:
@@ -45,9 +50,14 @@ class RISCV64GadgetPatchesMixin:
         if save_float_state:
             fcsr_save = "frcsr a2\nsd a2, 264(sp)"
             fcsr_restore = "ld a2, 264(sp)\nfscsr a2"
-            float_saves = "\n".join(f"fsd f{i}, {float_base + i * 8}(sp)" for i in range(32))
-            float_restores = "\n".join(f"fld f{i}, {float_base + i * 8}(sp)" for i in range(32))
-        frame_size = float_base + (256 if save_float_state else 0)
+            # The reporter follows the hard-float ABI and preserves fs0-fs11.
+            # Pack only its call-clobbered FPRs; both frame variants are 16-byte
+            # aligned (272 bytes without FP state, 432 bytes with it).
+            float_saves = "\n".join(f"fsd f{reg}, {float_base + slot * 8}(sp)"
+                                    for slot, reg in enumerate(_REPORT_CALLER_SAVED_FPRS))
+            float_restores = "\n".join(f"fld f{reg}, {float_base + slot * 8}(sp)"
+                                       for slot, reg in enumerate(_REPORT_CALLER_SAVED_FPRS))
+        frame_size = float_base + (len(_REPORT_CALLER_SAVED_FPRS) * 8 if save_float_state else 0)
         frame_symbol = f"scratchpad+{SCRATCHPAD_SIZE - frame_size}"
         report_call_label = f".L__report_gadget_call_{next(_REPORT_LABEL_COUNTER)}{SYMBOL_SUFFIX}"
         return f"""
