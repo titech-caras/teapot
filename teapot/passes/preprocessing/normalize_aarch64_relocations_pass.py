@@ -26,6 +26,8 @@ class NormalizeAArch64RelocationsPass(Pass):
     ddisasm also emits GOT loads through synthetic .got symbols and records the
     real target in symbolForwarding. Add the GOT attribute expected by the
     AArch64 pprinter so adrp/ldr pairs stay as :got:/:got_lo12: references.
+    Expressions already marked GOT name the target, not the encoded slot;
+    their addends must not be recovered from that slot's address.
 
     Linker-relaxed ADRPs are restored first (see _restore_relaxed_adrp), and raw
     page-offset users of split ADRPs are symbolized (see split_lo12.py).
@@ -103,7 +105,8 @@ class NormalizeAArch64RelocationsPass(Pass):
             for index, inst in enumerate(state.insns(block)):
                 expr = state.symexpr(block, inst)
                 if (not isinstance(expr, gtirb.SymAddrConst) or
-                        gtirb.SymbolicExpression.Attribute.LO12 not in expr.attributes):
+                        gtirb.SymbolicExpression.Attribute.LO12 not in expr.attributes or
+                        gtirb.SymbolicExpression.Attribute.GOT in expr.attributes):
                     continue
                 address = symbol_address(expr.symbol)
                 if address is None:
@@ -255,6 +258,10 @@ class NormalizeAArch64RelocationsPass(Pass):
         return section is not None and section.name in {".got", ".got.plt"}
 
     def _corrected_offset(self, byte_interval, offset: int, inst, symexpr: gtirb.SymAddrConst, symbol_address: int):
+        # A GOT relocation encodes the slot address, which need not resemble
+        # the target symbol's address even when that target is defined locally.
+        if gtirb.SymbolicExpression.Attribute.GOT in symexpr.attributes:
+            return None
         recovered = self._paired_offsets.get((byte_interval, offset))
         if recovered is not None:
             return recovered

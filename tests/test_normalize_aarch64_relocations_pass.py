@@ -117,6 +117,27 @@ class NormalizeAArch64RelocationsPassTests(unittest.TestCase):
     LDR_X0_X2 = 0xF9400040           # ldr x0, [x2]
     LDR_X3_X2_8 = 0xF9400443         # ldr x3, [x2, #8]
 
+    def test_explicit_got_references_keep_target_addends(self):
+        for addend in (0, 8, -8):
+            for offsets in ((0, 4), (0,), (4,)):
+                with self.subTest(addend=addend, offsets=offsets):
+                    # Encoded ADRP/LDR name the GOT slot at 0x3fc0, not the
+                    # locally defined target. Retained relocations name that
+                    # target directly, unlike the synthetic-slot fixture below.
+                    module, code, _, _ = self.relaxed_adrp_fixture(
+                        (0xd0000002, self.LDR_X2_X2_FC0, self.LDR_X0_X2))
+                    target = gtirb.Symbol('local_target', payload=0x1800, module=module)
+                    GOT, LO12 = gtirb.SymbolicExpression.Attribute.GOT, gtirb.SymbolicExpression.Attribute.LO12
+                    for offset in offsets:
+                        code.symbolic_expressions[offset] = gtirb.SymAddrConst(
+                            addend, target, {GOT, LO12} if offset else {GOT})
+                    expressions = dict(code.symbolic_expressions)
+                    contents = bytes(code.contents)
+                    fix = self.normalize(module)
+                    self.assertEqual(dict(code.symbolic_expressions), expressions)
+                    self.assertEqual(bytes(code.contents), contents)
+                    self.assertEqual(fix.symbolized_split_lo12, 0)
+
     def test_relaxed_adrp_got_pair_is_restored(self):
         module, code, got_symbol, page = self.relaxed_adrp_fixture(
             (self.ADR_X2_3000, self.LDR_X2_X2_FC0, self.LDR_X0_X2))
