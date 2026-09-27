@@ -26,10 +26,14 @@ the `liveRegisterSetsHigh` word). Missing masks require full saves. Python
 vector analysis is only a diagnostic `--debug-vector-liveness` cross-check;
 the Python flag analysis remains authoritative for flags. Calls kill caller-saved vectors except ABI
 arguments, returns use XMM0–1, and missing masks, opaque state or unresolved
-jumps force full. Explicit `xmm0-7`, `sse`, `avx` and `full` settings remain
-assertions about required checkpoint state, not liveness proofs. Runtime
-builds can override them with `-DTEAPOT_X64_VECTOR_STATE=...`. Report callbacks
-always preserve full supported vector/x87 state.
+jumps force full. Explicit `xmm0-7`, `sse` and `avx` are **unsafe overrides**:
+they bypass the liveness and extended-state safety checks and can silently
+corrupt program results. In particular, forcing `xmm0-7` loses live higher
+XMM registers, wide vector lanes, mask registers and x87 state. Use `auto` or
+`full` unless the narrower state requirement has been independently proved;
+choosing a smaller profile is not itself such a proof. Runtime builds can
+override the profile with `-DTEAPOT_X64_VECTOR_STATE=...`, with the same risk.
+Report callbacks always preserve full supported vector/x87 state.
 
 Coverage callbacks are off in ordinary runtime builds. Build the runtime with
 `-DTEAPOT_ENABLE_COVERAGE=ON` when linking honggfuzz; using `hfuzz-clang` or
@@ -77,8 +81,9 @@ Teapot prefers ddisasm's interprocedural `liveRegisterNames` and
 `liveRegisterSets` metadata. Known internal calls are analyzed through the CFG,
 including conditional tail calls and returns across recovered function boundaries;
 external calls use the target ABI, and unresolved indirect transfers remain
-conservative. Direct transfers to weak definitions also keep every tracked
-register live, since relinking can replace their bodies. Rewriting migrates
+conservative. Direct transfers to weak definitions retain the conservative
+GPR policy, since relinking can replace their bodies; vector masks instead
+use the ABI summaries described above. Rewriting migrates
 masks for surviving instructions; normal and
 transient copies retain independent entries. Each rewrite round refreshes the
 analysis cache and explicitly retains masks for its state-preserving edits.

@@ -16,7 +16,9 @@ def main():
     parser.add_argument('--force-checkpoint-df', action='store_true',
                         help='Save DF at every x64 checkpoint instead of selecting DF-sensitive sites')
     parser.add_argument('--x64-vector-state', choices=('auto', 'xmm0-7', 'sse', 'avx', 'full'),
-                        default='auto', help='Checkpoint vector state (auto uses per-site liveness, unknown means full)')
+                        default='auto', help=('Checkpoint vector state: auto uses per-site liveness '
+                                              '(unknown means full); xmm0-7/sse/avx are unsafe '
+                                              'overrides that can corrupt program results'))
     parser.add_argument('--debug-vector-liveness', action='store_true',
                         help='Compare DDisasm checkpoint vector masks with Python analysis (diagnostic only)')
     parser.add_argument("--conservative-flags", action="store_true",
