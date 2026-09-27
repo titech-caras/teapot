@@ -21,8 +21,6 @@ from teapot.pipeline import TeapotPipeline
 
 
 def make_module(arch, isa, contents):
-    arch.install_decoder_compat()
-    arch.install_rewriting_compat()
     abi = arch.register_abi(_ABIS)
     ir = gtirb.IR()
     module = gtirb.Module(

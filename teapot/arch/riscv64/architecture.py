@@ -75,7 +75,7 @@ class RISCV64Architecture(
                             text_transient_mapping, landing_pad_targets,
                             run_pass_manager):
         """Drive text/transient jumps and their landing pads to a fixed point."""
-        from gtirb_capstone.instructions import GtirbInstructionDecoder
+        from gtirb_rewriting.decoder import GtirbInstructionDecoder
         from gtirb_rewriting import PassManager
 
         from teapot.passes.common.riscv64_relax_unconditional_branches_pass import (

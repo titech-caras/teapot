@@ -36,7 +36,6 @@ class RISCDiftHistoryTests(unittest.TestCase):
                 .skip 3072
             """
         else:
-            arch.install_decoder_compat()
             decoder = riscv64_decoder()
             instruction = bytes.fromhex("2330b500")  # sd a1, 0(a0)
             pass_type = RISCV64DiftPropagationPass

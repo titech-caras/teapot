@@ -114,8 +114,7 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                 # usual RISC-V adjustment that moves a patch after AUIPC/LO.
                 # Inserting before the complete pair is safe; inserting into
                 # a split call pair is not an independently callable entry.
-                resolver = getattr(type(self.rewriting_ctx), "_teapot_insert_location", None)
-                if resolver is not None and resolver(block, 0) != (block, 0):
+                if self.rewriting_ctx.resolve_insert_location(block, 0) != (block, 0):
                     raise ValueError("exported entry lies inside a protected instruction pair")
                 location = (block, 0)
                 insert = self.rewriting_ctx.insert_at

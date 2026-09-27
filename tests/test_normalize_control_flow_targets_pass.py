@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 import gtirb
-from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_rewriting.decoder import GtirbInstructionDecoder
 from gtirb_rewriting import Pass, PassManager, Patch, patch_constraints
 
 from teapot.passes.preprocessing.normalize_control_flow_targets_pass import (

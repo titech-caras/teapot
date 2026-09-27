@@ -15,7 +15,7 @@ import unittest
 
 import gtirb
 from elftools.elf.elffile import ELFFile
-from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_rewriting.decoder import GtirbInstructionDecoder
 
 from teapot.arch import get_arch
 from teapot.debug_lines import SourceLines, _filename, _asm_string, emit_source_lines
@@ -100,7 +100,6 @@ class SourceLineTests(unittest.TestCase):
             ir = gtirb.IR.load_protobuf(root / "input.gtirb")
             module = ir.modules[0]
             arch = get_arch(module)
-            arch.install_decoder_compat()
             block = next(b for b in module.code_blocks if b.size and b.section.name == ".text")
             module.aux_data["comments"] = gtirb.AuxData(
                 {gtirb.Offset(block, 0): "existing analysis comment"}, "mapping<Offset,string>")

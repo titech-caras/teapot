@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import gtirb
 from capstone import CS_OP_IMM, CS_OP_MEM
-from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_rewriting.decoder import GtirbInstructionDecoder
 from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext, patch_constraints
 

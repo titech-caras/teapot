@@ -38,8 +38,6 @@ VARIANTS = (
 
 def rewritten_code(path, variant, mode):
     arch = VARIANTS[variant][0]()
-    arch.install_decoder_compat()
-    arch.install_rewriting_compat()
     from gtirb_rewriting.abi import _ABIS
     abi = arch.register_abi(_ABIS)
     ir = gtirb.IR.load_protobuf(path)

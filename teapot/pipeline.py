@@ -3,7 +3,7 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 import gtirb
-from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_rewriting.decoder import GtirbInstructionDecoder
 from gtirb_live_register_analysis import (
     LIVE_REGISTER_NAMES_AUXDATA,
     LIVE_REGISTER_SETS_AUXDATA,
@@ -154,9 +154,7 @@ class TeapotPipeline:
             raise ValueError("--aarch64-tag-storage=mte is only valid for AArch64 modules")
         if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE:
             _add_arch_feature(self.module, AARCH64_MTE_ARCH_FEATURE)
-        self.arch.install_decoder_compat()
         self.dift_layout = get_dift_layout(self.arch.name, self.dift_layout_name)
-        self.arch.install_rewriting_compat()
         self.text_section = [section for section in self.module.sections if section.name == ".text"][0]
         self.decoder = CachedGtirbInstructionDecoder(self.module.isa)
         self.abi = self.arch.register_abi(_ABIS)

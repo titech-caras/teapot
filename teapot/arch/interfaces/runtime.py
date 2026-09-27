@@ -11,12 +11,6 @@ class ArchitectureRuntimeMixin(ABC):
     def register_abi(self, abi_map):
         return self.abi
 
-    def install_decoder_compat(self) -> None:
-        pass
-
-    def install_rewriting_compat(self) -> None:
-        pass
-
     def checkpoint_lib_symbols(self):
         return list(COMMON_CHECKPOINT_LIB_SYMBOLS)
 

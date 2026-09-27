@@ -220,8 +220,6 @@ void _start(void) {
             pipeline = TeapotPipeline(ir)
             pipeline.module = module
             pipeline.arch = AArch64Architecture()
-            pipeline.arch.install_decoder_compat()
-            pipeline.arch.install_rewriting_compat()
             pipeline.abi = pipeline.arch.register_abi(_ABIS)
             pipeline.decoder = CachedGtirbInstructionDecoder(module.isa)
             pipeline._run_normalize_passes()

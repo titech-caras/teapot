@@ -2,7 +2,7 @@ import unittest
 from unittest import mock
 
 import gtirb
-from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_rewriting.decoder import GtirbInstructionDecoder
 from gtirb_rewriting import PassManager
 from gtirb_rewriting.abi import _ABIS
 
@@ -80,8 +80,6 @@ class RISCV64RelaxFixedPointTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.arch = RISCV64Architecture()
-        cls.arch.install_decoder_compat()
-        cls.arch.install_rewriting_compat()
         cls.arch.register_abi(_ABIS)
 
     def test_layout_growth_is_relaxed_to_fixed_point(self):

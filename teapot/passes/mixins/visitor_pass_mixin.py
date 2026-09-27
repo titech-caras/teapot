@@ -53,11 +53,10 @@ class VisitorPassMixin(Pass):
             return block, len(instructions)
         offset = instructions[instruction_idx].address - instructions[0].address
         adjusted_offset = self.arch.adjust_insertion_offset(block, offset, instructions)
-        # Compatibility code can move a patch into another block, or across a
+        # The rewriter can move a patch into another block, or across a
         # complete HI/LO pair after the architecture's entry adjustment.
-        resolver = getattr(type(self.rewriting_ctx), "_teapot_insert_location", None)
-        adjusted_block, adjusted_offset = (resolver(block, adjusted_offset) if resolver is not None
-                                           else (block, adjusted_offset))
+        adjusted_block, adjusted_offset = self.rewriting_ctx.resolve_insert_location(
+            block, adjusted_offset)
         if adjusted_block is block and adjusted_offset == offset:
             return block, instruction_idx
         if adjusted_block is not block:

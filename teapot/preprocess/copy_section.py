@@ -3,7 +3,7 @@ import uuid
 import gtirb
 import copy
 from typing import Optional, Tuple
-from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_rewriting.decoder import GtirbInstructionDecoder
 from gtirb_rewriting import _auxdata_offsetmap
 
 from teapot.datacls.copied_section_mapping import CopiedSectionMapping

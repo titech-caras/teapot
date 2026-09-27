@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 import gtirb
-from gtirb_capstone.instructions import GtirbInstructionDecoder
+from gtirb_rewriting.decoder import GtirbInstructionDecoder
 from gtirb_rewriting import _auxdata
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
@@ -35,7 +35,6 @@ class DiftExtCallVersionTests(unittest.TestCase):
         ):
             for tail_call in (False, True):
                 with self.subTest(arch=arch.name, tail_call=tail_call):
-                    arch.install_decoder_compat()
                     ir = gtirb.IR()
                     module = gtirb.Module(name="external-call", isa=isa, ir=ir,
                                           byte_order=gtirb.Module.ByteOrder.Little)

@@ -26,7 +26,7 @@ FROM scratch AS ddisasm-src
 ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#efef9146f7990f96145ba66f0e7903fdbaee5139 /
 
 FROM scratch AS rewriting-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#b969b4c5678d08d55a7c05e2db392a637576808a /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#d8664789fa0f7cbed321d5bde60c96234cadb731 /
 
 FROM scratch AS lra-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#490ec2dcd3af5ecf661fc2864f06eb3e4026743f /
