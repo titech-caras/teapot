@@ -35,22 +35,26 @@ def _text(value):
 def _filename(cu, program, index):
     """pyelftools exposes v4-shaped entries even for DWARF5 line headers."""
     version = program.header["version"]
-    files = program.header["file_entry"]
+    files = program.header.get("file_entry", ())
     file_index = index if version >= 5 else index - 1
     if not 0 <= file_index < len(files):
         raise ValueError(f"invalid DWARF{version} file index {index}")
     entry = files[file_index]
     name = _text(entry.name)
+    if posixpath.isabs(name):
+        return posixpath.normpath(name)
     comp_dir_attr = cu.get_top_DIE().attributes.get("DW_AT_comp_dir")
     comp_dir = _text(comp_dir_attr.value) if comp_dir_attr else ""
-    directories = program.header["include_directory"]
-    directory_index = entry.dir_index if version >= 5 else entry.dir_index - 1
-    if version < 5 and entry.dir_index == 0:
+    directories = program.header.get("include_directory", ())
+    # DWARF5 can omit DW_LNCT_directory_index; pyelftools then supplies None.
+    raw_index = entry.dir_index or 0
+    directory_index = raw_index if version >= 5 else raw_index - 1
+    if raw_index == 0 and (version < 5 or not directories):
         directory = comp_dir
     elif 0 <= directory_index < len(directories):
         directory = posixpath.join(comp_dir, _text(directories[directory_index]))
     else:
-        raise ValueError(f"invalid DWARF{version} directory index {entry.dir_index}")
+        raise ValueError(f"invalid DWARF{version} directory index {raw_index}")
     return posixpath.normpath(posixpath.join(directory, name))
 
 

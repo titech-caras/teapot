@@ -39,6 +39,11 @@ class SourceLineTests(unittest.TestCase):
                 "include_directory": [b"/build"],
             })
             self.assertEqual(_filename(cu, program, index), "/build/first.c")
+        for name, expected in ((b"/source/absolute.c", "/source/absolute.c"),
+                               (b"relative.c", "/build/relative.c")):
+            program = SimpleNamespace(header={"version": 5,
+                "file_entry": [SimpleNamespace(name=name, dir_index=None)]})
+            self.assertEqual(_filename(cu, program, 0), expected)
         self.assertEqual(_asm_string('a"b\\c\n'), '"a\\042b\\134c\\012"')
 
     def test_inserted_and_replaced_code_does_not_inherit_source_lines(self):
