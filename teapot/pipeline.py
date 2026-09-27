@@ -24,9 +24,6 @@ from teapot.passes.preprocessing.import_symbols_pass import ImportSymbolsPass
 from teapot.passes.preprocessing.normalize_data_block_alignment_pass import (
     NormalizeDataBlockAlignmentPass,
 )
-from teapot.passes.preprocessing.normalize_control_flow_targets_pass import (
-    NormalizeControlFlowTargetsPass,
-)
 from teapot.passes.text.text_indirect_branch_transform_pass import TextIndirectBranchTransformPass
 from teapot.passes.text.text_initialize_library_pass import TextInitializeLibraryPass
 from teapot.passes.text.text_skipped_transform_restore_pass import TextSkippedTransformRestorePass
@@ -241,7 +238,6 @@ class TeapotPipeline:
     def _run_normalize_passes(self):
         pass_manager = PassManager()
         pass_manager.add(NormalizeDataBlockAlignmentPass())
-        pass_manager.add(NormalizeControlFlowTargetsPass(self.decoder))
         for arch_pass in self.arch.normalize_passes(self.decoder, self.reg_manager):
             pass_manager.add(arch_pass)
         self._run_pass_manager(pass_manager, "normalize")
