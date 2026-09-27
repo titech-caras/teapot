@@ -26,7 +26,7 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
                             block: gtirb.CodeBlock, function: Function = None):
         if self.arch.rep_string_kind(inst) is not None:
             return None
-        if inst.mnemonic in ("lea", "nop", "ret", "push", "pop", "call") or inst.mnemonic.startswith("j"):
+        if inst.mnemonic in ("lea", "nop", "push", "pop") or self.arch.is_control_transfer_instruction(inst):
             return None
 
         mem_operand = self.arch.memory_operand(inst)

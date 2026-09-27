@@ -138,9 +138,12 @@ class X64ControlFlowPatchesMixin:
             # REPNE is only documented for comparisons. Decode the raw prefix:
             # Capstone drops F2 on some string forms, including their REP name.
             return kind not in {"cmps", "scas"} and 0xf2 in instruction.bytes[:-1]
-        return instruction.mnemonic.startswith("rep")
+        # REP RET is a branch-prediction hint, not a string operation. BND and
+        # NOTRACK also qualify control transfers without changing their kind.
+        return (instruction.mnemonic.startswith("rep")
+                and not self.is_control_transfer_instruction(instruction))
 
     @staticmethod
     def is_control_transfer_instruction(instruction) -> bool:
-        mnemonic = instruction.mnemonic
-        return mnemonic in {"call", "jmp", "ret"} or mnemonic.startswith("j")
+        mnemonic = instruction.mnemonic.split()[-1]
+        return mnemonic in {"call", "jmp", "ret"} or mnemonic.startswith(("j", "loop"))
