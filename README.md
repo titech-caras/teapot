@@ -22,6 +22,12 @@ It also requires the following packages for interfacing with GTIRB format:
 Instructions are decoded with Capstone 6.0.0-Alpha11 (`capstone==6.0.0a11`,
 also through `gtirb-capstone` 1.1.2 or newer); Capstone 5 is not supported.
 
+Use the DDisasm and gtirb-pprinter revisions pinned in the Dockerfile. They
+consume native Capstone 6 operands and recover relocatable startup addresses,
+direct-transfer targets and AArch64 page references in the frontend. Teapot
+no longer repairs these older frontend outputs: re-lift existing inputs with
+the pinned DDisasm before rewriting them.
+
 `requirements.txt` pins Teapot's `gtirb-rewriting` fork because its scoped
 rewrite preparation reduces runtime and peak memory on large RV64 modules.
 The Docker image verifies this API while building. For local development, mount

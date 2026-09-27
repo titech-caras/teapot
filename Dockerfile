@@ -20,13 +20,13 @@ FROM scratch AS lief-src
 ADD --keep-git-dir=true https://github.com/lief-project/LIEF.git#60c648a447c81d857ec4d2d4476537b662037a80 /
 
 FROM scratch AS pprinter-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#d8061163584e1be33b26ba4f6ac8220a606bdc1f /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#0107fb639ab60a51a021c60ed93477cfb41557e1 /
 
 FROM scratch AS ddisasm-src
-ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#477a4a812cd5aee4d177a8ce8b3680276d30747f /
+ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#45d9d8b3bc711e33a1f60d219d6723a54508b0bf /
 
 FROM scratch AS rewriting-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#36d8dd1062a5794cc79eb95516dfe596f19129e6 /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#eb8d5d63686214fde30360c87438824b249fc57b /
 
 FROM scratch AS lra-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#81acbd9384be4fffd29fca6c94da5cb467b7223f /
@@ -106,7 +106,7 @@ RUN cmake -S /src/pprinter -B /build/pprinter -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DGTIRB_PPRINTER_BUILD_SHARED_LIBS=ON -DGTIRB_PPRINTER_STATIC_DRIVERS=OFF \
     -DGTIRB_PPRINTER_ENABLE_TESTS=OFF \
-    -DGTIRB_PPRINTER_BUILD_REVISION=d8061163584e1be33b26ba4f6ac8220a606bdc1f \
+    -DGTIRB_PPRINTER_BUILD_REVISION=0107fb639ab60a51a021c60ed93477cfb41557e1 \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
     && cmake --build /build/pprinter --target gtirb-pprinter gtirb-layout \
@@ -126,7 +126,7 @@ RUN cmake -S /src/ddisasm -B /build/ddisasm -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
-    -DDDISASM_BUILD_REVISION=477a4a812cd5aee4d177a8ce8b3680276d30747f \
+    -DDDISASM_BUILD_REVISION=45d9d8b3bc711e33a1f60d219d6723a54508b0bf \
     -DDDISASM_ENABLE_TESTS=OFF -DDDISASM_GENERATE_MANY=ON \
     -DDDISASM_X86_64=ON -DDDISASM_ARM_64=ON \
     -DDDISASM_RISCV_32=ON -DDDISASM_RISCV_64=ON \
