@@ -46,6 +46,7 @@ class TextDiftLLVMBase(DiftPropagationBase):
     ASM_RETURN_BRANCH = None
     ALLOCATE_INST_PATCH_REGISTERS = False
     ALLOCATE_BLOCK_PATCH_REGISTERS = False
+    REPLAY_SYMBOLS = frozenset({"dift_reg_tags", "scratchpad"})
 
     def __init__(self, reg_manager: LiveRegisterManager, section: gtirb.Section, decoder: GtirbInstructionDecoder,
                  arch: Architecture, *, dift_layout=None, insert_memlog: bool = False):
@@ -138,8 +139,10 @@ attributes #0 = {{ "no-builtins" }}
             return ", !alias.scope !0, !noalias !2"
         return ", !alias.scope !2, !noalias !0"
 
-    def _load(self, type, v, *, dift_mem: bool = False):
-        return self._build_inst(f"load {type}, ptr {v}{self._alias_metadata(dift_mem)}")
+    def _load(self, type, v, *, dift_mem: bool = False, volatile=False, align=None):
+        alignment = f", align {align}" if align is not None else ""
+        return self._build_inst(
+            f"load {'volatile ' if volatile else ''}{type}, ptr {v}{alignment}{self._alias_metadata(dift_mem)}")
 
     def _inttoptr(self, type, v):
         return self._build_inst(f"inttoptr {type} {v} to ptr")
@@ -156,8 +159,10 @@ attributes #0 = {{ "no-builtins" }}
     def _add(self, type, v1, v2):
         return self._build_inst(f"add {type} {v1}, {v2}")
 
-    def _store(self, type, v, ptr, *, dift_mem: bool = False):
-        self.llvm_ir.append(f"store {type} {v}, ptr {ptr}{self._alias_metadata(dift_mem)}")
+    def _store(self, type, v, ptr, *, dift_mem: bool = False, volatile=False, align=None):
+        alignment = f", align {align}" if align is not None else ""
+        self.llvm_ir.append(
+            f"store {'volatile ' if volatile else ''}{type} {v}, ptr {ptr}{alignment}{self._alias_metadata(dift_mem)}")
 
     def _br(self, l):
         self.llvm_ir.append(f"br label {l}")
@@ -201,14 +206,14 @@ attributes #0 = {{ "no-builtins" }}
         return "\n".join(lines)
 
     def _validate_function_asm(self, lines):
-        """Replay patches are self-contained, except for their two globals.
+        """Replay patches are self-contained, except for explicit runtime globals.
 
         Calling an intercepted libc helper on protected tag storage is not
         valid instrumentation. Likewise, LLVM's out-of-function constant pools
         are discarded by extraction and must never become unresolved symbols.
         """
         symbols = {line[:-1] for line in lines if line.endswith(":")}
-        symbols.update({"dift_reg_tags", "scratchpad"})
+        symbols.update(self.REPLAY_SYMBOLS)
         if self.arch.name == "x64":
             registers = r"%[a-z][a-z0-9]*"
             modifiers = set()
@@ -428,6 +433,8 @@ attributes #0 = {{ "no-builtins" }}
                     mem_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_write)
                 self._store_shadow_mem_tags(loaded_tag, mem_addr, 0, mem_write_size)
 
+        self._after_instruction_effects(mem_read)
+
         if conditional:
             self._br(f"%dift_skip_{label_id}")
             self._label(f"dift_skip_{label_id}")
@@ -435,6 +442,9 @@ attributes #0 = {{ "no-builtins" }}
         return self._build_store_values_patch(
             inst, capture_operands, scratch_plan=scratch_plan,
             conditional=conditional, conditional_slot=label_id)
+
+    def _after_instruction_effects(self, mem_read):
+        """Transient replays apply queued load tags inside the same condition."""
 
     def _load_scratchpad_addr(self, capture_operands, block, inst, inst_offset, mem_operand):
         scratchpad_idx = self.scratchpad_offset

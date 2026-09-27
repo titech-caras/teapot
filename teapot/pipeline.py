@@ -98,6 +98,7 @@ def _add_arch_feature(module: gtirb.Module, feature: str):
 @dataclass(frozen=True)
 class InstrumentationOptions:
     enable_dift: bool = True
+    eager_transient_dift: bool = False
     enable_asan: bool = True
     enable_gadgets: bool = True
     enable_memlog: bool = True
@@ -403,6 +404,7 @@ class TeapotPipeline:
 
     def _run_transient_passes(self):
         pass_manager = PassManager()
+        memory_policy = port_policy = None
         if self.options.enable_asan:
             pass_manager.add(AsanStackPass(
                 self.reg_manager, self.transient_section, self.decoder, self.arch, self.options.enable_memlog,
@@ -412,22 +414,33 @@ class TeapotPipeline:
                 self.reg_manager, self.transient_section, self.decoder, self.guard_section, self.arch,
                 index_base_symbol=self.component_guard_base))
             if self.options.enable_mem_operand_gadgets:
-                pass_manager.add(self.arch.create_transient_mem_operand_policy_pass(
+                memory_policy = self.arch.create_transient_mem_operand_policy_pass(
                     self.reg_manager,
                     self.transient_section,
                     self.decoder,
                     dift_layout=self.dift_layout,
                     enable_asan_check=self.options.enable_gadget_asan_check,
-                    asan_tag_storage=self.options.aarch64_tag_storage))
+                    asan_tag_storage=self.options.aarch64_tag_storage)
             if self.options.enable_port_gadgets:
-                pass_manager.add(self.arch.create_transient_port_contention_policy_pass(
+                port_policy = self.arch.create_transient_port_contention_policy_pass(
                     self.reg_manager,
                     self.transient_section,
                     self.decoder,
-                    dift_layout=self.dift_layout))
+                    dift_layout=self.dift_layout)
         else:
             create_guards(self.guard_section, 0)
-        if self.options.enable_dift:
+        lazy = self.options.enable_dift and not self.options.eager_transient_dift
+        if lazy:
+            from teapot.passes.transient.lazy_dift import transient_replay_pass
+            pass_manager.add(transient_replay_pass(
+                self.arch, self.reg_manager, self.transient_section, self.decoder,
+                dift_layout=self.dift_layout, insert_memlog=self.options.enable_memlog,
+                memory_policy=memory_policy, port_policy=port_policy))
+        else:
+            for policy in (memory_policy, port_policy):
+                if policy is not None:
+                    pass_manager.add(policy)
+        if self.options.enable_dift and not lazy:
             pass_manager.add(self.arch.create_transient_dift_pass(
                 self.reg_manager, self.transient_section, self.decoder, self.dift_layout,
                 insert_memlog=self.options.enable_memlog))

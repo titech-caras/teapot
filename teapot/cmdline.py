@@ -48,6 +48,10 @@ def main():
         help="Skip DIFT propagation and DIFT external-call handling.",
     )
     parser.add_argument(
+        "--transient-dift", choices=("lazy", "eager"), default="lazy",
+        help="Flush transient tags before readers (default), or use eager per-instruction propagation.",
+    )
+    parser.add_argument(
         "--disable-asan",
         action="store_true",
         help="Skip ASan stack poisoning instrumentation.",
@@ -145,6 +149,7 @@ def main():
     ir = gtirb.IR.load_protobuf(args.input)
     options = InstrumentationOptions(
         enable_dift=not args.disable_dift,
+        eager_transient_dift=args.transient_dift == "eager",
         enable_asan=not args.disable_asan,
         enable_gadgets=not args.disable_gadgets,
         enable_memlog=not args.disable_memlog,

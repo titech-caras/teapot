@@ -83,6 +83,13 @@ RISC DIFT propagation, operand capture and LLVM replay use liveness to select
 spare GPRs and omit unnecessary saves. Live fallback registers still use the
 existing spill areas; missing liveness is all-live, and FP/SIMD saves remain.
 
+Transient DIFT defaults to `--transient-dift=lazy`: the same LLVM tag model
+batches propagation until a policy/tag reader or block boundary. A load's
+queued tag is applied after its destination update. Memory-tag changes are
+logged before mutation so rollback restores them; unread pending effects are
+discarded on rollback. `--transient-dift=eager` retains immediate propagation
+for comparisons. x64 REP keeps its dedicated per-element handling.
+
 Teapot prefers ddisasm's interprocedural `liveRegisterNames` and
 `liveRegisterSets` metadata. Known internal calls are analyzed through the CFG,
 including conditional tail calls and returns across recovered function boundaries;
