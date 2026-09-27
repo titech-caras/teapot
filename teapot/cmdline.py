@@ -49,7 +49,7 @@ def main():
     )
     parser.add_argument(
         "--transient-dift", choices=("lazy", "eager"), default="lazy",
-        help="Flush transient tags before readers (default), or use eager per-instruction propagation.",
+        help="Flush transient LLVM tag replay before readers (default), or after each instruction's effects.",
     )
     parser.add_argument(
         "--disable-asan",

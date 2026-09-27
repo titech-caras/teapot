@@ -87,8 +87,9 @@ Transient DIFT defaults to `--transient-dift=lazy`: the same LLVM tag model
 batches propagation until a policy/tag reader or block boundary. A load's
 queued tag is applied after its destination update. Memory-tag changes are
 logged before mutation so rollback restores them; unread pending effects are
-discarded on rollback. `--transient-dift=eager` retains immediate propagation
-for comparisons. x64 REP keeps its dedicated per-element handling.
+discarded on rollback. `--transient-dift=eager` flushes the same LLVM model at
+every instruction for comparisons; it is not a separate tag implementation.
+x64 REP keeps its dedicated per-element handling.
 
 Teapot prefers ddisasm's interprocedural `liveRegisterNames` and
 `liveRegisterSets` metadata. Known internal calls are analyzed through the CFG,

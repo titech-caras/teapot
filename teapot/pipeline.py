@@ -429,21 +429,17 @@ class TeapotPipeline:
                     dift_layout=self.dift_layout)
         else:
             create_guards(self.guard_section, 0)
-        lazy = self.options.enable_dift and not self.options.eager_transient_dift
-        if lazy:
+        if self.options.enable_dift:
             from teapot.passes.transient.lazy_dift import transient_replay_pass
             pass_manager.add(transient_replay_pass(
                 self.arch, self.reg_manager, self.transient_section, self.decoder,
                 dift_layout=self.dift_layout, insert_memlog=self.options.enable_memlog,
-                memory_policy=memory_policy, port_policy=port_policy))
+                memory_policy=memory_policy, port_policy=port_policy,
+                immediate=self.options.eager_transient_dift))
         else:
             for policy in (memory_policy, port_policy):
                 if policy is not None:
                     pass_manager.add(policy)
-        if self.options.enable_dift and not lazy:
-            pass_manager.add(self.arch.create_transient_dift_pass(
-                self.reg_manager, self.transient_section, self.decoder, self.dift_layout,
-                insert_memlog=self.options.enable_memlog))
         if self.options.enable_memlog:
             pass_manager.add(self.arch.create_transient_memlog_pass(
                 self.reg_manager, self.transient_section, self.decoder))
