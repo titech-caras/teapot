@@ -1,4 +1,5 @@
 import gtirb
+import warnings
 from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext, Patch
 from gtirb_capstone.instructions import GtirbInstructionDecoder
@@ -85,8 +86,19 @@ class CreateTrampolinesPass(VisitorPassMixin):
 
         branch_edge = conditional_branch_edge(block)
         if branch_edge is not None:
+            fallthrough_edges = distinguish_edges(block.outgoing_edges)[1]
+            mapping = self.text_transient_mapping.code_blocks_map
+            if (len(fallthrough_edges) != 1 or block.uuid not in mapping or
+                    branch_edge.target.uuid not in mapping or
+                    fallthrough_edges[0].target.uuid not in mapping):
+                # A checkpoint needs both speculative successors in the copied
+                # region. Keep ordinary execution unchanged and omit this
+                # checkpoint when its other path cannot be simulated.
+                warnings.warn(f"Checkpoint omitted at {block.address:#x}: conditional branch "
+                              "does not have two copied successors", RuntimeWarning)
+                return
             self.processed_blocks.add(block.uuid)
-            fallthrough_edge: gtirb.Edge = distinguish_edges(block.outgoing_edges)[1][0]
+            fallthrough_edge = fallthrough_edges[0]
 
             last_instruction: CsInsn
             instructions = list(self.decoder.get_instructions(block))

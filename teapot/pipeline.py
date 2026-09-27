@@ -43,7 +43,6 @@ from teapot.preprocess.copy_section import (
     set_elf_section_properties,
 )
 from teapot.preprocess.create_guards import create_guards
-from teapot.utils.misc import conditional_branch_edge
 
 ARCH_INFO_AUX_TYPE = "mapping<string,string>"
 AARCH64_MTE_ARCH_FEATURE = "mte"
@@ -86,10 +85,6 @@ def _restore_integral_symbol_values(symbol_values):
     # their value is relative to the thread pointer, not a module address.
     for symbol, value in symbol_values:
         symbol.value = value
-
-
-def _conditional_branch_block_uuids(section: gtirb.Section):
-    return {block.uuid for block in section.code_blocks if conditional_branch_edge(block) is not None}
 
 
 def _add_arch_feature(module: gtirb.Module, feature: str):
@@ -194,7 +189,6 @@ class TeapotPipeline:
         self._create_instrumentation_sections()
         self._run_preprocess_passes()
         self._run_dift_ext_call_passes()
-        self.checkpoint_block_uuids = _conditional_branch_block_uuids(self.text_section)
 
         if self.arch.run_text_passes_before_transient():
             self._run_text_passes()
@@ -296,7 +290,7 @@ class TeapotPipeline:
     def _run_preprocess_passes(self):
         pass_manager = PassManager()
         pass_manager.add(ImportSymbolsPass(self.arch.checkpoint_lib_symbols()))
-        pass_manager.add(CreateTrampolinesPass(
+        trampolines = CreateTrampolinesPass(
             self.text_section,
             self.trampoline_section,
             self.branch_counter_section,
@@ -305,7 +299,8 @@ class TeapotPipeline:
             self.arch,
             self.reg_manager,
             self.landing_pad_targets,
-            self.checkpoint_spare_registers))
+            self.checkpoint_spare_registers)
+        pass_manager.add(trampolines)
         for arch_pass in self.arch.preprocess_passes(
                 text_section=self.text_section,
                 transient_section=self.transient_section,
@@ -314,6 +309,9 @@ class TeapotPipeline:
                 decoder=self.decoder):
             pass_manager.add(arch_pass)
         self._run_pass_manager(pass_manager, "preprocess")
+        # Only generated trampolines may be checkpoint destinations. In
+        # particular, conditionals leaving the copied region were omitted.
+        self.checkpoint_block_uuids = set(trampolines.processed_blocks)
 
     def _run_dift_ext_call_passes(self):
         pass_manager = PassManager()
@@ -416,7 +414,8 @@ class TeapotPipeline:
                 self.transient_section,
                 self.decoder,
                 self.arch,
-                _conditional_branch_block_uuids(self.transient_section),
+                {self.text_transient_mapping.code_blocks_map[uuid].uuid
+                 for uuid in self.checkpoint_block_uuids},
                 self.checkpoint_spare_registers))
         # Replacements must follow insertions at the same original offset.
         for arch_pass in self.arch.transient_instruction_passes(
