@@ -95,6 +95,7 @@ class SourceLineTests(unittest.TestCase):
                 (root / name).write_text(source)
             self._run([compiler, f"-gdwarf-{version}", "-O0", "-fno-stack-protector",
                        "-fno-pie", "-no-pie", "-nostdlib", "-Wl,-e,main",
+                       *(["-Wl,--emit-relocs"] if version == 5 else []),
                        *sources, "-o", "input"], root)
             self._run(["ddisasm", "input", "--ir", "input.gtirb", "-j", "2"], root)
             ir = gtirb.IR.load_protobuf(root / "input.gtirb")

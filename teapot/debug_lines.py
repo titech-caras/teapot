@@ -64,7 +64,10 @@ def _line_spans(elf):
     Multiple zero-length views at one address collapse to the last row, as in
     an ordinary address-to-line lookup; inline/variable DIEs are not imported.
     """
-    dwarf = elf.get_dwarf_info()
+    # SourceLines accepts only linked images. --emit-relocs preserves proof
+    # for lifting, not pending relocations: applying those entries again can
+    # corrupt line/unwind data and treats absolute offsets as section offsets.
+    dwarf = elf.get_dwarf_info(relocate_dwarf_sections=False)
     for cu in dwarf.iter_CUs():
         program = dwarf.line_program_for_CU(cu)
         if program is None:

@@ -147,7 +147,8 @@ class ExecutableDataMetadataTests(unittest.TestCase):
             main = root / 'main.c'
             main.write_text('extern int read_pool(void); int main(void) { return read_pool() != 0x52; }')
             linked = root / 'linked'
-            subprocess.run(['gcc', '-no-pie', str(assembly), str(main), '-o', str(linked)],
+            subprocess.run(['gcc', '-no-pie', '-Wl,--emit-relocs',
+                            str(assembly), str(main), '-o', str(linked)],
                            check=True, capture_output=True)
             subprocess.run([str(linked)], check=True, capture_output=True)
             with linked.open('rb') as stream:
