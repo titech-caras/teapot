@@ -25,7 +25,9 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
         super().__init__(
             reg_manager, transient_section, decoder, arch,
             dift_layout=dift_layout, enable_asan_check=enable_asan_check)
-        self.save_float_state = False
+        # Reports can now be reached from FP loads. Their C callback must not
+        # disturb live FP registers or FCSR (without adding an FP taint model).
+        self.save_float_state = True
 
     def _build_policy_patch(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                             block: gtirb.CodeBlock, function: Function = None):
@@ -46,8 +48,7 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
         regs_write = self.arch.access_registers(self.reg_manager.abi, inst, 1)
         write_regs = self._load_destination_registers(
             inst, regs_write, stop_operand=mem_operand, fallback_to_all_writes=True)
-        if not write_regs:
-            return None
+        # Loads into FP or the zero register still perform a memory access.
 
         regs_read = self.arch.access_registers(self.reg_manager.abi, inst, 0)
         regs_read.update(self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand))

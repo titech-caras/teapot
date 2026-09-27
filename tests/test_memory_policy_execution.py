@@ -8,13 +8,49 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from teapot.arch import X64Architecture
-from teapot.arch.decoders import x64_decoder
+import gtirb
+from gtirb_rewriting import Assembler
+
+from teapot.arch import X64Architecture, AArch64Architecture, RISCV64Architecture
+from teapot.arch.decoders import x64_decoder, aarch64_decoder, riscv64_decoder
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 from teapot.configs.tags import TAG_ATTACKER, TAG_ATTACKER_INDIRECT, TAG_SECRET, TAG_SECRET_INDIRECT
+from test_live_register_preservation import make_module
 
 
 class MemoryPolicyExecutionTests(unittest.TestCase):
+    def test_risc_fp_and_simd_loads_get_checks_without_destination_taint(self):
+        for arch, isa, decoder, encoded, scratch in (
+                (AArch64Architecture(), gtirb.Module.ISA.ARM64, aarch64_decoder(),
+                 '000040fd', ('x9','x10','x11','x12','x13')),
+                (AArch64Architecture(), gtirb.Module.ISA.ARM64, aarch64_decoder(),
+                 '0000c03d', ('x9','x10','x11','x12','x13')),
+                (RISCV64Architecture(), gtirb.Module.ISA.ValidButUnsupported, riscv64_decoder(),
+                 '07b50500', ('t0','t1','t2','t3','t4'))):
+            with self.subTest(arch=arch.name, bytes=encoded):
+                data = bytes.fromhex(encoded)
+                _, module, block, _, _ = make_module(arch, isa, data)
+                inst, = decoder.disasm(data, block.address)
+                policy = arch.create_transient_mem_operand_policy_pass(
+                    SimpleNamespace(abi=arch.abi), None, None,
+                    dift_layout=SimpleNamespace(asan_shadow_offset=0), enable_asan_check=True)
+                info = policy._build_policy_patch(inst, 0, 0, block)
+                self.assertIsNotNone(info)
+                asm = info.patch(SimpleNamespace(stack_adjustment=0,
+                    scratch_registers=tuple(arch.abi.get_register(n) for n in scratch)))
+                self.assertIn('KASPER_CACHE', asm)
+                self.assertIn('KASPER_MDS', asm)
+                self.assertNotIn('dift_reg_queued_tags', asm)
+                if arch.name == 'riscv64':
+                    self.assertIn('frcsr', asm)
+                    self.assertIn('fsd f31,', asm)
+                    self.assertIn('fld f31,', asm)
+                assembler = Assembler(module, allow_undef_symbols=True)
+                assembler.assemble(asm)
+                emitted = assembler.finalize().text_section.data
+                self.assertTrue(emitted)
+                self.assertEqual(sum(i.size for i in decoder.disasm(emitted, 0)), len(emitted))
+
     @unittest.skipUnless(platform.machine() == 'x86_64' and shutil.which('gcc'), 'requires native x64 compiler')
     def test_false_cmov_still_checks_memory_but_does_not_queue_tags(self):
         arch = X64Architecture()

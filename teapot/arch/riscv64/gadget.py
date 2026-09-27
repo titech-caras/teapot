@@ -51,6 +51,7 @@ class RISCV64GadgetPatchesMixin:
         frame_symbol = f"scratchpad+{SCRATCHPAD_SIZE - frame_size}"
         report_call_label = f".L__report_gadget_call_{next(_REPORT_LABEL_COUNTER)}{SYMBOL_SUFFIX}"
         return f"""
+            {'.attribute arch, "rv64imafd"' if save_float_state else ''}
             {self.load_address(stack_reg, frame_symbol)}
             sd sp, 16({stack_reg})
             mv sp, {stack_reg}

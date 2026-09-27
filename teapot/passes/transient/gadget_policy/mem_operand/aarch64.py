@@ -39,8 +39,8 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
 
         regs_write = self.arch.access_registers(self.reg_manager.abi, inst, 1)
         write_regs = self._load_destination_registers(inst, regs_write)
-        if not write_regs:
-            return None
+        # An FP/SIMD destination has no GPR tag, but its memory access still
+        # needs address-tag and ASan checks. Empty destinations emit no queue.
 
         regs_read = self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand)
 
