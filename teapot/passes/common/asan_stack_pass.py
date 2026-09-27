@@ -87,7 +87,7 @@ class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
         for block in function.get_exit_blocks():
             non_fallthrough_edges, _ = distinguish_edges(block.outgoing_edges)
             if len(non_fallthrough_edges) == 0:
-                return
+                continue
 
             instructions = list(self.decoder.get_instructions(block))
             patch = self.arch.asan_stack_patch(

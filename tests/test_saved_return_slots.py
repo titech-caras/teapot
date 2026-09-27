@@ -14,7 +14,7 @@ from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 from gtirb_rewriting import Assembler, PassManager
 
-from teapot.arch import AArch64Architecture, RISCV64Architecture
+from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
 from teapot.passes.common.asan_stack_pass import AsanStackPass
 from teapot.passes.common.return_slot_analysis import ReturnSlotAnalysis, UnsupportedReturnSlot
 from teapot.passes.preprocessing.import_symbols_pass import ImportSymbolsPass
@@ -22,6 +22,32 @@ from test_live_register_preservation import make_module, symbol_references
 
 
 class SavedReturnSlotTests(unittest.TestCase):
+    def test_x64_fallthrough_exit_does_not_skip_later_returns(self):
+        arch = X64Architecture()
+        fallthrough, returning = gtirb.CodeBlock(), gtirb.CodeBlock()
+        returning_interval = gtirb.ByteInterval(contents=b'\xc3', blocks=[returning])
+        returning.size = 1
+        ir = gtirb.IR(modules=[gtirb.Module(name='exit-order', isa=gtirb.Module.ISA.X64,
+            sections=[gtirb.Section(byte_intervals=[returning_interval,
+                gtirb.ByteInterval(contents=b'\x90', blocks=[fallthrough])])])])
+        ir.cfg.add(gtirb.Edge(fallthrough, returning, gtirb.Edge.Label(gtirb.Edge.Type.Fallthrough)))
+        ir.cfg.add(gtirb.Edge(returning, gtirb.ProxyBlock(module=ir.modules[0]),
+                             gtirb.Edge.Label(gtirb.Edge.Type.Return)))
+        function = Mock()
+        function.names = ['probe']
+        function.get_name.return_value = 'probe'
+        function.get_all_symbols.return_value = []
+        function.get_entry_blocks.return_value = []
+        function.get_exit_blocks.return_value = [fallthrough, returning]
+        decoder = Mock()
+        decoder.get_instructions.return_value = [SimpleNamespace(size=1)]
+        visitor = AsanStackPass(Mock(abi=arch.abi), None, decoder, arch, False)
+        visitor.allocate_registers = Mock(return_value=lambda patch: patch)
+        visitor.insert_at = Mock()
+        visitor.visit_function(function)
+        self.assertEqual(visitor.insert_at.call_count, 1)
+        self.assertIs(visitor.insert_at.call_args.args[0], returning)
+
     def make_function(self, arch, chunks, edges=()):
         isa = gtirb.Module.ISA.ARM64 if arch.name == "aarch64" else gtirb.Module.ISA.ValidButUnsupported
         ir, module, first, abi, registers = make_module(arch, isa, b"\0" * 4)
