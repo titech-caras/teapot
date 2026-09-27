@@ -53,18 +53,13 @@ class AArch64Architecture(
         super().__init__("aarch64", marker_bytes, _ARM64_ELF())
 
     def normalize_passes(self, decoder, reg_manager):
-        from teapot.passes.preprocessing.normalize_aarch64_relocations_pass import (
-            NormalizeAArch64RelocationsPass,
-        )
         from teapot.passes.preprocessing.widen_aarch64_byte_jump_tables_pass import (
             WidenAArch64ByteJumpTablesPass,
         )
 
-        passes = [NormalizeAArch64RelocationsPass(decoder)]
-        # Widen only after all ordinary relocation normalization has applied;
-        # original encoded page offsets must not overwrite moved data labels.
-        passes.append(WidenAArch64ByteJumpTablesPass())
-        return passes
+        # DDisasm supplies relocatable page/GOT references. Widening remains a
+        # rewriter transformation because instrumentation can grow the table.
+        return [WidenAArch64ByteJumpTablesPass()]
 
     def relax_conditional_branches(self, module) -> None:
         from gtirb_capstone.instructions import GtirbInstructionDecoder

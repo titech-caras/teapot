@@ -5,12 +5,10 @@ from gtirb_rewriting import Pass, RewritingContext
 class NormalizeDataBlockAlignmentPass(Pass):
     """Keep alignment padding outside contiguous data-block runs.
 
-    Rewriting temporarily splits byte intervals at aligned block boundaries.
-    If an aligned data block is the tail of an otherwise contiguous data run,
-    relayout can consequently materialize padding *inside* that run after an
-    earlier code insertion.  Programs are allowed to address the run through
-    its first block and continue across later block boundaries, so inserting
-    bytes there changes the data rather than merely relocating it.
+    The rewriting fork preserves contiguous data runs during IR relayout.
+    This additional true alignment fact protects printer/assembler relayout:
+    instruction encodings can shrink there, and an interior alignment would
+    otherwise insert padding inside a table addressed through its first block.
 
     For each requested interior alignment, find the earliest preceding,
     symbolized block boundary in the run that already had the same alignment.
