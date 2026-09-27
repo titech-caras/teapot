@@ -187,7 +187,7 @@ class X64TransientRepTests(unittest.TestCase):
                 module.aux_data["elfSymbolInfo"] = gtirb.AuxData(
                     {entry: (len(code)+1, "FUNC", "GLOBAL", "DEFAULT", 0)},
                     "mapping<UUID,tuple<uint64_t,string,string,string,uint64_t>>")
-                for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "old_rsp", "ordering_seen",
+                for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "dift_reg_queue_pending", "old_rsp", "ordering_seen",
                              "memory_history_top", "instruction_cnt", "restore_checkpoint_ROB_LEN",
                              "report_gadget_KASPER_CACHE", "report_gadget_KASPER_MDS", "report_gadget_KASPER_PORT"):
                     gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)

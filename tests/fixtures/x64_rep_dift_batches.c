@@ -9,6 +9,7 @@
 
 unsigned char scratchpad[SCRATCHPAD_SIZE] __attribute__((aligned(16)));
 unsigned char dift_reg_tags[48], dift_reg_queued_tags[48];
+unsigned char dift_reg_queue_pending[8];
 uintptr_t old_rsp;
 extern unsigned char test_function(unsigned char *dst, unsigned char *src, unsigned count);
 extern unsigned char tail_entry(unsigned char *dst, unsigned char *src, unsigned count, unsigned spare);

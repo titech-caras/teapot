@@ -169,6 +169,7 @@ class AArch64PairDiftTests(unittest.TestCase):
 extern uint64_t scratchpad[];
 extern unsigned char dift_reg_tags[48];
 unsigned char dift_reg_queued_tags[48];
+unsigned char dift_reg_queue_pending[8];
 extern void common_update(unsigned char *);
 extern void func(void);
 extern unsigned char memory_tags[8192];

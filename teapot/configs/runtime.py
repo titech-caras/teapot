@@ -32,6 +32,7 @@ COMMON_CHECKPOINT_LIB_SYMBOLS = [
 
     "dift_reg_tags",
     "dift_reg_queued_tags",
+    "dift_reg_queue_pending",
 
     "__sanitizer_cov_trace_pc",
     "__sanitizer_cov_trace_pc_guard",

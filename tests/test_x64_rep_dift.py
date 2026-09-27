@@ -192,7 +192,7 @@ class X64RepDiftTests(unittest.TestCase):
                         alternate_entry = gtirb.Symbol(name="tail_entry", payload=tail, module=module)
                         module.aux_data["elfSymbolInfo"].data[alternate_entry] = (
                             tail.size, "FUNC", "GLOBAL", "DEFAULT", 0)
-                    for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "old_rsp"):
+                    for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "dift_reg_queue_pending", "old_rsp"):
                         gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
                     manager = LiveRegisterManager(module, abi)
                     for part in module.code_blocks:

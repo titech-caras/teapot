@@ -53,22 +53,19 @@ class X64DiftPatchesMixin:
         return f"mov dift_reg_tags+{self.dift_register_id(reg)}, {tag_reg:8l}\n"
 
     def dift_queue_reg_tag_snippet(self, tmp_reg, value_reg, tag: int, write_reg: Register) -> str:
-        return "".join(
+        return "mov byte ptr dift_reg_queue_pending, 1\n" + "".join(
             f"or byte ptr dift_reg_queued_tags+{self.dift_register_id(reg)}, {tag}\n"
             for reg in self.dift_write_registers(write_reg)
         )
 
     @staticmethod
     def dift_apply_queued_tag_snippet(tag_reg: Register, addr_reg: Register, tmp_reg, done_label: str) -> str:
-        asm = ""
+        asm = f"cmp byte ptr dift_reg_queue_pending, 0\nje {done_label}\nmov byte ptr dift_reg_queue_pending, 0\n"
         for offset in range(0, 48, 8):
             asm += f"""
-                cmp qword ptr dift_reg_queued_tags+{offset}, 0
-                jz 1f
                 mov {tag_reg}, qword ptr dift_reg_queued_tags+{offset}
                 or qword ptr dift_reg_tags+{offset}, {tag_reg}
                 mov qword ptr dift_reg_queued_tags+{offset}, 0
-            1:
             """
         return asm
 

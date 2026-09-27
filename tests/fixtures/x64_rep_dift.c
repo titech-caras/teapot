@@ -12,6 +12,7 @@
 
 unsigned char scratchpad[SCRATCHPAD_SIZE] __attribute__((aligned(16)));
 unsigned char dift_reg_tags[48], dift_reg_queued_tags[48];
+unsigned char dift_reg_queue_pending[8];
 struct history_entry { unsigned char *addr; uint64_t data; unsigned char size, pad[7]; };
 struct history_entry history[4096], *memory_history_top = history;
 struct state { uint64_t ax, si, di, cx, flags, other[10], unused, redzone[16]; };

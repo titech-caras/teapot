@@ -95,7 +95,7 @@ class RewriteReproducibilityTests(unittest.TestCase):
                 code = assembler.finalize().text_section.data
                 block.byte_interval.contents = code
                 block.byte_interval.size = block.size = len(code)
-                for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "old_rsp"):
+                for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "dift_reg_queue_pending", "old_rsp"):
                     gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
                 manager = LiveRegisterManager(module, abi)
                 for index, inst in enumerate(manager.analyzer.decoder.get_instructions(block)):

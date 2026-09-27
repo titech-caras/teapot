@@ -51,7 +51,11 @@ class AArch64DiftPatchesMixin:
         """
 
     def dift_queue_reg_tag_snippet(self, tmp_reg, value_reg, tag: int, write_reg: Register) -> str:
-        asm = ""
+        asm = f"""
+            {self.load_address(tmp_reg, "dift_reg_queue_pending")}
+            mov {value_reg:32}, #1
+            strb {value_reg:32}, [{tmp_reg}]
+        """
         for reg in self.dift_write_registers(write_reg):
             asm += f"""
                 {self.load_address(tmp_reg, f"dift_reg_queued_tags+{self.dift_register_id(reg)}")}
@@ -62,19 +66,22 @@ class AArch64DiftPatchesMixin:
         return asm
 
     def dift_apply_queued_tag_snippet(self, tag_reg, addr_reg, tmp_reg, done_label: str) -> str:
-        asm = ""
+        asm = f"""
+            {self.load_address(tmp_reg, "dift_reg_queue_pending")}
+            ldrb {tag_reg:32}, [{tmp_reg}]
+            cbz {tag_reg:32}, {done_label}
+            strb wzr, [{tmp_reg}]
+        """
         for offset in range(0, 48, 8):
             asm += f"""
                 {self.load_address(tmp_reg, f"dift_reg_queued_tags+{offset}")}
                 ldr {tag_reg}, [{tmp_reg}]
-                cbz {tag_reg}, 1f
                 {self.load_address(addr_reg, f"dift_reg_tags+{offset}")}
                 ldr {tmp_reg}, [{addr_reg}]
                 orr {tmp_reg}, {tmp_reg}, {tag_reg}
                 str {tmp_reg}, [{addr_reg}]
                 {self.load_address(addr_reg, f"dift_reg_queued_tags+{offset}")}
                 str xzr, [{addr_reg}]
-            1:
             """
         return asm
 

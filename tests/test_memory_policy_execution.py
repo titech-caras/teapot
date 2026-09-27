@@ -71,6 +71,7 @@ class MemoryPolicyExecutionTests(unittest.TestCase):
             #include <stdint.h>
             #include <string.h>
             unsigned char scratchpad[{SCRATCHPAD_SIZE}], dift_reg_tags[48], dift_reg_queued_tags[48];
+            unsigned char dift_reg_queue_pending[8];
             uint64_t KASPER_CACHE, KASPER_MDS;
             extern void check(uintptr_t, int);
             int main(void) {{
@@ -80,6 +81,7 @@ class MemoryPolicyExecutionTests(unittest.TestCase):
                 for (int condition=0; condition<2; ++condition) for (unsigned i=0; i<4; ++i) {{
                     memset(dift_reg_tags, 0, sizeof dift_reg_tags);
                     memset(dift_reg_queued_tags, 0, sizeof dift_reg_queued_tags);
+                    dift_reg_queue_pending[0] = 0;
                     memset(shadow, i<2 ? 0 : 255, sizeof shadow);
                     KASPER_CACHE=KASPER_MDS=0;
                     dift_reg_tags[5]=tags[i];
@@ -87,6 +89,7 @@ class MemoryPolicyExecutionTests(unittest.TestCase):
                     assert(KASPER_CACHE == (i==0));
                     assert(KASPER_MDS == (i==1 || i==2));
                     assert(dift_reg_queued_tags[0] == (condition ? queued[i] : 0));
+                    assert(dift_reg_queue_pending[0] == (condition && queued[i] ? 1 : 0));
                 }}
             }}
         '''
