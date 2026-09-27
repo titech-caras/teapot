@@ -2,8 +2,8 @@
 from collections import deque
 
 import gtirb
-from capstone import CsError, CS_GRP_CALL, CS_GRP_JUMP, CS_OP_IMM
 from gtirb_functions import Function
+from gtirb_live_register_analysis.vectors import checkpoint_case, extended_state_clobbers
 
 
 def df_checkpoint_blocks(module, decoder, abi):
@@ -49,50 +49,25 @@ def df_checkpoint_blocks(module, decoder, abi):
     return result
 
 
-def vector_state(module, decoder, requested='auto', *, component=False):
-    """Select only proven state reductions; opaque/external code means full."""
-    modes = {'xmm0-7': 1, 'sse': 2, 'avx': 3, 'full': 4}
+def vector_checkpoint_cases(module, reg_manager, requested='auto'):
+    """Select at the original branch, before patches change uses or offsets."""
     if requested != 'auto':
-        return modes[requested]
-    if component:
-        return 4
-    mode = 1
-    for block in module.code_blocks:
-        for edge in block.outgoing_edges:
-            if (edge.label and edge.label.type in (gtirb.EdgeType.Call, gtirb.EdgeType.Branch)
-                    and (not isinstance(edge.target, gtirb.CodeBlock)
-                         or edge.target.module is not module)):
-                return 4
-        try:
-            instructions = list(decoder.get_instructions(block))
-            if sum(i.size for i in instructions) != block.size:
-                return 4
-            for insn in instructions:
-                if ((insn.group(CS_GRP_CALL) or insn.group(CS_GRP_JUMP)) and
-                        not any(op.type == CS_OP_IMM for op in insn.operands)):
-                    return 4
-                reads, writes = insn.regs_access()
-                names = [insn.reg_name(r) for r in (*reads, *writes)]
-                op = insn.mnemonic.split()[-1]
-                # EVEX can touch AVX-512 state even with an XMM/YMM destination
-                # and no printed mask (including registers 16 through 31).
-                if (insn.bytes[0] == 0x62
-                        or any(n.startswith(('zmm', 'k', 'st', 'mm')) for n in names)
-                        or any(n.startswith(('xmm', 'ymm')) and int(n[3:]) >= 16
-                               for n in names)
-                        or op.startswith(('f', 'xrstor', 'fxrstor'))
-                        or op in ('syscall', 'sysenter', 'int', 'iretq')):
-                    return 4
-                if op.startswith('v') or any(n.startswith('ymm') for n in names):
-                    mode = max(mode, 3)
-                if any(n.startswith('xmm') for n in names):
-                    # Arithmetic may modify MXCSR even if it only writes XMM0.
-                    if (op not in {'movaps', 'movups', 'movdqa', 'movdqu', 'movq', 'movd',
-                                   'pxor', 'pand', 'pandn', 'por', 'xorps', 'xorpd'}
-                            or any(n.startswith('xmm') and int(n[3:]) >= 8 for n in names)):
-                        mode = max(mode, 2)
-                if op in ('ldmxcsr', 'vldmxcsr'):
-                    mode = max(mode, 2)
-        except CsError:
-            return 4
-    return mode
+        case = 1 if requested == 'xmm0-7' else 2
+        return {b.uuid: case for b in module.code_blocks}
+    result = {}
+    opaque = extended_state_clobbers(module, reg_manager.analyzer.decoder)
+    if all(key in module.aux_data for key in ('functionEntries', 'functionBlocks', 'functionNames')):
+        for function in Function.build_functions(module):
+            masks = reg_manager.analyze_vectors(function)
+            for block in function.get_all_blocks():
+                values = masks.get(block.uuid) if masks is not None else None
+                case = checkpoint_case(values[-1] if values else None)
+                # Overlapping function ownership cannot weaken another proof.
+                result[block.uuid] = max(result.get(block.uuid, 0), case)
+    return {b.uuid: 2 if b.uuid in opaque else result.get(b.uuid, 2)
+            for b in module.code_blocks}
+
+
+def vector_state(requested='auto'):
+    """The full entry's XSAVE mask; auto reduction is now selected per site."""
+    return {'auto': 4, 'xmm0-7': 1, 'sse': 2, 'avx': 3, 'full': 4}[requested]

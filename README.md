@@ -11,16 +11,23 @@ The submodule `libcheckpoint` contains the runtime library.
 ### Checkpoint efficiency options
 
 Python LRA supplies x64 arithmetic-flag and AArch64 NZCV liveness within each
-function; DDisasm still supplies all GPR/vector masks. `--conservative-flags`
+function; DDisasm still supplies GPR masks. `--conservative-flags`
 restores the older flag policy. `--force-checkpoint-df` uses the DF-saving x64
 entry everywhere; normally a CFG scan selects it only where DF may be set.
 
-`--x64-vector-state=auto` (default) selects `xmm0-7`, `sse`, `avx`, or `full`.
-Opaque code, external calls and independently rewritten components force full
-state in auto mode. Explicit smaller modes are assertions about the program;
-they must cover all state that speculative code can modify. Runtime builds can
-override this with `-DTEAPOT_X64_VECTOR_STATE=...`; auto without a rewrite proof
-is full. Report callbacks always preserve full supported vector/x87 state.
+`--x64-vector-state=auto` (default) selects each checkpoint independently:
+integer-only saves no vector registers, low-XMM saves XMM0–7 with eight MOVAPS,
+and full saves supported extended state with XSAVEOPT (XSAVE/FXSAVE on older
+hosts). Separate fixed entries record their restore stub in each checkpoint;
+rollback jumps through that pointer, including for mixed-profile nesting.
+MXCSR is preserved independently, even when all vector registers are dead.
+Python derives vector liveness within functions because current DDisasm x64
+masks omit vector registers. Calls kill caller-saved vectors except ABI
+arguments, returns use XMM0–1, and missing masks, opaque state or unresolved
+jumps force full. Explicit `xmm0-7`, `sse`, `avx` and `full` settings remain
+assertions about required checkpoint state, not liveness proofs. Runtime
+builds can override them with `-DTEAPOT_X64_VECTOR_STATE=...`. Report callbacks
+always preserve full supported vector/x87 state.
 
 Coverage callbacks are off in ordinary runtime builds. Build the runtime with
 `-DTEAPOT_ENABLE_COVERAGE=ON` when linking honggfuzz; using `hfuzz-clang` or

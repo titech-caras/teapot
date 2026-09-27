@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import gtirb
+from gtirb_capstone.instructions import GtirbInstructionDecoder
 
 from teapot.arch.x64.architecture import X64Architecture
 from teapot.arch.riscv64.architecture import RISCV64Architecture
@@ -148,7 +149,8 @@ class LinkedComponentTests(unittest.TestCase):
         class LivenessInitialized(Exception):
             pass
         with patch('teapot.pipeline.LiveRegisterManager',
-                   return_value=SimpleNamespace(analysis_source='ddisasm')), \
+                   return_value=SimpleNamespace(analysis_source='ddisasm',
+                       analyzer=SimpleNamespace(decoder=GtirbInstructionDecoder(module.isa)))), \
                 patch.object(LinkedComponent, 'make_liveness_caller_independent') as force_live, \
                 patch.object(pipeline, '_run_normalize_passes', side_effect=LivenessInitialized):
             with self.assertRaises(LivenessInitialized):

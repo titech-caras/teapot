@@ -15,6 +15,10 @@ class X64RuntimeMixin:
             *COMMON_CHECKPOINT_LIB_SYMBOLS,
             "make_checkpoint_x64",
             "make_checkpoint_df",
+            "make_checkpoint_integer",
+            "make_checkpoint_integer_df",
+            "make_checkpoint_xmm",
+            "make_checkpoint_xmm_df",
             "libcheckpoint_set_vector_state",
             # Only x64 instrumentation switches stacks and saves flags through these.
             "old_rsp",

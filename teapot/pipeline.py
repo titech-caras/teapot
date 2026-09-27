@@ -121,6 +121,7 @@ class TeapotPipeline:
     linked_component = None
     component_guard_base = None
     checkpoint_df_blocks = frozenset()
+    checkpoint_vector_cases = None
     vector_state = None
 
     def __init__(self, ir: gtirb.IR, dift_layout_name=None,
@@ -164,13 +165,16 @@ class TeapotPipeline:
         if self.arch.name == 'x64':
             from teapot.arch.x64.checkpoint_state import df_checkpoint_blocks, vector_state
             self.checkpoint_df_blocks = df_checkpoint_blocks(self.module, self.decoder, self.abi)
-            self.vector_state = vector_state(self.module, self.decoder, self.options.x64_vector_state,
-                                             component=self.linked_component is not None)
+            self.vector_state = vector_state(self.options.x64_vector_state)
             print(f'[teapot] x64 vector state: {self.vector_state}; '
                   f'DF-sensitive blocks: {len(self.checkpoint_df_blocks)}', flush=True)
         self.reg_manager = LiveRegisterManager(
             self.module, self.abi, self.decoder, analysis_scope="block",
             conservative_flags=self.options.conservative_flags)
+        if self.arch.name == 'x64':
+            from teapot.arch.x64.checkpoint_state import vector_checkpoint_cases
+            self.checkpoint_vector_cases = vector_checkpoint_cases(
+                self.module, self.reg_manager, self.options.x64_vector_state)
         print(f"[teapot] live-register analysis: {self.reg_manager.analysis_source}", flush=True)
         if self.reg_manager.analysis_source == "python":
             # Invalid tables must not enter the rewriter's offset hooks.
@@ -200,6 +204,11 @@ class TeapotPipeline:
             self.text_transient_mapping.code_blocks_map[uuid].uuid
             for uuid in tuple(self.checkpoint_df_blocks)
             if uuid in self.text_transient_mapping.code_blocks_map}
+        if self.checkpoint_vector_cases is not None:
+            self.checkpoint_vector_cases.update({
+                self.text_transient_mapping.code_blocks_map[uuid].uuid: case
+                for uuid, case in tuple(self.checkpoint_vector_cases.items())
+                if uuid in self.text_transient_mapping.code_blocks_map})
         self._run_preprocess_passes()
         self._run_dift_ext_call_passes()
 
@@ -324,6 +333,12 @@ class TeapotPipeline:
         # Only generated trampolines may be checkpoint destinations. In
         # particular, conditionals leaving the copied region were omitted.
         self.checkpoint_block_uuids = set(trampolines.processed_blocks)
+        if self.checkpoint_vector_cases is not None:
+            from collections import Counter
+            counts = Counter(self.checkpoint_vector_cases.get(u, 2)
+                             for u in self.checkpoint_block_uuids)
+            print(f'[teapot] x64 checkpoint sites: integer={counts[0]} '
+                  f'xmm0-7={counts[1]} full={counts[2]}', flush=True)
 
     def _run_dift_ext_call_passes(self):
         pass_manager = PassManager()
@@ -372,7 +387,8 @@ class TeapotPipeline:
             pass_manager.add(InsertCheckpointsPass(
                 self.reg_manager, self.text_section, self.decoder, self.arch,
                 self.checkpoint_block_uuids, self.checkpoint_spare_registers,
-                self.checkpoint_df_blocks, self.options.force_checkpoint_df))
+                self.checkpoint_df_blocks, self.options.force_checkpoint_df,
+                self.checkpoint_vector_cases))
         self._run_pass_manager(pass_manager, "text")
 
     def _run_transient_passes(self):
@@ -432,7 +448,8 @@ class TeapotPipeline:
                 {self.text_transient_mapping.code_blocks_map[uuid].uuid
                  for uuid in self.checkpoint_block_uuids},
                 self.checkpoint_spare_registers,
-                self.checkpoint_df_blocks, self.options.force_checkpoint_df))
+                self.checkpoint_df_blocks, self.options.force_checkpoint_df,
+                self.checkpoint_vector_cases))
         # Replacements must follow insertions at the same original offset.
         for arch_pass in self.arch.transient_instruction_passes(
                 self.reg_manager, self.transient_section, self.decoder, self.dift_layout, self.options):

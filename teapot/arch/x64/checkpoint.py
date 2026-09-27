@@ -14,7 +14,11 @@ class X64CheckpointPatchesMixin:
     def can_insert_restore_point(self, live_registers) -> bool:
         return live_registers is None or "rflags" not in (r.name for r in live_registers)
 
-    def checkpoint_patch(self, block_uuid: UUID, *, use_scratch_registers: bool = True, save_df=False):
+    def checkpoint_patch(self, block_uuid: UUID, *, use_scratch_registers: bool = True,
+                         save_df=False, vector_case=2):
+        entry = ('make_checkpoint_integer', 'make_checkpoint_xmm', 'make_checkpoint_x64')[vector_case]
+        if save_df:
+            entry = 'make_checkpoint_df' if vector_case == 2 else entry + '_df'
         @self.constraints(scratch_registers=1 if use_scratch_registers else 0)
         def patch(ctx: InsertionContext):
             r = ctx.scratch_registers[0] if use_scratch_registers else "rax"
@@ -29,7 +33,7 @@ class X64CheckpointPatchesMixin:
                 lea {r}, [rip+{generate_distinct_label_name(".__branch_counter_", block_uuid)}]
                 mov [checkpoint_target_metadata+16], {r}
                 {epilogue}
-                jmp {'make_checkpoint_df' if save_df else 'make_checkpoint_x64'}
+                jmp {entry}
             .L__after_checkpoint{SYMBOL_SUFFIX}:
                 nop
             """

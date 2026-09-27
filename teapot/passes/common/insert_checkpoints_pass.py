@@ -21,12 +21,13 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
     def __init__(self, reg_manager: LiveRegisterManager, text_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder, arch: Architecture,
                  eligible_block_uuids: Optional[Set[UUID]] = None,
-                 checkpoint_spare_registers=None, df_blocks=(), force_df=False):
+                 checkpoint_spare_registers=None, df_blocks=(), force_df=False, vector_cases=None):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.text_section = text_section
         self.arch = arch
         self.df_blocks = df_blocks
         self.force_df = force_df
+        self.vector_cases = vector_cases or {}
         self.eligible_block_uuids = eligible_block_uuids
         self.checkpoint_spare_registers = (
             checkpoint_spare_registers if checkpoint_spare_registers is not None else {})
@@ -62,7 +63,8 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                 )
 
             if not self.arch.CHECKPOINT_FIXED_REGISTERS:
-                options = ({'save_df': self.force_df or block.uuid in self.df_blocks}
+                options = ({'save_df': self.force_df or block.uuid in self.df_blocks,
+                            'vector_case': self.vector_cases.get(block.uuid, 2)}
                            if self.arch.name == 'x64' else {})
                 try:
                     self.insert_at(block, conditional_jump_offset, Patch.from_function(

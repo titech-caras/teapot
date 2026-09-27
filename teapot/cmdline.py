@@ -16,7 +16,7 @@ def main():
     parser.add_argument('--force-checkpoint-df', action='store_true',
                         help='Save DF at every x64 checkpoint instead of selecting DF-sensitive sites')
     parser.add_argument('--x64-vector-state', choices=('auto', 'xmm0-7', 'sse', 'avx', 'full'),
-                        default='auto', help='Checkpoint vector state (auto falls back to full)')
+                        default='auto', help='Checkpoint vector state (auto uses per-site liveness, unknown means full)')
     parser.add_argument("--conservative-flags", action="store_true",
                         help="Keep the producer's conservative flag masks instead of Python ABI flag liveness.")
     parser.add_argument("--target-identification", choices=("software", "aarch64-bti"),

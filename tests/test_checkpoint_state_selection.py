@@ -1,9 +1,10 @@
 import unittest
 from uuid import uuid4
 import gtirb
+from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from teapot.arch import X64Architecture
-from teapot.arch.x64.checkpoint_state import df_checkpoint_blocks, vector_state
+from teapot.arch.x64.checkpoint_state import df_checkpoint_blocks, vector_checkpoint_cases, vector_state
 
 
 def module_with(code):
@@ -31,19 +32,32 @@ class CheckpointStateSelectionTests(unittest.TestCase):
             ir, module, block = module_with(code)
             self.assertEqual(block.uuid in df_checkpoint_blocks(module, decoder, abi), expected)
 
-    def test_vector_auto_does_not_guess_external_state(self):
+    def test_vector_selection_uses_branch_liveness_and_honors_overrides(self):
         decoder = GtirbInstructionDecoder(gtirb.Module.ISA.X64)
-        for code, expected in [('660fefc0 c3', 1), ('66450fefc0 c3', 2),
-                               ('0f58c0 c3', 2), ('c5fdefc0 c3', 3),
-                               ('d9e8 c3', 4), ('ffd0 c3', 4), ('0fae10 c3', 2),
-                               ('0fae08 c3', 4), ('62f17d08efc0 c3', 4)]:
-            ir, module, block = module_with(code)
-            self.assertEqual(vector_state(module, decoder), expected, code)
-            self.assertEqual(vector_state(module, decoder, component=True), 4)
-        ir, module, block = module_with('e800000000 c3')
-        ir.cfg.add(gtirb.Edge(block, gtirb.ProxyBlock(module=module),
-                              gtirb.Edge.Label(gtirb.EdgeType.Call)))
-        self.assertEqual(vector_state(module, decoder), 4)
+        abi = X64Architecture().abi
+        for use, expected in [('', 0), ('0f2900', 1), ('440f2900', 2)]:
+            ir, module, block = module_with('90 7500')
+            contents = bytes.fromhex(use + '660fefc0 660fefc9 c3')
+            interval = gtirb.ByteInterval(address=0x1003, contents=contents,
+                                          section=block.section)
+            after = gtirb.CodeBlock(size=len(contents), byte_interval=interval)
+            next(iter(module.aux_data['functionBlocks'].data.values())).add(after)
+            ir.cfg.add(gtirb.Edge(block, after, gtirb.Edge.Label(gtirb.EdgeType.Branch)))
+            registers = list(abi.all_registers())
+            module.aux_data['liveRegisterNames'] = gtirb.AuxData(
+                [r.name for r in registers], 'sequence<string>')
+            module.aux_data['liveRegisterSets'] = gtirb.AuxData({
+                gtirb.Offset(b, i.address-b.address): 0 for b in (block, after)
+                for i in decoder.get_instructions(b)}, 'mapping<Offset,uint64_t>')
+            manager = LiveRegisterManager(module, abi, decoder)
+            self.assertEqual(vector_checkpoint_cases(module, manager)[block.uuid], expected)
+            for mode in ('xmm0-7', 'sse', 'avx', 'full'):
+                self.assertEqual(vector_checkpoint_cases(module, manager, mode)[block.uuid],
+                                 1 if mode == 'xmm0-7' else 2)
+            module.aux_data['liveRegisterSets'].data.pop(gtirb.Offset(block, 0))
+            self.assertEqual(vector_checkpoint_cases(module, manager)[block.uuid], 2)
+        self.assertEqual([vector_state(m) for m in ('auto', 'xmm0-7', 'sse', 'avx', 'full')],
+                         [4, 1, 2, 3, 4])
 
 
 if __name__ == '__main__':
