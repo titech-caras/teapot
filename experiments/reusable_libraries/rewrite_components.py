@@ -29,7 +29,9 @@ from elftools.elf.elffile import ELFFile
 
 from teapot.configs.blacklist import is_blacklisted_function_name
 from teapot.configs.runtime import ROB_LEN, SYMBOL_SUFFIX
+from teapot.configs.slots import AArch64ShadowStackSlots, _aarch64_shadow_stack_config_path
 from teapot.datacls.linked_component import LinkedComponent
+from teapot.datacls.dift_layout import LAYOUTS, _layout_data_path
 from teapot.arch import module_isa_name
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.utils.serialization import compact_for_pprinter
@@ -68,6 +70,18 @@ def imported_package_hash(package, declared_root):
         raise RuntimeError(f'{package.__name__} imported from {origin}, '
                            f'outside declared source {root}; correct PYTHONPATH or the source option')
     return tree_hash(origin.parent)
+
+
+def configuration_identity():
+    # Names alone do not identify overrides. Include the actual loaded values
+    # as well, so changing an override after import cannot alias a fresh process.
+    return {
+        'dift_layout_file': sha(_layout_data_path()),
+        'aarch64_shadow_stack_file': sha(_aarch64_shadow_stack_config_path()),
+        'dift_layouts': {name: asdict(layout) for name, layout in LAYOUTS.items()},
+        'aarch64_shadow_stack': {name: value for name, value in vars(AArch64ShadowStackSlots).items()
+                                 if name.isupper()},
+    }
 
 
 def run(root, name, command):
@@ -350,6 +364,7 @@ def main():
                "assembler": sha(shutil.which(args.cc)),
                "runtime_contract": json.loads(args.runtime_contract.read_text()),
                "options": asdict(args.instrumentation_options), "ROB_LEN": ROB_LEN,
+               "configuration": configuration_identity(),
                "mode": args.mode,
                "liveness_contract": "standalone-ddisasm-abi-v1",
                "conversion_options": conversion_options,

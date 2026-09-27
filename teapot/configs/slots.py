@@ -5,9 +5,13 @@ import re
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 
 
-def _aarch64_shadow_stack_constants():
+def _aarch64_shadow_stack_config_path():
     default_path = Path(__file__).resolve().parents[2] / "libcheckpoint/include/aarch64_shadow_stack.h"
-    path = Path(os.environ.get("TEAPOT_AARCH64_SHADOW_STACK_CONFIG", default_path))
+    return Path(os.environ.get("TEAPOT_AARCH64_SHADOW_STACK_CONFIG", default_path))
+
+
+def _aarch64_shadow_stack_constants():
+    path = _aarch64_shadow_stack_config_path()
     if not path.is_file():
         raise FileNotFoundError(
             f"AArch64 shadow-stack configuration not found: {path}. Set "
