@@ -61,6 +61,13 @@ class WidenByteJumpTablesTests(unittest.TestCase):
 
     def test_hoisted_base_across_guard_and_loop_backedge(self):
         _, module, _, _, dispatch, data, entries, _, suffix = self.loop_fixture()
+        # Rewriting preparation can leave zero-size symbol markers in .plt.
+        # They must survive without being decoded or hiding a real table.
+        plt = gtirb.Section(name='.plt', module=module)
+        interval = gtirb.ByteInterval(address=0x3000,
+                                      contents=bytes.fromhex('1f2003d5'), section=plt)
+        marker = gtirb.CodeBlock(offset=4, size=0, byte_interval=interval)
+        symbol = gtirb.Symbol('plt_end', payload=marker, module=module)
         WidenAArch64ByteJumpTablesPass().end_module(module, [])
         self.assertEqual([b.size for b in entries], [4, 4])
         instructions = list(GtirbInstructionDecoder(module.isa).get_instructions(dispatch))
@@ -68,6 +75,8 @@ class WidenByteJumpTablesTests(unittest.TestCase):
         self.assertIn('uxtw #2', instructions[0].op_str)
         self.assertIn('sxtw #2', instructions[2].op_str)
         self.assertEqual(suffix.offset, 18)
+        self.assertIs(symbol.referent, marker)
+        self.assertEqual((marker.address, marker.size), (0x3004, 0))
 
     def test_bound_and_cfg_recover_missing_symbolic_entry(self):
         _, module, _, _, _, data, entries, _, _ = self.loop_fixture(partial=True)

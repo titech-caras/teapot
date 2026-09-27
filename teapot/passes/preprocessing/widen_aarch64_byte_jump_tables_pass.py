@@ -377,6 +377,10 @@ class WidenAArch64ByteJumpTablesPass(Pass):
 
         @lru_cache(maxsize=1024)
         def decoded(block):
+            # Rewriting may keep empty symbol markers; they have no lookup
+            # instructions and Capstone 6 rejects an empty buffer.
+            if block.size == 0:
+                return ()
             return tuple(decoder.get_instructions(block))
 
         allowed_references = set()
