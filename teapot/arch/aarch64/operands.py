@@ -245,13 +245,15 @@ class AArch64OperandMixin:
             return 2
         if mnemonic.startswith((
                 "ldrb", "strb", "ldurb", "sturb", "ldarb", "stlrb",
-                "ldaxrb", "stlxrb", "ldxrb", "stxrb", "ldursb", "ldrsb")):
+                "ldaxrb", "stlxrb", "ldxrb", "stxrb", "ldursb", "ldrsb",
+                "stlurb", "ldapurb", "ldapursb", "stllrb", "ldlarb", "ldaprb")):
             return 1
         if mnemonic.startswith((
                 "ldrh", "strh", "ldurh", "sturh", "ldarh", "stlrh",
-                "ldaxrh", "stlxrh", "ldxrh", "stxrh", "ldursh", "ldrsh")):
+                "ldaxrh", "stlxrh", "ldxrh", "stxrh", "ldursh", "ldrsh",
+                "stlurh", "ldapurh", "ldapursh", "stllrh", "ldlarh", "ldaprh")):
             return 2
-        if mnemonic.startswith(("ldrsw", "ldursw")):
+        if mnemonic.startswith(("ldrsw", "ldursw", "ldapursw")):
             return 4
         if mnemonic == "ldpsw":
             return 8

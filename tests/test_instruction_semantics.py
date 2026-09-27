@@ -6,6 +6,24 @@ from teapot.arch.decoders import x64_decoder, aarch64_decoder, riscv64_decoder
 
 
 class InstructionSemanticsTests(unittest.TestCase):
+    def test_rcpc_and_loregion_widths_and_stored_value_reads(self):
+        arch = AArch64Architecture()
+        for width, cases in (
+                (1, ('20000019', '20004019', '20008019', '207c9f08', '207cdf08', '20c0bf38')),
+                (2, ('20000059', '20004059', '20008059', '207c9f48', '207cdf48', '20c0bf78')),
+                (4, ('20008099',))):
+            for encoded in cases:
+                inst, = aarch64_decoder().disasm(bytes.fromhex(encoded), 0)
+                with self.subTest(instruction=str(inst)):
+                    operand = arch.memory_operand(inst)
+                    self.assertEqual(arch.mem_operand_size(inst, operand), width)
+                    is_store = inst.mnemonic.startswith('st')
+                    self.assertEqual(arch.mem_operand_is_write(inst, operand), is_store)
+                    self.assertEqual(arch.mem_operand_is_read(inst, operand), not is_store)
+                    reads = {reg.name for reg in arch.access_registers(arch.abi, inst, 0)}
+                    self.assertIn('x1', reads)
+                    self.assertEqual('x0' in reads, is_store)
+
     def test_zeroing_requires_equal_sources_and_no_merging_mask(self):
         arch = X64Architecture()
         zeroes = ('4831c0', '4829c0', '660fefc0', '0f57c0', '660f57c0',
