@@ -141,7 +141,8 @@ def main():
         enable_checkpoints=not args.disable_checkpoints,
         enable_indirect_transform=not args.disable_indirect_transform,
         enable_indirect_check=not args.disable_indirect_check,
-        enable_conditional_branch_relax=not args.disable_aarch64_relax,
+        enable_conditional_branch_relax=(not args.disable_aarch64_relax or
+                                         ir.modules[0].isa != gtirb.Module.ISA.ARM64),
         enable_mem_operand_gadgets=not args.disable_mem_operand_gadgets,
         enable_port_gadgets=not args.disable_port_gadgets,
         enable_gadget_asan_check=not args.disable_gadget_asan_check,
