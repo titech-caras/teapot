@@ -161,6 +161,9 @@ class X64TransientRepTests(unittest.TestCase):
                              "transient_section_start_symbol", "transient_section_end_symbol"):
                     setattr(pipeline, name, gtirb.Symbol(name=name, payload=block, module=module))
                 pipeline.checkpoint_spare_registers = {}
+                # This fixture bypasses preprocessing and contains no
+                # conditional branch, hence no generated trampoline.
+                pipeline.checkpoint_block_uuids = set()
                 pipeline._run_pass_manager = Mock()
                 pipeline._run_transient_passes()
                 manager, phase = pipeline._run_pass_manager.call_args.args
