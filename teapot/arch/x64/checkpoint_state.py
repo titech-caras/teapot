@@ -16,6 +16,15 @@ def df_checkpoint_blocks(module, decoder, abi):
         blocks = set(function.get_all_blocks())
         entries = set(function.get_entry_blocks())
         decoded = {b: list(decoder.get_instructions(b)) for b in blocks}
+        # The ABI enters with DF clear. A fully decoded function with no way
+        # to set/restore DF cannot make it set, including disconnected padding
+        # or blocks missing CFG predecessors. Do not turn those into DF saves
+        # merely because the entry-rooted traversal below cannot reach them.
+        if (all(sum(i.size for i in decoded[b]) == b.size for b in blocks) and
+                not any(i.mnemonic.split()[-1] == 'std' or
+                        i.mnemonic.split()[-1].startswith(('popf', 'iret'))
+                        for instructions in decoded.values() for i in instructions)):
+            continue
         incoming, outgoing = {b: False for b in blocks}, {b: False for b in blocks}
         successors = {b: {e.target for e in b.outgoing_edges
                           if e.target in blocks and e.label and

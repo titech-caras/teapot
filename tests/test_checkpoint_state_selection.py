@@ -66,6 +66,27 @@ class CheckpointStateSelectionTests(unittest.TestCase):
         self.assertEqual([vector_state(m) for m in ('auto', 'xmm0-7', 'sse', 'avx', 'full')],
                          [4, 1, 2, 3, 4])
 
+    def test_df_writer_free_functions_do_not_preserve_unvisited_blocks(self):
+        decoder = GtirbInstructionDecoder(gtirb.Module.ISA.X64)
+        abi = X64Architecture().abi
+        for entry_code, orphan_code, preserve in (
+                ('90 c3', '90 7500', False),
+                ('fd c3', '90 7500', True),
+                ('9d c3', '90 7500', True),
+                ('48cf', '90 7500', True),
+                ('90 c3', '0f', True)):
+            ir, module, entry = module_with(entry_code)
+            contents = bytes.fromhex(orphan_code)
+            interval = gtirb.ByteInterval(address=0x2000, contents=contents,
+                                          section=entry.section)
+            orphan = gtirb.CodeBlock(size=len(contents), byte_interval=interval)
+            next(iter(module.aux_data['functionBlocks'].data.values())).add(orphan)
+            selected = df_checkpoint_blocks(module, decoder, abi)
+            self.assertEqual(orphan.uuid in selected, preserve,
+                             (entry_code, orphan_code))
+            if not preserve:
+                self.assertEqual(selected, set())
+
 
 if __name__ == '__main__':
     unittest.main()
