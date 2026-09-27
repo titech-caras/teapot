@@ -248,23 +248,27 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
     key = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
     entry = args.cache / key
     with (args.cache / (key + ".lock")).open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        hit = entry.exists()
-        if hit:
-            assert json.loads((entry / "key.json").read_text()) == key_data, "cache key mismatch"
-            result = json.loads((entry / "component.json").read_text())
-            for name, expected in result["files"].items():
-                assert sha(entry / name) == expected, "cached artifact hash mismatch: " + name
-            validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]),
-                            item['machine'], converter.eh_cfi_entries)
-        else:
-            # Containers often reuse PID 1; preserve failed attempts without
-            # preventing an unchanged recipe from being retried.
-            temporary = Path(tempfile.mkdtemp(prefix=key + ".building-", dir=args.cache))
-            result = build_component(args, converter, item, key_data, key,
-                                     selected_symbols, priority, temporary)
-            temporary.rename(entry)
-    return {**result, "cache_hit": hit, "cache_path": str(entry), "input_path": item["path"]}
+        # Immutable published entries may be verified by many readers at once.
+        # Upgrade only for a miss, then recheck: another writer may have won
+        # while flock released the shared lock during the upgrade.
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        if not entry.exists():
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if not entry.exists():
+                # Preserve failed attempts, including reused container PIDs.
+                temporary = Path(tempfile.mkdtemp(prefix=key + ".building-", dir=args.cache))
+                result = build_component(args, converter, item, key_data, key,
+                                         selected_symbols, priority, temporary)
+                temporary.rename(entry)
+                return {**result, "cache_hit": False, "cache_path": str(entry), "input_path": item["path"]}
+            fcntl.flock(lock, fcntl.LOCK_SH)
+        assert json.loads((entry / "key.json").read_text()) == key_data, "cache key mismatch"
+        result = json.loads((entry / "component.json").read_text())
+        for name, expected in result["files"].items():
+            assert sha(entry / name) == expected, "cached artifact hash mismatch: " + name
+        validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]),
+                        item['machine'], converter.eh_cfi_entries)
+    return {**result, "cache_hit": True, "cache_path": str(entry), "input_path": item["path"]}
 
 
 def main():

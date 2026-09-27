@@ -1,5 +1,6 @@
 """Standalone components use the converter's stable versioned link identities."""
 import importlib.util
+import fcntl
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -47,7 +48,17 @@ class LibraryBindingTests(unittest.TestCase):
             args = SimpleNamespace(cache=Path(directory))
             cold = driver.cached_component(args, converter, item, context, set(), 100)
             other = dict(context, bindings=context['bindings'][:2] + [('unrelated_B', 'executable')])
-            warm = driver.cached_component(args, converter, item, other, set(), 100)
+            original_sha = driver.sha
+
+            def verify_with_another_reader(path):
+                lock_path = args.cache / (cold['component_id'] + '.lock')
+                with lock_path.open('a') as other_reader:
+                    # A second verifier must not block on this cache hit.
+                    fcntl.flock(other_reader, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                return original_sha(path)
+
+            with patch.object(driver, 'sha', side_effect=verify_with_another_reader):
+                warm = driver.cached_component(args, converter, item, other, set(), 100)
             self.assertFalse(cold['cache_hit'])
             self.assertTrue(warm['cache_hit'])
             self.assertEqual(cold['cache_path'], warm['cache_path'])
