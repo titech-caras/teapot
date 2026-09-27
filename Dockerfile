@@ -23,13 +23,13 @@ FROM scratch AS pprinter-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#0107fb639ab60a51a021c60ed93477cfb41557e1 /
 
 FROM scratch AS ddisasm-src
-ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#ca3d378fc4fd539081a25f2c53b335557d856589 /
+ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#650998633c8cfd9732d00ffda280928e4d4e8de9 /
 
 FROM scratch AS rewriting-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#eb8d5d63686214fde30360c87438824b249fc57b /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#e47b9e40b2ac2475a52193dcd4cb9def80154caf /
 
 FROM scratch AS lra-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#1730be7eb2ca030a23d961e666879c417211bdde /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#c8f799ce6f70217709e8444ac6351be46b837dbb /
 
 FROM --platform=linux/amd64 ubuntu:24.04 AS frontend-build-base
 ENV DEBIAN_FRONTEND=noninteractive
@@ -126,7 +126,7 @@ RUN cmake -S /src/ddisasm -B /build/ddisasm -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
-    -DDDISASM_BUILD_REVISION=ca3d378fc4fd539081a25f2c53b335557d856589 \
+    -DDDISASM_BUILD_REVISION=650998633c8cfd9732d00ffda280928e4d4e8de9 \
     -DDDISASM_ENABLE_TESTS=OFF -DDDISASM_GENERATE_MANY=ON \
     -DDDISASM_X86_64=ON -DDDISASM_ARM_64=ON \
     -DDDISASM_RISCV_32=ON -DDDISASM_RISCV_64=ON \
@@ -209,7 +209,7 @@ RUN python3 -m venv /opt/venv \
 # rewrite preparation. The fork pinned in requirements.txt accepts a scoped
 # block set and the liveness offset table. Both dependency forks must provide
 # the metadata APIs used by Teapot before an image is suitable for evaluation.
-RUN python3 -c "import inspect; from gtirb_rewriting.prepare import prepare_for_rewriting; from gtirb_rewriting._auxdata_offsetmap import live_register_sets; from gtirb_live_register_analysis.manager import LiveRegisterManager, LIVE_REGISTER_NAMES_AUXDATA, LIVE_REGISTER_SETS_AUXDATA; assert 'blocks' in inspect.signature(prepare_for_rewriting).parameters, 'gtirb-rewriting lacks scoped preparation support'; assert 'preserve_liveness' in inspect.signature(LiveRegisterManager.refresh).parameters, 'gtirb-live-register-analysis lacks the explicit preservation contract'"
+RUN python3 -c "import inspect; from gtirb_rewriting.prepare import prepare_for_rewriting; from gtirb_rewriting._auxdata_offsetmap import live_register_sets, live_register_sets_high; from gtirb_live_register_analysis.manager import LiveRegisterManager, LIVE_REGISTER_NAMES_AUXDATA, LIVE_REGISTER_SETS_AUXDATA, LIVE_REGISTER_SETS_HIGH_AUXDATA; assert 'blocks' in inspect.signature(prepare_for_rewriting).parameters, 'gtirb-rewriting lacks scoped preparation support'; assert 'preserve_liveness' in inspect.signature(LiveRegisterManager.refresh).parameters, 'gtirb-live-register-analysis lacks the explicit preservation contract'; assert callable(LiveRegisterManager.producer_vector_mask), 'gtirb-live-register-analysis lacks frontend vector masks'"
 
 RUN python3 -c "import llvmlite.binding as llvm; llvm.initialize(); llvm.initialize_all_targets(); llvm.initialize_all_asmprinters(); assert llvm.llvm_version_info[0] == 14, llvm.llvm_version_info; llvm.create_pass_manager_builder().populate(llvm.create_module_pass_manager()); print('LLVM text-DIFT APIs:', llvm.llvm_version_info)"
 
