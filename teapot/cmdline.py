@@ -18,6 +18,11 @@ def main():
     parser.add_argument("input", nargs="?")
     parser.add_argument("output", nargs="?")
     parser.add_argument(
+        "--debug-source", metavar="ELF",
+        help=("Preserve source lines from the original ELF's DWARF (off by default). "
+              "After printing, run python -m teapot.debug_lines IR RAW.S OUTPUT.S."),
+    )
+    parser.add_argument(
         "--dift-layout",
         choices=sorted(LAYOUTS),
         help="Compile-time DIFT address-space layout profile. The runtime library must be built with the same profile.",
@@ -143,6 +148,7 @@ def main():
         enable_nested_speculation=args.enable_nested_speculation,
         aarch64_tag_storage=args.aarch64_tag_storage,
         target_identification=args.target_identification,
+        debug_source=args.debug_source,
     )
     pipeline = TeapotPipeline(ir, args.dift_layout, options)
     pipeline.run()

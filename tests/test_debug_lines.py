@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -98,20 +99,32 @@ class SourceLineTests(unittest.TestCase):
             block = next(b for b in module.code_blocks if b.size and b.section.name == ".text")
             module.aux_data["comments"] = gtirb.AuxData(
                 {gtirb.Offset(block, 0): "existing analysis comment"}, "mapping<Offset,string>")
-            lines = SourceLines(module, root / "input", arch.name, GtirbInstructionDecoder(module.isa))
-            TeapotPipeline(ir).run()
-            before = {bi.uuid: (bytes(bi.contents), copy.copy(dict(bi.symbolic_expressions)))
-                      for bi in module.byte_intervals}
-            lines.finish(GtirbInstructionDecoder(module.isa))
-            self.assertEqual(before, {bi.uuid: (bytes(bi.contents), dict(bi.symbolic_expressions))
-                                      for bi in module.byte_intervals})
+            if version == 4:
+                lines = SourceLines(module, root / "input", arch.name, GtirbInstructionDecoder(module.isa))
+                TeapotPipeline(ir).run()
+                before = {bi.uuid: (bytes(bi.contents), copy.copy(dict(bi.symbolic_expressions)))
+                          for bi in module.byte_intervals}
+                lines.finish(GtirbInstructionDecoder(module.isa))
+                self.assertEqual(before, {bi.uuid: (bytes(bi.contents), dict(bi.symbolic_expressions))
+                                          for bi in module.byte_intervals})
+                compact_for_pprinter(ir)
+                ir.save_protobuf(root / "instrumented.gtirb")
+            else:
+                # Exercise both public CLI stages, including compact serialization.
+                ir.save_protobuf(root / "input.gtirb")
+                self._run([sys.executable, "-B", "-m", "teapot.cmdline", "--compact-output",
+                           "--debug-source", "input", "input.gtirb", "instrumented.gtirb"], root)
+                ir = gtirb.IR.load_protobuf(root / "instrumented.gtirb")
+                module = ir.modules[0]
             self.assertTrue(any("existing analysis comment" in value
                                 for value in module.aux_data["comments"].data.values()))
-            compact_for_pprinter(ir)
-            ir.save_protobuf(root / "instrumented.gtirb")
             self._run(["gtirb-pprinter", "--ir", "instrumented.gtirb", "--asm", "raw.S"], root)
-            output = emit_source_lines(module, (root / "raw.S").read_text())
-            (root / "lines.S").write_text(output)
+            if version == 4:
+                output = emit_source_lines(module, (root / "raw.S").read_text())
+                (root / "lines.S").write_text(output)
+            else:
+                self._run([sys.executable, "-B", "-m", "teapot.debug_lines",
+                           "instrumented.gtirb", "raw.S", "lines.S"], root)
             self._run(["sed", "-i", "-f", str(Path(__file__).resolve().parents[1] / "scripts/fix_asm.sed"),
                        "lines.S"], root)
             self._run([compiler, "-nostdlib", "-no-pie", "-Wa,-L", "-Wl,-e,main",

@@ -210,6 +210,46 @@ $ ./a.inst input.txt
 [teapot], 42 KASPER_CACHE, 0x414257, 0x1f81b610, 0x11, 153, 0x413f4d, 0x409c56, 0x40b093, 0x409e54, 0x412c48, 0x401566,
 ```
 
+## Source-line debug information (optional)
+
+Source-line preservation is **off by default**. It supports linked ELF64 inputs
+on x64, AArch64 and RV64, with DWARF 4 or 5. Keep the original, unstripped ELF:
+the input GTIRB does not contain its DWARF. `pyelftools` (in `requirements.txt`)
+reads the original line tables. For example:
+
+```shell
+ddisasm --ir app.gtirb app
+teapot --debug-source app app.gtirb app.inst.gtirb
+gtirb-pprinter --ir app.inst.gtirb --asm app.raw.S
+python -m teapot.debug_lines app.inst.gtirb app.raw.S app.inst.S
+sed -i -f scripts/fix_asm.sed app.inst.S
+```
+
+Then assemble/link `app.inst.S` with the matching target compiler and Teapot
+runtime as above. Use the printer's normal **assembler** mode, not its debug
+listing mode. Do not strip debug sections from the linked result. The extra
+post-print step emits `.file`/`.loc` directives; GNU as creates the relocated
+DWARF line table and compilation-unit information. No manual directives or
+extra NOPs are needed. `--compact-output` is supported.
+
+The normal copy's surviving original instructions map to their input source
+files, lines, columns and discriminators. Paths resolve against each input
+compilation unit's directory, so equally named files in different directories
+remain distinct. A debugger can use these locations for line breakpoints,
+source listing and stepping. Source files must still be available locally
+(use the debugger's source-path substitution if the build directory moved).
+
+This is **line information**, not a transplant of variable/type/inline DIEs or
+a repair of unwind information. Backtrace unwinding still depends on the
+existing frame information. Generated instrumentation and the transient copy
+are deliberately unmapped (line zero). Original instructions wholly replaced
+or removed by normalization are not assigned guessed locations; the rewrite
+prints how many original instructions retain mappings. Gaps and non-instruction
+line-table addresses are skipped safely. A mismatched ELF, absent DWARF, or no
+matching lines is an error. This CLI path accepts one module, not the experimental
+component-cache driver. With the option omitted, no source metadata, labels or
+additional rewrite round is created.
+
 ## Troubleshooting
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues.

@@ -1,5 +1,6 @@
 import gc
 from dataclasses import dataclass, replace
+from typing import Optional
 
 import gtirb
 from gtirb_capstone.instructions import GtirbInstructionDecoder
@@ -118,6 +119,7 @@ class InstrumentationOptions:
     enable_gadget_asan_check: bool = True
     aarch64_tag_storage: str = ASAN_TAG_STORAGE_SHADOW
     target_identification: str = "software"
+    debug_source: Optional[str] = None
 
 
 class TeapotPipeline:
@@ -134,6 +136,8 @@ class TeapotPipeline:
         self.reg_manager = None
 
     def run(self):
+        if self.options.debug_source is not None and len(self.ir.modules) != 1:
+            raise ValueError("source-line preservation requires one ELF module")
         self.module = self.ir.modules[0]
         self.arch = get_arch(self.module)
         if self.options.target_identification != "software":
@@ -179,6 +183,13 @@ class TeapotPipeline:
             print("[teapot] component liveness: standalone DDisasm ABI masks; "
                   "missing masks remain all-live", flush=True)
 
+        source_lines = None
+        if self.options.debug_source is not None:
+            # No imports, metadata or extra rewrite rounds on the default path.
+            from teapot.debug_lines import SourceLines
+            source_lines = SourceLines(self.module, self.options.debug_source,
+                                       self.arch.name, self.decoder)
+
         self._run_normalize_passes()
         self._create_instrumentation_sections()
         self._run_preprocess_passes()
@@ -205,6 +216,8 @@ class TeapotPipeline:
             self._run_late_text_checkpoint_passes()
         if self.options.target_identification == "aarch64-bti":
             self.arch.finalize_bti_layout(self)
+        if source_lines is not None:
+            source_lines.finish(GtirbInstructionDecoder(self.module.isa))
 
     def _run_pass_manager(self, pass_manager: PassManager, label: str):
         print(f"[teapot] begin {label}", flush=True)
