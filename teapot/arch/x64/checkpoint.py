@@ -14,7 +14,7 @@ class X64CheckpointPatchesMixin:
     def can_insert_restore_point(self, live_registers) -> bool:
         return live_registers is None or "rflags" not in (r.name for r in live_registers)
 
-    def checkpoint_patch(self, block_uuid: UUID, *, use_scratch_registers: bool = True):
+    def checkpoint_patch(self, block_uuid: UUID, *, use_scratch_registers: bool = True, save_df=False):
         @self.constraints(scratch_registers=1 if use_scratch_registers else 0)
         def patch(ctx: InsertionContext):
             r = ctx.scratch_registers[0] if use_scratch_registers else "rax"
@@ -29,7 +29,7 @@ class X64CheckpointPatchesMixin:
                 lea {r}, [rip+{generate_distinct_label_name(".__branch_counter_", block_uuid)}]
                 mov [checkpoint_target_metadata+16], {r}
                 {epilogue}
-                jmp make_checkpoint_x64
+                jmp {'make_checkpoint_df' if save_df else 'make_checkpoint_x64'}
             .L__after_checkpoint{SYMBOL_SUFFIX}:
                 nop
             """
@@ -46,11 +46,14 @@ class X64CheckpointPatchesMixin:
             jmp {non_conditional_target_symbol_name}
         """)
 
-    def init_library_patch(self):
-        return self.constraints()(lambda ctx: """
+    def init_library_patch(self, vector_state=None):
+        select = (f'mov edi, {vector_state}\ncall libcheckpoint_set_vector_state\n'
+                  'mov rdi, [rsp+16]\nmov rsi, [rsp+8]' if vector_state is not None else '')
+        return self.constraints()(lambda ctx: f"""
             push rdi
             push rsi
             push rdx
+            {select}
             call libcheckpoint_enable
             pop rdx
             pop rsi

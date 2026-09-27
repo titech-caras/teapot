@@ -14,7 +14,8 @@ class MainEnvpTests(unittest.TestCase):
     def _check(self, arch, compiler, runner):
         if not shutil.which(compiler) or (runner and not shutil.which(runner[0])):
             self.skipTest("target compiler/emulator unavailable")
-        patch = arch.init_library_patch()(SimpleNamespace(stack_adjustment=0))
+        patch = arch.init_library_patch(**({'vector_state': 4} if arch.name == 'x64' else {}))(
+            SimpleNamespace(stack_adjustment=0))
         if arch.name == "x64":
             prefix, jump = ".intel_syntax noprefix", "jmp check_main"
             clobber = "xor edi, edi; xor esi, esi; xor edx, edx; ret"
@@ -32,8 +33,10 @@ class MainEnvpTests(unittest.TestCase):
             {patch}
             {jump}
             .global libcheckpoint_enable
+            .global libcheckpoint_set_vector_state
             .global libcheckpoint_enable_aarch64_bti
         libcheckpoint_enable:
+        libcheckpoint_set_vector_state:
         libcheckpoint_enable_aarch64_bti:
             {clobber}
             .section .note.GNU-stack,""

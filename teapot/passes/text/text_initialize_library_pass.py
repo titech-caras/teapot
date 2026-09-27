@@ -11,15 +11,19 @@ from teapot.utils.misc import distinguish_edges
 class TextInitializeLibraryPass(VisitorPassMixin):
     text_section: gtirb.Section
 
-    def __init__(self, text_section: gtirb.Section, decoder: GtirbInstructionDecoder, arch: Architecture):
+    def __init__(self, text_section: gtirb.Section, decoder: GtirbInstructionDecoder, arch: Architecture,
+                 vector_state=None):
         self.text_section = text_section
         self.decoder = decoder
         self.arch = arch
+        self.vector_state = vector_state
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)
         rewriting_ctx.register_insert(AllFunctionsScope(FunctionPosition.ENTRY, BlockPosition.ENTRY, {"main"}),
-                                      Patch.from_function(self.arch.init_library_patch()))
+                                      Patch.from_function(self.arch.init_library_patch(
+                                          **({'vector_state': self.vector_state}
+                                             if self.arch.name == 'x64' else {}))))
 
         self.visit_functions(functions, self.text_section)
 

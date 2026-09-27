@@ -113,11 +113,15 @@ class InstrumentationOptions:
     target_identification: str = "software"
     debug_source: Optional[str] = None
     conservative_flags: bool = False
+    force_checkpoint_df: bool = False
+    x64_vector_state: str = 'auto'
 
 
 class TeapotPipeline:
     linked_component = None
     component_guard_base = None
+    checkpoint_df_blocks = frozenset()
+    vector_state = None
 
     def __init__(self, ir: gtirb.IR, dift_layout_name=None,
                  options: InstrumentationOptions = InstrumentationOptions(), *,
@@ -156,6 +160,14 @@ class TeapotPipeline:
         self.text_section = [section for section in self.module.sections if section.name == ".text"][0]
         self.decoder = CachedGtirbInstructionDecoder(self.module.isa)
         self.abi = self.arch.register_abi(_ABIS)
+        self.checkpoint_df_blocks, self.vector_state = set(), None
+        if self.arch.name == 'x64':
+            from teapot.arch.x64.checkpoint_state import df_checkpoint_blocks, vector_state
+            self.checkpoint_df_blocks = df_checkpoint_blocks(self.module, self.decoder, self.abi)
+            self.vector_state = vector_state(self.module, self.decoder, self.options.x64_vector_state,
+                                             component=self.linked_component is not None)
+            print(f'[teapot] x64 vector state: {self.vector_state}; '
+                  f'DF-sensitive blocks: {len(self.checkpoint_df_blocks)}', flush=True)
         self.reg_manager = LiveRegisterManager(
             self.module, self.abi, self.decoder, analysis_scope="block",
             conservative_flags=self.options.conservative_flags)
@@ -184,6 +196,10 @@ class TeapotPipeline:
 
         self._run_normalize_passes()
         self._create_instrumentation_sections()
+        self.checkpoint_df_blocks |= {
+            self.text_transient_mapping.code_blocks_map[uuid].uuid
+            for uuid in tuple(self.checkpoint_df_blocks)
+            if uuid in self.text_transient_mapping.code_blocks_map}
         self._run_preprocess_passes()
         self._run_dift_ext_call_passes()
 
@@ -336,7 +352,8 @@ class TeapotPipeline:
             # an active indirect call redirects before normal stack poisoning
             # or runtime initialization, without instrumenting the bouncer.
             pass_manager.add(target_transform)
-        pass_manager.add(TextInitializeLibraryPass(self.text_section, self.decoder, self.arch))
+        pass_manager.add(TextInitializeLibraryPass(self.text_section, self.decoder, self.arch,
+                                                   self.vector_state))
         if self.options.enable_asan:
             pass_manager.add(AsanStackPass(
                 self.reg_manager, self.text_section, self.decoder, self.arch, False,
@@ -354,7 +371,8 @@ class TeapotPipeline:
         if self.options.enable_checkpoints:
             pass_manager.add(InsertCheckpointsPass(
                 self.reg_manager, self.text_section, self.decoder, self.arch,
-                self.checkpoint_block_uuids, self.checkpoint_spare_registers))
+                self.checkpoint_block_uuids, self.checkpoint_spare_registers,
+                self.checkpoint_df_blocks, self.options.force_checkpoint_df))
         self._run_pass_manager(pass_manager, "text")
 
     def _run_transient_passes(self):
@@ -413,7 +431,8 @@ class TeapotPipeline:
                 self.arch,
                 {self.text_transient_mapping.code_blocks_map[uuid].uuid
                  for uuid in self.checkpoint_block_uuids},
-                self.checkpoint_spare_registers))
+                self.checkpoint_spare_registers,
+                self.checkpoint_df_blocks, self.options.force_checkpoint_df))
         # Replacements must follow insertions at the same original offset.
         for arch_pass in self.arch.transient_instruction_passes(
                 self.reg_manager, self.transient_section, self.decoder, self.dift_layout, self.options):

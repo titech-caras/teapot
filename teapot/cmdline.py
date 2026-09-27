@@ -13,6 +13,10 @@ from teapot.utils.serialization import compact_for_pprinter
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--force-checkpoint-df', action='store_true',
+                        help='Save DF at every x64 checkpoint instead of selecting DF-sensitive sites')
+    parser.add_argument('--x64-vector-state', choices=('auto', 'xmm0-7', 'sse', 'avx', 'full'),
+                        default='auto', help='Checkpoint vector state (auto falls back to full)')
     parser.add_argument("--conservative-flags", action="store_true",
                         help="Keep the producer's conservative flag masks instead of Python ABI flag liveness.")
     parser.add_argument("--target-identification", choices=("software", "aarch64-bti"),
@@ -153,6 +157,8 @@ def main():
         target_identification=args.target_identification,
         debug_source=args.debug_source,
         conservative_flags=args.conservative_flags,
+        force_checkpoint_df=args.force_checkpoint_df,
+        x64_vector_state=args.x64_vector_state,
     )
     pipeline = TeapotPipeline(ir, args.dift_layout, options)
     pipeline.run()

@@ -21,10 +21,12 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
     def __init__(self, reg_manager: LiveRegisterManager, text_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder, arch: Architecture,
                  eligible_block_uuids: Optional[Set[UUID]] = None,
-                 checkpoint_spare_registers=None):
+                 checkpoint_spare_registers=None, df_blocks=(), force_df=False):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.text_section = text_section
         self.arch = arch
+        self.df_blocks = df_blocks
+        self.force_df = force_df
         self.eligible_block_uuids = eligible_block_uuids
         self.checkpoint_spare_registers = (
             checkpoint_spare_registers if checkpoint_spare_registers is not None else {})
@@ -60,14 +62,16 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                 )
 
             if not self.arch.CHECKPOINT_FIXED_REGISTERS:
+                options = ({'save_df': self.force_df or block.uuid in self.df_blocks}
+                           if self.arch.name == 'x64' else {})
                 try:
                     self.insert_at(block, conditional_jump_offset, Patch.from_function(
                         self.allocate_registers(
                             function, block, len(instructions) - 1, False)(
-                            self.arch.checkpoint_patch(block.uuid))))
+                            self.arch.checkpoint_patch(block.uuid, **options))))
                 except NotEnoughFreeRegistersException:
                     self.insert_at(block, conditional_jump_offset, Patch.from_function(
-                        self.arch.checkpoint_patch(block.uuid, use_scratch_registers=False)))
+                        self.arch.checkpoint_patch(block.uuid, use_scratch_registers=False, **options)))
                 return
 
             self.insert_at(block, conditional_jump_offset, Patch.from_function(

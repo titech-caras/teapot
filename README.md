@@ -8,6 +8,25 @@ described in the paper "Teapot: Efficiently Uncovering Spectre Gadgets in COTS B
 This repository contains the Teapot binary rewriter.
 The submodule `libcheckpoint` contains the runtime library.
 
+### Checkpoint efficiency options
+
+Python LRA supplies x64 arithmetic-flag and AArch64 NZCV liveness within each
+function; DDisasm still supplies all GPR/vector masks. `--conservative-flags`
+restores the older flag policy. `--force-checkpoint-df` uses the DF-saving x64
+entry everywhere; normally a CFG scan selects it only where DF may be set.
+
+`--x64-vector-state=auto` (default) selects `xmm0-7`, `sse`, `avx`, or `full`.
+Opaque code, external calls and independently rewritten components force full
+state in auto mode. Explicit smaller modes are assertions about the program;
+they must cover all state that speculative code can modify. Runtime builds can
+override this with `-DTEAPOT_X64_VECTOR_STATE=...`; auto without a rewrite proof
+is full. Report callbacks always preserve full supported vector/x87 state.
+
+Coverage callbacks are off in ordinary runtime builds. Build the runtime with
+`-DTEAPOT_ENABLE_COVERAGE=ON` when linking honggfuzz; using `hfuzz-clang` or
+`hfuzz-gcc` as the CMake compiler selects that default automatically. This does
+not disable gadget reports or their DIFT instrumentation.
+
 ## Requirements
 
 Teapot static rewriter requires Python 3.8 or newer.
