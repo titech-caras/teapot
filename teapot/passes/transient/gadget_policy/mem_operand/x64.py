@@ -7,6 +7,7 @@ from gtirb_rewriting import InsertionContext, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
+from teapot.configs.slots import ScratchpadSlots
 from teapot.configs.tags import (
     TAG_ATTACKER,
     TAG_ATTACKER_INDIRECT,
@@ -68,6 +69,18 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
                   if write_reg is not None else f"or byte ptr {queued_tag_operand}, {tag}\n")
             for tag in (TAG_SECRET_INDIRECT, TAG_SECRET, TAG_ATTACKER_INDIRECT)
         }
+        condition_slot = f"byte ptr scratchpad+{ScratchpadSlots.X64_MEM_POLICY_CONDITION}"
+        if conditional is not None:
+            # CMOV reads memory even when the register assignment is skipped.
+            # Capture the original flags before the checks clobber them, and
+            # predicate only destination-tag updates. This dedicated byte is
+            # also safe across report callbacks, which may clobber GPRs.
+            queue_tags = {tag: f"""
+                cmp {condition_slot}, 0
+                je .L__{label_key}_skip_tag_{tag}{SYMBOL_SUFFIX}
+                {snippet}
+            .L__{label_key}_skip_tag_{tag}{SYMBOL_SUFFIX}:
+            """ for tag, snippet in queue_tags.items()}
 
         @patch_constraints(x86_syntax=X86Syntax.INTEL, scratch_registers=scratch_registers, clobbers_flags=True)
         def patch(ctx: InsertionContext):
@@ -75,7 +88,8 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
             r4 = ctx.scratch_registers[3] if scratch_registers > 3 else None
             r5 = ctx.scratch_registers[4] if scratch_registers > 4 else None
 
-            asm = self.arch.effective_address_snippet(r2, mem_operand_str, r3)
+            asm = f"set{conditional} {condition_slot}\n" if conditional is not None else ""
+            asm += self.arch.effective_address_snippet(r2, mem_operand_str, r3)
             asm += self.arch.clear_register_snippet(r1)
 
             for reg in sorted(addr_regs, key=lambda reg: reg.name):
@@ -113,8 +127,6 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
                 nop
             """
 
-            return self.arch.conditional_patch_wrapper(
-                asm, conditional, label_key="mem_operand_policies",
-                skip_label_name=done_label, insert_skip_label=False)
+            return asm
 
         return patch
