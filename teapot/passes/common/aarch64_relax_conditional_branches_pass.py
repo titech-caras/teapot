@@ -651,24 +651,26 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
             sizes = self.module.aux_data["symbolicExpressionSizes"]
 
         new_sizes = {}
-        replacement_idx = 0
-        delta = 0
+        # AuxData maps have no address ordering guarantee (especially after
+        # another relaxation round). Compute each key's shift independently.
+        replacement_ends = [replacement.offset + 4 for replacement in replacements]
+        deltas = [0]
+        for replacement in replacements:
+            deltas.append(deltas[-1] + replacement.delta)
         for key, size in sizes.data.items():
             if key.element_id is not interval:
                 new_sizes[key] = size
                 continue
 
             offset = key.displacement
-            while (replacement_idx < len(replacements) and
-                   offset >= replacements[replacement_idx].offset + 4):
-                delta += replacements[replacement_idx].delta
-                replacement_idx += 1
+            replacement_idx = bisect_right(replacement_ends, offset)
 
             if (replacement_idx < len(replacements) and
                     replacements[replacement_idx].offset <= offset < replacements[replacement_idx].offset + 4):
                 continue
 
-            new_sizes[gtirb.Offset(element_id=interval, displacement=offset + delta)] = size
+            new_sizes[gtirb.Offset(element_id=interval,
+                                  displacement=offset + deltas[replacement_idx])] = size
 
         for offset in added_offsets:
             new_sizes[gtirb.Offset(element_id=interval, displacement=offset)] = 4

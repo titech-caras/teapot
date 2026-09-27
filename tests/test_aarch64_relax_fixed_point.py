@@ -7,6 +7,7 @@ import gtirb
 from teapot.arch.aarch64.architecture import AArch64Architecture
 from teapot.passes.common.aarch64_relax_conditional_branches_pass import (
     AArch64RelaxConditionalBranchesPass,
+    _Replacement,
 )
 
 
@@ -62,6 +63,23 @@ def build_layout_growth_case():
 
 
 class AArch64RelaxFixedPointTests(unittest.TestCase):
+    def test_auxdata_remapping_does_not_depend_on_insertion_order(self):
+        module, interval, _ = build_layout_growth_case()
+        other = gtirb.ByteInterval(contents=b'1234')
+        original = [(gtirb.Offset(interval, 20), 8), (gtirb.Offset(interval, 0), 4),
+                    (gtirb.Offset(other, 4), 2), (gtirb.Offset(interval, 8), 8),
+                    (gtirb.Offset(interval, 12), 4)]
+        replacements = [_Replacement(0, b'0' * 8), _Replacement(12, b'0' * 12)]
+        visitor = AArch64RelaxConditionalBranchesPass(None)
+        visitor.module = module
+        expected = {gtirb.Offset(interval, 32): 8, gtirb.Offset(interval, 12): 8,
+                    gtirb.Offset(other, 4): 2, gtirb.Offset(interval, 0): 4,
+                    gtirb.Offset(interval, 4): 4, gtirb.Offset(interval, 16): 4}
+        for items in (original, list(reversed(original))):
+            module.aux_data['symbolicExpressionSizes'].data = dict(items)
+            visitor._rewrite_symbolic_expression_sizes(interval, replacements, [0, 4, 16])
+            self.assertEqual(module.aux_data['symbolicExpressionSizes'].data, expected)
+
     def test_layout_growth_is_relaxed_to_fixed_point(self):
         module, interval, blocks = build_layout_growth_case()
         test_margin = 134217728 - 32
