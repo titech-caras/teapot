@@ -250,7 +250,7 @@ class RISCV64ControlFlowPatchesMixin:
 
     def instruction_must_rollback(self, instruction) -> bool:
         return instruction.mnemonic in {
-            "ecall", "ebreak", "fence", "fence.i", "sfence.vma",
+            "ecall", "ebreak", "fence", "fence.i", "fence.tso", "sfence.vma",
             "wfi", "sret", "mret", "uret",
         }
 

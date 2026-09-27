@@ -147,7 +147,11 @@ class AArch64ControlFlowPatchesMixin:
         return last_inst.op_str.strip() or None
 
     def instruction_must_rollback(self, instruction) -> bool:
-        return instruction.mnemonic in {"dmb", "dsb", "isb", "svc", "hvc", "smc", "brk"}
+        return (instruction.mnemonic in {
+            "dmb", "dsb", "isb", "sb", "csdb", "ssbb", "pssbb",
+            "svc", "hvc", "smc", "brk",
+        } or (instruction.mnemonic == "dc" and
+              instruction.op_str.split(",", 1)[0].strip() in {"zva", "gva", "gzva"}))
 
     def is_control_transfer_instruction(self, instruction) -> bool:
         return instruction.mnemonic in {"b", "bl", "blr", "br", "ret"}
