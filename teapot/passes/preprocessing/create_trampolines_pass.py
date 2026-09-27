@@ -110,6 +110,8 @@ class CreateTrampolinesPass(VisitorPassMixin):
                 spare_registers = self.arch.checkpoint_spare_registers(
                     self.reg_manager.abi,
                     self.reg_manager.live_registers(function, block, instruction_idx))
+            # Both checkpoint copies enter the same restoration prefix. Keep
+            # their assignments identical, including in nested speculation.
             self.checkpoint_spare_registers[block.uuid] = spare_registers
             self.checkpoint_spare_registers[
                 self.text_transient_mapping.code_blocks_map[block.uuid].uuid] = spare_registers

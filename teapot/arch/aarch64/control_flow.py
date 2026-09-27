@@ -101,6 +101,7 @@ class AArch64ControlFlowPatchesMixin:
         )
         return self.constraints()(lambda ctx: f"""
         {generate_distinct_label_name(".__trampoline_landing_", block_uuid)}:
+        {generate_distinct_label_name(".__trampoline_landing_", transient_block_uuid)}:
             {self.load_address("x16", "checkpoint_target_metadata")}
             ldr x16, [x16, #{self.CHECKPOINT_TARGET_SCRATCH_REG_ADDR}]
             {checkpoint_restore}

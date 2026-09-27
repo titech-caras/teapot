@@ -147,6 +147,7 @@ class RISCV64ControlFlowPatchesMixin:
             )
             return f"""
         {generate_distinct_label_name(".__trampoline_landing_", block_uuid)}:
+        {generate_distinct_label_name(".__trampoline_landing_", transient_block_uuid)}:
             {self.load_address("t0", "checkpoint_target_metadata")}
             ld t0, {self.CHECKPOINT_TARGET_SCRATCH_REG_ADDR}(t0)
             {checkpoint_restore}
