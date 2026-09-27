@@ -5,10 +5,13 @@ import gtirb
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.slots import AARCH64_SHADOW_STACK_INDIRECT_TARGET_OFFSET
+from teapot.arch.aarch64.operands import aarch64_register_number
 from teapot.utils.misc import generate_distinct_label_name
 
 
 AARCH64_CALL_MNEMONICS = frozenset(("bl", "blr", "blraa", "blrab", "blraaz", "blrabz"))
+AARCH64_PAC_BRANCHES = frozenset(("braa", "brab", "braaz", "brabz", "blraa", "blrab",
+                                "blraaz", "blrabz", "retaa", "retab"))
 
 
 class AArch64ControlFlowPatchesMixin:
@@ -144,7 +147,11 @@ class AArch64ControlFlowPatchesMixin:
     def indirect_branch_operand(self, edge_type, last_inst, block: gtirb.CodeBlock = None) -> Optional[str]:
         if edge_type == gtirb.cfg.Edge.Type.Return:
             return last_inst.op_str.strip() or "x30"
-        return last_inst.op_str.strip() or None
+        # PAC modifiers are not part of the target address operand.
+        return last_inst.op_str.split(",", 1)[0].strip() or None
+
+    def indirect_branch_check_options(self, instruction):
+        return {"strip_pac": True} if instruction.mnemonic in AARCH64_PAC_BRANCHES else {}
 
     def instruction_must_rollback(self, instruction) -> bool:
         return (instruction.mnemonic in {
@@ -154,18 +161,26 @@ class AArch64ControlFlowPatchesMixin:
               instruction.op_str.split(",", 1)[0].strip() in {"zva", "gva", "gzva"}))
 
     def is_control_transfer_instruction(self, instruction) -> bool:
-        return instruction.mnemonic in {"b", "bl", "blr", "br", "ret"}
+        return instruction.mnemonic in {"b", "bl", "blr", "br", "ret"} | AARCH64_PAC_BRANCHES
 
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
-                                    text_end_symbol: gtirb.Symbol, reads_registers=None):
+                                    text_end_symbol: gtirb.Symbol, reads_registers=None, *, strip_pac=False):
         @self.constraints(scratch_registers=3,
                           clobbers_flags=True,
                           reads_registers=reads_registers or set())
         def patch(ctx):
             target_reg, temp_reg, magic_reg = ctx.scratch_registers[:3]
+            # Strip only the scratch copy used for address/marker checks. The
+            # original BRA*/BLRA*/RETAA/B still authenticates its untouched
+            # source and modifier, so this does not bypass authentication.
+            # Emit XPACI by encoding: the patch assembler need not enable PAC
+            # globally for ordinary AArch64 input that contains no PAC forms.
+            normalize = (f".inst {0xdac143e0 | aarch64_register_number(getattr(target_reg, 'name', target_reg)):#x}"
+                         if strip_pac else "")
             return f"""
                 mov {target_reg}, {operand_str}
+                {normalize}
                 {self.load_address(temp_reg, transient_start_symbol.name)}
                 cmp {target_reg}, {temp_reg}
                 b.lo 4f

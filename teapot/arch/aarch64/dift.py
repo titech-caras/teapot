@@ -17,7 +17,7 @@ class AArch64DiftPatchesMixin:
 
     def dift_should_skip_instruction(self, inst) -> bool:
         mnemonic = inst.mnemonic.lower()
-        if mnemonic in ("nop", "ret", "bl", "blr"):
+        if mnemonic == "nop" or self.is_control_transfer_instruction(inst):
             return True
         if self.is_stack_pointer_update(inst):
             return True

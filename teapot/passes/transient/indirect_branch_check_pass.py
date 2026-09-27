@@ -64,7 +64,8 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
         patch = checker(
             operand_str, self.transient_section_start_symbol, self.transient_section_end_symbol,
             self.text_section_start_symbol, self.text_section_end_symbol,
-            reads_registers={reg.name for reg in operand_registers})
+            reads_registers={reg.name for reg in operand_registers},
+            **self.arch.indirect_branch_check_options(last_inst))
         if self.reg_manager is not None:
             patch = self.allocate_registers(
                 function, block, len(instructions) - 1)(patch)

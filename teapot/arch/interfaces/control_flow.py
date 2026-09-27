@@ -45,6 +45,9 @@ class ArchitectureControlFlowMixin(ABC):
     def indirect_branch_operand(self, edge_type, last_inst, block: Optional[gtirb.CodeBlock] = None) -> Optional[str]:
         return None
 
+    def indirect_branch_check_options(self, instruction):
+        return {}
+
     @abstractmethod
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,

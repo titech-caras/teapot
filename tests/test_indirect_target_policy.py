@@ -14,17 +14,19 @@ import unittest
 import gtirb
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
+from teapot.arch.decoders import aarch64_decoder
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.passes.transient.indirect_branch_check_pass import TransientIndirectBranchCheckDestPass
 
 
 class IndirectTargetPolicyTests(unittest.TestCase):
-    def _execute(self, arch, compiler, launcher, operand, scratch, result):
+    def _execute(self, arch, compiler, launcher, operand, scratch, result, *, signed=False):
         if not shutil.which(compiler) or launcher and not shutil.which(launcher[0]):
             self.skipTest("requires target compiler and emulator")
         symbols = [gtirb.Symbol(name=name) for name in (
             "transient_start", "transient_end", "text_start", "text_end")]
-        check = arch.indirect_branch_check_patch(operand, *symbols)(
+        check = arch.indirect_branch_check_patch(operand, *symbols,
+            **({'strip_pac': True} if signed else {}))(
             SimpleNamespace(scratch_registers=scratch))
         bouncer = arch.indirect_branch_target_patch(
             gtirb.Symbol(name="transient_bounced"), use_scratch_registers=arch.name != "x64")(
@@ -35,10 +37,13 @@ class IndirectTargetPolicyTests(unittest.TestCase):
         assembly = f"""
 {'.intel_syntax noprefix' if arch.name == 'x64' else ''}
 {'.option norelax' if arch.name == 'riscv64' else ''}
+{'.arch armv8.3-a' if signed else ''}
 .text
 .global check_target
 check_target:
+{'mov x3, x0; pacia x0, x1' if signed else ''}
 {check}
+{'autia x0, x1; cmp x0, x3; b.ne restore_checkpoint_MALFORMED_INDIRECT_BR' if signed else ''}
 {result} 1
 ret
 restore_checkpoint_MALFORMED_INDIRECT_BR:
@@ -176,6 +181,21 @@ int main(void) {
         self._execute(arch, "aarch64-linux-gnu-gcc",
                       ["qemu-aarch64", "-L", "/usr/aarch64-linux-gnu"],
                       "x0", scratch, "mov w0,")
+
+    def test_aarch64_signed_targets_keep_the_exact_policy_and_original_pointer(self):
+        arch = AArch64Architecture()
+        for encoded, operand in (('22081fd7', 'x1'), ('43083fd7', 'x2'),
+                                 ('3f081fd6', 'x1'), ('ff0b5fd6', 'x30')):
+            inst, = aarch64_decoder().disasm(bytes.fromhex(encoded), 0)
+            edge = gtirb.Edge.Type.Return if inst.mnemonic.startswith('ret') else gtirb.Edge.Type.Branch
+            with self.subTest(instruction=str(inst)):
+                self.assertEqual(arch.indirect_branch_operand(edge, inst), operand)
+                self.assertEqual(arch.indirect_branch_check_options(inst), {'strip_pac': True})
+                self.assertTrue(arch.dift_should_skip_instruction(inst))
+        scratch = tuple(arch.abi.get_register(name) for name in ('x8', 'x9', 'x10'))
+        self._execute(arch, 'aarch64-linux-gnu-gcc',
+                      ['qemu-aarch64', '-cpu', 'max', '-L', '/usr/aarch64-linux-gnu'],
+                      'x0', scratch, 'mov w0,', signed=True)
 
     def test_riscv64_exact_target_policy(self):
         # The rewriter hands the patch Register objects, and Capstone 6 prints `jr a0` as
