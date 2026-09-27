@@ -9,7 +9,8 @@ from teapot.arch.aarch64.operands import (
     aarch64_data_memory_operands,
     aarch64_register_number,
 )
-from teapot.passes.preprocessing.split_lo12 import symbolize_split_lo12
+from teapot.passes.preprocessing.split_lo12 import (
+    AArch64PageState, page_offset, reaching_adrp_definitions, symbolize_split_lo12)
 from teapot.utils.misc import symbol_address
 
 
@@ -39,8 +40,7 @@ class NormalizeAArch64RelocationsPass(Pass):
             return
 
         self._restore_relaxed_adrp(module)
-        # DDisasm can leave page-offset users of a hoisted ADRP raw (split_lo12.py).
-        self.symbolized_split_lo12 = symbolize_split_lo12(module, self.decoder)
+        self._paired_offsets = self._recover_page_addends(module)
         self._instructions = {
             inst.address: inst
             for block in module.code_blocks
@@ -84,6 +84,67 @@ class NormalizeAArch64RelocationsPass(Pass):
                         symbol=symexpr.symbol,
                         attributes=attributes,
                     )
+        # Use the corrected full addends when recovering additional raw users.
+        self.symbolized_split_lo12 = symbolize_split_lo12(module, self.decoder)
+
+    def _recover_page_addends(self, module):
+        """Recover full (including negative/multi-page) addends from proven pairs.
+
+        Follow all reaching definitions over the CFG, not adjacency in the byte
+        stream. A redefinition, unknown entry or caller-saved value across a
+        call stops recovery. Every incoming ADRP must name the same symbol and
+        original page; otherwise the LO12 cannot safely be normalized.
+        """
+        state = AArch64PageState(module, self.decoder)
+        recovered, high_candidates = {}, {}
+        for block in module.code_blocks:
+            if not block.size or block.address is None:
+                continue
+            for index, inst in enumerate(state.insns(block)):
+                expr = state.symexpr(block, inst)
+                if (not isinstance(expr, gtirb.SymAddrConst) or
+                        gtirb.SymbolicExpression.Attribute.LO12 not in expr.attributes):
+                    continue
+                address = symbol_address(expr.symbol)
+                if address is None:
+                    continue
+                ops = inst.operands
+                memory = aarch64_data_memory_operands(inst)
+                if inst.mnemonic == 'add' and len(ops) == 3 and ops[1].type == CS_OP_REG:
+                    reg = aarch64_register_number(inst.reg_name(ops[1].reg))
+                elif len(memory) == 1:
+                    reg = aarch64_register_number(inst.reg_name(memory[0].mem.base))
+                else:
+                    continue
+                if reg is None:
+                    continue
+                low = page_offset(inst, reg)
+                if low is None:
+                    continue
+                origins = reaching_adrp_definitions(state, block, index, reg)
+                if not origins:
+                    continue
+                pages, highs = set(), []
+                for source, position in origins:
+                    high = state.insns(source)[position]
+                    high_expr = state.symexpr(source, high)
+                    if not isinstance(high_expr, gtirb.SymAddrConst) or high_expr.symbol is not expr.symbol:
+                        break
+                    pages.add(high.operands[1].imm)
+                    highs.append((source.byte_interval, high.address - source.byte_interval.address))
+                else:
+                    if len(pages) == 1:
+                        addend = next(iter(pages)) + low - address
+                        recovered[block.byte_interval, inst.address - block.byte_interval.address] = addend
+                        for high in highs:
+                            high_candidates.setdefault(high, set()).add(addend)
+        for location, candidates in high_candidates.items():
+            old = location[0].symbolic_expressions[location[1]].offset
+            # Multiple users may name different bytes of one object/page.
+            # Any candidate denotes the same original page; stay stable when
+            # the existing expression already denotes one of them.
+            recovered[location] = old if old in candidates else min(candidates)
+        return recovered
 
     def _restore_relaxed_adrp(self, module: gtirb.Module) -> None:
         """Undo the linker's ADRP-to-ADR relaxation of page/lo12 pairs.
@@ -194,11 +255,17 @@ class NormalizeAArch64RelocationsPass(Pass):
         return section is not None and section.name in {".got", ".got.plt"}
 
     def _corrected_offset(self, byte_interval, offset: int, inst, symexpr: gtirb.SymAddrConst, symbol_address: int):
+        recovered = self._paired_offsets.get((byte_interval, offset))
+        if recovered is not None:
+            return recovered
         if gtirb.SymbolicExpression.Attribute.LO12 in symexpr.attributes:
             return self._corrected_lo12_offset(inst, symexpr, symbol_address)
 
         if inst.mnemonic == "adrp":
-            return self._paired_lo12_offset(byte_interval, offset, inst, symexpr, symbol_address)
+            # Even an ADRP with no symbolized user must still encode its
+            # original page. Preserve its chosen low bits until a pair proves
+            # a more precise target, rather than reducing the addend mod 4KiB.
+            return inst.operands[1].imm + ((symbol_address + symexpr.offset) & 0xfff) - symbol_address
 
         return None
 
@@ -211,25 +278,8 @@ class NormalizeAArch64RelocationsPass(Pass):
         if current_lo12 == encoded_lo12:
             return None
 
-        return (encoded_lo12 - (symbol_address & 0xfff)) & 0xfff
-
-    def _paired_lo12_offset(self, byte_interval, offset: int, inst, symexpr: gtirb.SymAddrConst, symbol_address: int):
-        next_offset = offset + inst.size
-        next_symexpr = byte_interval.symbolic_expressions.get(next_offset)
-        if not isinstance(next_symexpr, gtirb.SymAddrConst):
-            return None
-        if next_symexpr.symbol is not symexpr.symbol:
-            return None
-        if gtirb.SymbolicExpression.Attribute.LO12 not in next_symexpr.attributes:
-            return None
-
-        next_address = byte_interval.address + next_offset if byte_interval.address is not None else None
-        next_inst = self._instructions.get(next_address)
-        if next_inst is None or not self._uses_adrp_register(inst, next_inst):
-            return None
-
-        corrected_lo12 = self._corrected_lo12_offset(next_inst, next_symexpr, symbol_address)
-        return next_symexpr.offset if corrected_lo12 is None else corrected_lo12
+        raise ValueError(f"cannot normalize LO12 at {inst.address:#x}: encoded offset differs "
+                         "but no unique matching ADRP page reaches the instruction")
 
     @staticmethod
     def _encoded_lo12(inst):
@@ -241,21 +291,3 @@ class NormalizeAArch64RelocationsPass(Pass):
                 return operand.imm & 0xfff
 
         return None
-
-    @staticmethod
-    def _uses_adrp_register(adrp_inst, next_inst):
-        if not adrp_inst.operands or adrp_inst.operands[0].type != CS_OP_REG:
-            return False
-        adrp_reg = adrp_inst.reg_name(adrp_inst.operands[0].reg)
-
-        if next_inst.mnemonic == "add":
-            return (
-                len(next_inst.operands) >= 2 and
-                next_inst.operands[1].type == CS_OP_REG and
-                next_inst.reg_name(next_inst.operands[1].reg) == adrp_reg
-            )
-
-        for operand in next_inst.operands:
-            if operand.type == CS_OP_MEM and next_inst.reg_name(operand.mem.base) == adrp_reg:
-                return True
-        return False

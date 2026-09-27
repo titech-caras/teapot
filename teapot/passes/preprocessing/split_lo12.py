@@ -36,7 +36,7 @@ def _symbol_address(symbol):
     return referent.address + (referent.size if symbol.at_end else 0)
 
 
-class _Module:
+class AArch64PageState:
     def __init__(self, module, decoder):
         self.module = module
         self.decoder = decoder
@@ -61,7 +61,7 @@ class _Module:
                      for kind in (0, 1))
 
 
-def _page_offset(inst, reg):
+def page_offset(inst, reg):
     """Immediate page offset if inst uses reg as an ADRP page base, else None."""
     ops = inst.operands
     if inst.mnemonic == 'add' and len(ops) == 3 and ops[1].type == CS_OP_REG and \
@@ -87,8 +87,8 @@ def _definition_key(state, block, inst):
     return expr.symbol, expr.offset
 
 
-def _reaching_definitions(state, block, index, reg):
-    """Set of definition keys reaching (block, index), or None if any is not an ADRP key."""
+def reaching_adrp_definitions(state, block, index, reg):
+    """ADRP (block, index) definitions, or None if any input is not a proven ADRP."""
     found = set()
     work = [(block, index)]
     visited = set()
@@ -103,10 +103,9 @@ def _reaching_definitions(state, block, index, reg):
             inst = stream[position]
             reads, writes = state.access(inst)
             if reg in writes:
-                key = _definition_key(state, current, inst)
-                if key is None:
+                if inst.mnemonic != 'adrp':
                     return None
-                found.add(key)
+                found.add((current, position))
                 defined = True
                 break
             if inst.mnemonic in AARCH64_CALL_MNEMONICS and reg not in CALLEE_SAVED:
@@ -131,11 +130,20 @@ def _reaching_definitions(state, block, index, reg):
     return found
 
 
+def _reaching_definitions(state, block, index, reg):
+    definitions = reaching_adrp_definitions(state, block, index, reg)
+    if definitions is None:
+        return None
+    keys = {_definition_key(state, source, state.insns(source)[position])
+            for source, position in definitions}
+    return None if None in keys else keys
+
+
 def symbolize_split_lo12(module, decoder):
     """Returns the number of users given a :lo12: expression."""
     if module.isa != gtirb.Module.ISA.ARM64:
         return 0
-    state = _Module(module, decoder)
+    state = AArch64PageState(module, decoder)
     fixed = 0
     for block in list(module.code_blocks):
         if block.address is None or not block.size:
@@ -164,7 +172,7 @@ def symbolize_split_lo12(module, decoder):
                     use = stream[position]
                     reads, writes = state.access(use)
                     if reg in reads and use.mnemonic != 'adrp':
-                        offset = _page_offset(use, reg)
+                        offset = page_offset(use, reg)
                         if (offset is not None and page + offset == target and
                                 state.symexpr(current, use) is None and
                                 _reaching_definitions(state, current, position, reg) == {key}):

@@ -10,6 +10,42 @@ from teapot.passes.preprocessing.normalize_aarch64_relocations_pass import (
 
 
 class NormalizeAArch64RelocationsPassTests(unittest.TestCase):
+    def test_nonadjacent_shared_page_users_keep_full_signed_addends(self):
+        for symbol_value in (0x2108, 0xf108):
+            for split in (False, True):
+                with self.subTest(symbol=hex(symbol_value), split=split):
+                    ir = gtirb.IR()
+                    module = gtirb.Module(name='shared-page', isa=gtirb.Module.ISA.ARM64, ir=ir,
+                        file_format=gtirb.Module.FileFormat.ELF, byte_order=gtirb.Module.ByteOrder.Little)
+                    text = gtirb.Section(name='.text', module=module)
+                    # ADRP x0,0x9000; NOP; LDR x1,[x0,#0x238];
+                    # ADD x2,x0,#0x234; ADD x3,x0,#0x234; RET.
+                    words = (0x90000040, 0xd503201f, 0xf9400001 | (0x238//8 << 10),
+                             0x91000002 | (0x234 << 10), 0x91000003 | (0x234 << 10), 0xd65f03c0)
+                    code = gtirb.ByteInterval(address=0x1000, section=text,
+                        contents=b''.join(w.to_bytes(4, 'little') for w in words))
+                    high = gtirb.CodeBlock(size=8 if split else len(words)*4, byte_interval=code)
+                    if split:
+                        users = gtirb.CodeBlock(size=16, offset=8, byte_interval=code)
+                        ir.cfg.add(gtirb.Edge(high, users, gtirb.Edge.Label(gtirb.Edge.Type.Fallthrough)))
+                    symbol = gtirb.Symbol('large_object', payload=symbol_value, module=module)
+                    lo12 = gtirb.SymbolicExpression.Attribute.LO12
+                    for offset in (0, 8, 12):
+                        code.symbolic_expressions[offset] = gtirb.SymAddrConst(
+                            0x999, symbol, {lo12} if offset else set())
+                    fix = self.normalize(module)
+                    for offset, target in ((0, 0x9234), (8, 0x9238), (12, 0x9234), (16, 0x9234)):
+                        self.assertEqual(code.symbolic_expressions[offset].offset, target-symbol_value)
+                    self.assertEqual(fix.symbolized_split_lo12, 1)
+
+    def test_redefined_base_does_not_supply_a_page_for_a_mismatched_lo12(self):
+        module, code, symbol, _ = self.relaxed_adrp_fixture(
+            (0xd0000002, 0xd2800002, 0x91002040))  # ADRP x2; MOV x2,0; ADD x0,x2,8
+        code.symbolic_expressions[0] = gtirb.SymAddrConst(99, symbol, set())
+        code.symbolic_expressions[8] = gtirb.SymAddrConst(99, symbol, {gtirb.SymbolicExpression.Attribute.LO12})
+        with self.assertRaisesRegex(ValueError, 'no unique matching ADRP'):
+            self.normalize(module)
+
     def test_block_end_symbols_keep_their_addends(self):
         for addend in (0, 16, -8):
             with self.subTest(addend=addend):
