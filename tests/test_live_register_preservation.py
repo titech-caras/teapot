@@ -128,6 +128,9 @@ class LiveRegisterPreservationTests(unittest.TestCase):
                             values.append(set(manager.live_registers(function, block, index)))
                     actual[blocks[0].section.name] = values
                 all_live = set(abi.all_registers())
+                # Missing producer masks keep every non-flag register live;
+                # the independent flag pass proves these NOP/RET flags dead.
+                all_live.discard(abi.flag_register())
                 self.assertEqual(actual[".text"], [all_live, {rax}, set(), {rbx}])
                 self.assertEqual(actual[copied_section.name], [{rax}, all_live, set(), {rbx}])
 

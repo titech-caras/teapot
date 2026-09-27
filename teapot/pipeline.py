@@ -112,6 +112,7 @@ class InstrumentationOptions:
     aarch64_tag_storage: str = ASAN_TAG_STORAGE_SHADOW
     target_identification: str = "software"
     debug_source: Optional[str] = None
+    conservative_flags: bool = False
 
 
 class TeapotPipeline:
@@ -156,7 +157,8 @@ class TeapotPipeline:
         self.decoder = CachedGtirbInstructionDecoder(self.module.isa)
         self.abi = self.arch.register_abi(_ABIS)
         self.reg_manager = LiveRegisterManager(
-            self.module, self.abi, self.decoder, analysis_scope="block")
+            self.module, self.abi, self.decoder, analysis_scope="block",
+            conservative_flags=self.options.conservative_flags)
         print(f"[teapot] live-register analysis: {self.reg_manager.analysis_source}", flush=True)
         if self.reg_manager.analysis_source == "python":
             # Invalid tables must not enter the rewriter's offset hooks.

@@ -13,6 +13,8 @@ from teapot.utils.serialization import compact_for_pprinter
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--conservative-flags", action="store_true",
+                        help="Keep the producer's conservative flag masks instead of Python ABI flag liveness.")
     parser.add_argument("--target-identification", choices=("software", "aarch64-bti"),
                         default="software", help="Experimental BTI requires its matching runtime and linker script.")
     parser.add_argument("input", nargs="?")
@@ -150,6 +152,7 @@ def main():
         aarch64_tag_storage=args.aarch64_tag_storage,
         target_identification=args.target_identification,
         debug_source=args.debug_source,
+        conservative_flags=args.conservative_flags,
     )
     pipeline = TeapotPipeline(ir, args.dift_layout, options)
     pipeline.run()

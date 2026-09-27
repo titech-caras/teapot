@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Optional, Set
 
 import gtirb
-from capstone import CsInsn
+from capstone import CsInsn, CS_GRP_JUMP
 from gtirb_rewriting import InsertionContext, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax
 
@@ -68,6 +68,15 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftPropagationPass):
             mem_write=effects.mem_write_operand_str,
             mem_write_size=effects.mem_write_size,
             conditional=effects.conditional)
+
+    def _block_flush_index(self, instructions):
+        # CMP/TEST only produce flags, which have no DIFT tags. Flush before
+        # their definition rather than spilling live flags between CMP and Jcc.
+        if (len(instructions) >= 2 and instructions[-1].group(CS_GRP_JUMP)
+                and instructions[-1].mnemonic not in ("jmp", "ljmp")
+                and instructions[-2].mnemonic in ("cmp", "test")):
+            return len(instructions) - 2
+        return super()._block_flush_index(instructions)
 
     @staticmethod
     def _should_skip_effects(effects: TextDiftInstructionEffects) -> bool:

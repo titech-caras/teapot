@@ -239,8 +239,11 @@ attributes #0 = {{ "no-builtins" }}
         super().visit_code_block(block, function)
 
         instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
-        last_inst_offset = sum(i.size for i in instructions[:-1])
-        self._flush_dift(block, function, len(instructions) - 1, last_inst_offset)
+        index = self._block_flush_index(instructions)
+        self._flush_dift(block, function, index, sum(i.size for i in instructions[:index]))
+
+    def _block_flush_index(self, instructions):
+        return len(instructions) - 1
 
     def _flush_dift(self, block, function, inst_idx, inst_offset):
         """Commit a batch before an instruction that observes or changes tags."""
