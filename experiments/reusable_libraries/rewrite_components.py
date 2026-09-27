@@ -21,6 +21,9 @@ import time
 from uuid import UUID
 
 import gtirb
+import gtirb_rewriting
+import gtirb_live_register_analysis
+import teapot
 from elftools.dwarf.callframe import FDE
 from elftools.elf.elffile import ELFFile
 
@@ -49,6 +52,22 @@ def tree_hash(root):
     root = Path(root)
     return {str(path.relative_to(root)): sha(path)
             for path in sorted(root.rglob("*.py")) if path.is_file()}
+
+
+def imported_package_hash(package, declared_root):
+    """Hash the code actually imported, and reject a contradictory CLI pin.
+
+    Both a checkout root and a site-packages/package directory are accepted.
+    Paths are provenance checks, not key material: equal code remains portable.
+    """
+    origin = Path(package.__file__).resolve()
+    root = Path(declared_root).resolve()
+    try:
+        origin.relative_to(root)
+    except ValueError:
+        raise RuntimeError(f'{package.__name__} imported from {origin}, '
+                           f'outside declared source {root}; correct PYTHONPATH or the source option')
+    return tree_hash(origin.parent)
 
 
 def run(root, name, command):
@@ -295,6 +314,11 @@ def main():
     parser.add_argument("--preserve-weak-imports", action="store_true")
     args = parser.parse_args()
     assert 1 <= args.jobs <= 8
+    source_hashes = {
+        'teapot': imported_package_hash(teapot, args.teapot / 'teapot'),
+        'rewriting': imported_package_hash(gtirb_rewriting, args.rewriting),
+        'lra': imported_package_hash(gtirb_live_register_analysis, args.lra),
+    }
     args.out.mkdir(parents=True, exist_ok=False)
     args.cache.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("selected_converter", args.converter)
@@ -319,8 +343,7 @@ def main():
         raise RuntimeError("selected exports include an uninstrumented/trusted startup entry")
     context = {"converter_sha256": sha(args.converter), "driver_sha256": sha(__file__),
                "assembly_fix_sha256": sha(args.teapot / "scripts/fix_asm.sed"),
-               "teapot": tree_hash(args.teapot / "teapot"), "rewriting": tree_hash(args.rewriting),
-               "lra": tree_hash(args.lra), "bindings": sorted(bindings),
+               **source_hashes, "bindings": sorted(bindings),
                "selected_libraries": sorted((item["soname"], item["sha256"]) for item in selected),
                "external_libraries": sorted((item["soname"], item["sha256"]) for item in external),
                "frontend": {"ddisasm": sha(args.ddisasm), "pprinter": sha(args.pprinter)},

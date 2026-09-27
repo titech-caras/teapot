@@ -37,7 +37,10 @@ python3 experiments/reusable_libraries/rewrite_components.py \
     [--preserve-weak-imports]
 ```
 
-`--teapot`, `--rewriting` and `--lra` name the source trees whose Python files enter the cache key. The runtime
+`--teapot`, `--rewriting` and `--lra` name the source trees whose Python files enter the cache key. The driver checks
+that the imported packages really come from those paths and hashes the imported package directories. The dependency
+paths may be checkout roots or their installed `site-packages` package directories; set `PYTHONPATH` consistently.
+The runtime
 contract is a JSON description of the runtime the objects will be linked with, for example the hashes of its
 archives; it is stored in the key as given. The four opt-in flags are the converter's.
 
