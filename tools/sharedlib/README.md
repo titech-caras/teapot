@@ -7,6 +7,13 @@ deliberately narrow converter, not a general-purpose ELF static linker: it works
 from workload sources, original objects or archives, and refuses what its contract below does not cover. Supported
 targets are x86-64, AArch64 and RV64.
 
+Link input executables with `-no-pie -Wl,--emit-relocs`, and retain their symbol
+and relocation sections. Building PIC code (`-fPIC`) is compatible with this
+non-PIE final link. Relocations let the frontend distinguish real data pointers
+from integer constants that happen to equal an address. The converter does not
+enable the frontend's unsafe ambiguity override. Its ordinary output also
+retains relocations, since that executable is lifted again before instrumentation.
+
 The library-rewriting pipeline, `experiments/reusable_libraries/rewrite_components.py`, builds on this converter: it
 instruments each selected library once and reuses the instrumented archive across executables.
 
@@ -24,7 +31,7 @@ The steps are:
    are kept as sized local `OBJECT` symbols, so a fresh lift after relinking does not reinterpret those bytes as code.
    Print assembly and assemble real target-architecture `ET_REL` objects.
 4. Put only the reconstructed selected objects into a deterministic archive and link the executable object and the
-   whole archive into one non-PIE `ET_EXEC`. Check that selected SONAMEs are gone from `DT_NEEDED` and that every
+   whole archive into one non-PIE `ET_EXEC`, retaining static relocations with `--emit-relocs`. Check that selected SONAMEs are gone from `DT_NEEDED` and that every
    selected exported code and data symbol is defined in the output.
 5. Check ordinary behavior before instrumenting, then lift the linked executable afresh, so calls between the selected
    libraries are visible to interprocedural liveness and control-flow instrumentation.

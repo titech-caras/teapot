@@ -1,16 +1,72 @@
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 import gtirb
 from elftools.elf.elffile import ELFFile
+from elftools.elf.relocation import RelocationSection
 
 from tools.sharedlib import convert as converter
 
 
 class ExecutableDataMetadataTests(unittest.TestCase):
+    @unittest.skipUnless(all(shutil.which(x) for x in ('gcc', 'ld', 'ar', 'ddisasm', 'gtirb-pprinter')),
+                         'native compiler, linker, frontend and printer required')
+    def test_converter_preserves_relocations_for_a_fresh_lift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'library.c'
+            source.write_text('int value = 42; int *pointer = &value;\n'
+                              'int api(void) { return *pointer; }\n')
+            library = root / 'libprobe.so'
+            subprocess.run(['gcc', '-shared', '-fPIC', '-O1', '-nostdlib',
+                            str(source), '-Wl,-soname,libprobe.so', '-o', str(library)],
+                           check=True, capture_output=True)
+            source = root / 'main.c'
+            source.write_text('extern int api(void); int main(void) { return api() != 42; }\n'
+                              '__asm__(".text\\n.globl _start\\n_start: call main\\n'
+                              'mov %eax,%edi\\ncall exit@PLT\\n");\n')
+            original = root / 'original'
+            subprocess.run(['gcc', '-O1', '-fPIC', '-no-pie', '-nostartfiles',
+                            '-Wl,--emit-relocs', str(source), '-L' + str(root), '-lprobe',
+                            '-Wl,-rpath,' + str(root), '-o', str(original)],
+                           check=True, capture_output=True)
+            external = []
+            for name in ('libc.so.6', 'ld-linux-x86-64.so.2'):
+                path = subprocess.check_output(['gcc', '-print-file-name=' + name], text=True).strip()
+                external += ['--external', path]
+            output = root / 'converted'
+            converted = subprocess.run([sys.executable, converter.__file__, '--executable', str(original),
+                            '--select', str(library), *external, '--out', str(output),
+                            '--ddisasm', shutil.which('ddisasm'),
+                            '--pprinter', shutil.which('gtirb-pprinter'), '--jobs', '1',
+                            '--preserve-weak-imports'], capture_output=True, text=True)
+            self.assertEqual(converted.returncode, 0, converted.stderr)
+            linked = output / 'monolith'
+            subprocess.run([str(original)], check=True, capture_output=True)
+            subprocess.run([str(linked)], check=True, capture_output=True)
+            with linked.open('rb') as stream:
+                elf = ELFFile(stream)
+                table = elf.get_section_by_name('.symtab')
+                pointer = table.get_symbol_by_name('pointer')[0]['st_value']
+                # The ordinary converter's output is lifted again. Its data
+                # pointers must remain provable without guessing from integers.
+                self.assertTrue(any(
+                    rel['r_offset'] == pointer
+                    for section in elf.iter_sections()
+                    if isinstance(section, RelocationSection)
+                    and elf.get_section(section['sh_link']).name == '.symtab'
+                    for rel in section.iter_relocations()))
+            lifted = root / 'second.gtirb'
+            subprocess.run(['ddisasm', str(linked), '--ir', str(lifted), '-j', '1'],
+                           check=True, capture_output=True)
+            module = gtirb.IR.load_protobuf(lifted).modules[0]
+            block = next(module.symbols_named('pointer')).referent
+            self.assertIn(block.offset, block.byte_interval.symbolic_expressions)
+
     def fixture(self):
         module = gtirb.Module(name='fixture', isa=gtirb.Module.ISA.X64,
                               file_format=gtirb.Module.FileFormat.ELF)

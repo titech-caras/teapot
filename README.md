@@ -128,6 +128,16 @@ sysroot is left unchanged.
 
 ## Usage
 
+Keep relocation evidence when building the input. For whole-program rewriting,
+build PIE, or link a fixed-address executable with `-Wl,--emit-relocs` (for
+example, `cc -fPIC -no-pie -Wl,--emit-relocs ...`). Keep its symbol and relocation
+sections. The selected-library converter requires the latter, non-PIE form.
+The frontend rejects ambiguous absolute data words instead of guessing whether
+an integer is a pointer. Its explicit `--allow-ambiguous-data-pointers` option
+restores the old heuristic, with a warning; it is not a safe default for
+rewriting. Rebuild affected inputs with relocations rather than adding that
+override to a batch.
+
 1. Create a disassembly of the program of interest using Datalog Disassembly, generating the disassembled GTIRB file.
 ```shell
 ddisasm --ir a.out.gtirb a.out

@@ -917,8 +917,16 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                 reject('UNSUPPORTED_DYNAMIC_FLAGS_1', path, hex(tag.entry.d_val))
         relocations = {}
         counts = Counter()
+        static_counts = Counter()
         for sec in elf.iter_sections():
             if not isinstance(sec, RelocationSection):
+                continue
+            # --emit-relocs retains link-time metadata for a later lift. Those
+            # entries refer to .symtab, not the loader's .dynsym, and do not
+            # describe runtime relocations (including CRT/preinit fixups).
+            if (not (sec['sh_flags'] & 2)
+                    and elf.get_section(sec['sh_link'])['sh_type'] == 'SHT_SYMTAB'):
+                static_counts.update(rel['r_info_type'] for rel in sec.iter_relocations())
                 continue
             for relocation in sec.iter_relocations():
                 rtype = relocation['r_info_type']
@@ -929,6 +937,7 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                     reject('UNSUPPORTED_RELOCATION', path, str(rtype))
                 relocations[relocation['r_offset']] = dict(relocation.entry)
         result['relocation_types'] = dict(counts)
+        result['static_relocation_types'] = dict(static_counts)
         address_names = {}
         for symbol in static:
             if isinstance(symbol['section'], int):
@@ -1035,7 +1044,10 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
         eh = elf.get_section_by_name('.eh_frame')
         if eh and eh['sh_size']:
             try:
-                for entry in elf.get_dwarf_info().EH_CFI_entries():
+                # Inputs are linked ET_EXEC/ET_DYN images. Retained static
+                # relocations have already been applied; applying them again
+                # (using absolute ELF offsets as section offsets) corrupts CFI.
+                for entry in elf.get_dwarf_info(relocate_dwarf_sections=False).EH_CFI_entries():
                     if not isinstance(entry, FDE):
                         continue
                     result['fde_count'] += 1
@@ -1566,7 +1578,7 @@ def main():
         link_policy = ['--no-relax'] if executable['machine'] == 'EM_RISCV' else []
         run(args.out, 'link', shlex.split(args.linker) + link_policy + [
             '-m', architecture['emulation'], '--dynamic-linker', architecture['interpreter'],
-            '--eh-frame-hdr', '--build-id=sha1', '-z', 'noexecstack',
+            '--eh-frame-hdr', '--build-id=sha1', '--emit-relocs', '-z', 'noexecstack',
             '-Map=' + str(args.out / 'link.map'), '-o', output, main_object, *lifecycle_objects,
             '--whole-archive', archive, '--no-whole-archive',
             '--no-as-needed' if args.preserve_weak_imports else '--as-needed']

@@ -9,6 +9,10 @@ This is a final-link pipeline. Its output is one non-PIE executable, never an in
 on its own. The input contract is the selected-library converter's (`tools/sharedlib/README.md`): a non-PIE
 executable, the selected compiled shared libraries and explicitly supplied external ELFs, all x86-64, AArch64 or
 RV64. Whatever that contract does not cover is refused before anything is lifted.
+Build the ordinary executable input with `-no-pie -Wl,--emit-relocs` and keep its
+relocation and symbol tables; see the converter's input-build guidance. A
+non-PIE link without this evidence can leave integer constants indistinguishable
+from absolute data pointers, which the frontend now rejects rather than guessing.
 
 ## Modes
 
