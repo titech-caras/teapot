@@ -11,7 +11,10 @@ The submodule `libcheckpoint` contains the runtime library.
 ### Checkpoint efficiency options
 
 Python LRA supplies x64 arithmetic-flag and AArch64 NZCV liveness within each
-function; DDisasm still supplies GPR masks. `--conservative-flags`
+function, using may-preserve/read-before-write summaries for known callees.
+Local calls may preserve flags under IPA register allocation; returns and tail
+exits retain flags left unwritten from entry. External/PLT and indirect calls
+use the ABI boundary. DDisasm still supplies GPR masks. `--conservative-flags`
 restores the older flag policy. `--force-checkpoint-df` uses the DF-saving x64
 entry everywhere; normally a CFG scan selects it only where DF may be set.
 
@@ -24,8 +27,11 @@ MXCSR is preserved independently, even when all vector registers are dead.
 Checkpoint choices use DDisasm's per-instruction vector-piece masks (including
 the `liveRegisterSetsHigh` word). Missing masks require full saves. Python
 vector analysis is only a diagnostic `--debug-vector-liveness` cross-check;
-the Python flag analysis remains authoritative for flags. Calls kill caller-saved vectors except ABI
-arguments, returns use XMM0–1, and missing masks, opaque state or unresolved
+the Python flag analysis remains authoritative for flags. Known local calls,
+tails and returns carry vector dependencies interprocedurally: even ABI-volatile
+vectors may survive a local call under IPA register allocation. Only external
+and unknown calls use the vector ABI kill/argument summary. Returns also retain
+XMM0–1, and missing masks, opaque state or unresolved
 jumps force full. Explicit `xmm0-7`, `sse` and `avx` are **unsafe overrides**:
 they bypass the liveness and extended-state safety checks and can silently
 corrupt program results. In particular, forcing `xmm0-7` loses live higher
@@ -82,8 +88,7 @@ Teapot prefers ddisasm's interprocedural `liveRegisterNames` and
 including conditional tail calls and returns across recovered function boundaries;
 external calls use the target ABI, and unresolved indirect transfers remain
 conservative. Direct transfers to weak definitions retain the conservative
-GPR policy, since relinking can replace their bodies; vector masks instead
-use the ABI summaries described above. Rewriting migrates
+register policy, since relinking can replace their bodies. Rewriting migrates
 masks for surviving instructions; normal and
 transient copies retain independent entries. Each rewrite round refreshes the
 analysis cache and explicitly retains masks for its state-preserving edits.

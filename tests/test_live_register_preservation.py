@@ -143,20 +143,20 @@ class LiveRegisterPreservationTests(unittest.TestCase):
                     actual[blocks[0].section.name] = values
                 all_live = set(abi.all_registers())
                 # Missing producer masks keep every non-flag register live;
-                # the independent flag pass proves these NOP/RET flags dead.
-                all_live.discard(abi.flag_register())
-                self.assertEqual(actual[".text"], [all_live, {rax}, set(), {rbx}])
-                self.assertEqual(actual[copied_section.name], [{rax}, all_live, set(), {rbx}])
+                # NOP/RET can return incoming flags to a known local caller.
+                flags = {abi.flag_register()}
+                self.assertEqual(actual[".text"], [all_live, {rax} | flags, flags, {rbx} | flags])
+                self.assertEqual(actual[copied_section.name], [{rax} | flags, all_live, flags, {rbx} | flags])
 
                 source_function = next(fn for fn in functions if fn.get_name() == "test_function")
                 copy_function = next(fn for fn in functions if fn is not source_function)
                 source_block = next(iter(source_function.get_entry_blocks()))
                 copy_block = next(iter(copy_function.get_entry_blocks()))
                 manager.add_live_registers(source_function, source_block, 1, {rbx})
-                self.assertEqual(manager.live_registers(copy_function, copy_block, 0), {rax})
+                self.assertEqual(manager.live_registers(copy_function, copy_block, 0), {rax} | flags)
                 manager.refresh(preserve_liveness=True)
                 manager.analyze(source_function)
-                self.assertEqual(manager.live_registers(source_function, source_block, 1), {rax})
+                self.assertEqual(manager.live_registers(source_function, source_block, 1), {rax} | flags)
 
     def test_riscv_coverage_allocates_after_auipc(self):
         arch = RISCV64Architecture()
