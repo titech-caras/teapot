@@ -133,7 +133,8 @@ def copy_section(section: gtirb.Section, name: str,
     )
 
     code_block_copy_mapping = {}
-    live_register_sets = _auxdata_offsetmap.live_register_sets.get(section.module)
+    live_register_tables = [table.get(section.module) for table in (
+        _auxdata_offsetmap.live_register_sets, _auxdata_offsetmap.live_register_sets_high)]
     for block in section.code_blocks:
         code_block_copy = gtirb.CodeBlock(
             size=block.size,
@@ -142,9 +143,10 @@ def copy_section(section: gtirb.Section, name: str,
             byte_interval=byte_interval_copy
         )
         code_block_copy_mapping[block.uuid] = code_block_copy
-        if live_register_sets is not None and block in live_register_sets:
-            # Copies start equivalent, but their subsequent edits are independent.
-            live_register_sets[code_block_copy] = dict(live_register_sets[block])
+        for live_register_sets in live_register_tables:
+            if live_register_sets is not None and block in live_register_sets:
+                # Copies start equivalent, but their subsequent edits are independent.
+                live_register_sets[code_block_copy] = dict(live_register_sets[block])
 
     symbol_list = [s for s in section.module.symbols
                    if isinstance(s.referent, gtirb.CodeBlock) and s.referent.section.name == section.name]

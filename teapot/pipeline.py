@@ -115,6 +115,7 @@ class InstrumentationOptions:
     conservative_flags: bool = False
     force_checkpoint_df: bool = False
     x64_vector_state: str = 'auto'
+    debug_vector_liveness: bool = False
 
 
 class TeapotPipeline:
@@ -174,12 +175,14 @@ class TeapotPipeline:
         if self.arch.name == 'x64':
             from teapot.arch.x64.checkpoint_state import vector_checkpoint_cases
             self.checkpoint_vector_cases = vector_checkpoint_cases(
-                self.module, self.reg_manager, self.options.x64_vector_state)
+                self.module, self.reg_manager, self.options.x64_vector_state,
+                debug_cross_check=self.options.debug_vector_liveness)
         print(f"[teapot] live-register analysis: {self.reg_manager.analysis_source}", flush=True)
         if self.reg_manager.analysis_source == "python":
             # Invalid tables must not enter the rewriter's offset hooks.
             self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
             self.module.aux_data.pop(LIVE_REGISTER_SETS_AUXDATA, None)
+            self.module.aux_data.pop('liveRegisterSetsHigh', None)
         if self.linked_component is not None:
             if self.reg_manager.analysis_source != "ddisasm":
                 raise ValueError("component prototype requires validated DDisasm liveness metadata")
@@ -261,6 +264,7 @@ class TeapotPipeline:
         if source == "python":
             self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
             self.module.aux_data.pop(LIVE_REGISTER_SETS_AUXDATA, None)
+            self.module.aux_data.pop('liveRegisterSetsHigh', None)
 
     def _run_normalize_passes(self):
         pass_manager = PassManager()
@@ -339,6 +343,12 @@ class TeapotPipeline:
                              for u in self.checkpoint_block_uuids)
             print(f'[teapot] x64 checkpoint sites: integer={counts[0]} '
                   f'xmm0-7={counts[1]} full={counts[2]}', flush=True)
+            if self.options.x64_vector_state == 'auto':
+                reasons = getattr(self.reg_manager, 'checkpoint_vector_reasons', {})
+                full_reasons = Counter(reasons.get(u, 'new-or-missing-mask')
+                                       for u in self.checkpoint_block_uuids
+                                       if self.checkpoint_vector_cases.get(u, 2) == 2)
+                print(f'[teapot] full vector-save reasons: {dict(full_reasons)}', flush=True)
 
     def _run_dift_ext_call_passes(self):
         pass_manager = PassManager()

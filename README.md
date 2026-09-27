@@ -21,8 +21,10 @@ and full saves supported extended state with XSAVEOPT (XSAVE/FXSAVE on older
 hosts). Separate fixed entries record their restore stub in each checkpoint;
 rollback jumps through that pointer, including for mixed-profile nesting.
 MXCSR is preserved independently, even when all vector registers are dead.
-Python derives vector liveness within functions because current DDisasm x64
-masks omit vector registers. Calls kill caller-saved vectors except ABI
+Checkpoint choices use DDisasm's per-instruction vector-piece masks (including
+the `liveRegisterSetsHigh` word). Missing masks require full saves. Python
+vector analysis is only a diagnostic `--debug-vector-liveness` cross-check;
+the Python flag analysis remains authoritative for flags. Calls kill caller-saved vectors except ABI
 arguments, returns use XMM0–1, and missing masks, opaque state or unresolved
 jumps force full. Explicit `xmm0-7`, `sse`, `avx` and `full` settings remain
 assertions about required checkpoint state, not liveness proofs. Runtime

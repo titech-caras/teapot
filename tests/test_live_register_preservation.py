@@ -101,8 +101,16 @@ class LiveRegisterPreservationTests(unittest.TestCase):
                     gtirb.Offset(source, 2): 1 << registers.index(rbx),
                 }
                 manager = LiveRegisterManager(module, abi)
+                module.aux_data['liveRegisterSetsHigh'] = gtirb.AuxData({
+                    gtirb.Offset(source, 0): 1 << 55,
+                    gtirb.Offset(source, 1): 0,
+                    gtirb.Offset(source, 2): 1 << 54,
+                }, 'mapping<Offset,uint64_t>')
                 copied_section, _, _, mapping = copy_section(source.section, ".teapot_transient")
                 copied = mapping.code_blocks_map[source.uuid]
+                high = module.aux_data['liveRegisterSetsHigh'].data
+                self.assertEqual(high[gtirb.Offset(copied, 0)], 1 << 55)
+                self.assertEqual(high[gtirb.Offset(copied, 1)], 0)
                 manager.refresh(preserve_liveness=True)
                 manager.analyzer.analyze = Mock(side_effect=AssertionError("Python fallback"))
 
@@ -115,6 +123,12 @@ class LiveRegisterPreservationTests(unittest.TestCase):
                     ctx.insert_at(block, offset, Patch.from_function(nop))
                     ctx.apply()
                     manager.refresh(preserve_liveness=True)
+
+                high = module.aux_data['liveRegisterSetsHigh'].data
+                self.assertEqual({off.displacement: value for off, value in high.items()
+                                  if off.element_id == source}, {1: 1 << 55, 2: 0, 3: 1 << 54})
+                self.assertEqual({off.displacement: value for off, value in high.items()
+                                  if off.element_id == copied}, {0: 1 << 55, 2: 0, 3: 1 << 54})
 
                 functions = sorted(Function.build_functions(module), key=lambda fn: fn.get_name(),
                                    reverse=reverse)

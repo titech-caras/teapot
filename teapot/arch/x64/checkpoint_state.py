@@ -2,6 +2,7 @@
 from collections import deque
 
 import gtirb
+from capstone import CsError
 from gtirb_functions import Function
 from gtirb_live_register_analysis.vectors import checkpoint_case, extended_state_clobbers
 
@@ -49,23 +50,45 @@ def df_checkpoint_blocks(module, decoder, abi):
     return result
 
 
-def vector_checkpoint_cases(module, reg_manager, requested='auto'):
+def vector_checkpoint_cases(module, reg_manager, requested='auto', *, debug_cross_check=False):
     """Select at the original branch, before patches change uses or offsets."""
     if requested != 'auto':
         case = 1 if requested == 'xmm0-7' else 2
         return {b.uuid: case for b in module.code_blocks}
-    result = {}
+    result, reasons = {}, {}
     opaque = extended_state_clobbers(module, reg_manager.analyzer.decoder)
-    if all(key in module.aux_data for key in ('functionEntries', 'functionBlocks', 'functionNames')):
+    for block in module.code_blocks:
+        try:
+            instructions = list(reg_manager.analyzer.decoder.get_instructions(block))
+        except (CsError, ValueError):
+            instructions = []
+        mask = None
+        if instructions and block.address is not None and sum(i.size for i in instructions) == block.size:
+            mask = reg_manager.producer_vector_mask(block, instructions[-1].address - block.address)
+        case = checkpoint_case(mask)
+        reason = 'missing-mask' if mask is None else 'wide-or-high-vector' if case == 2 else 'reduced'
+        if block.uuid in opaque:
+            case, reason = 2, 'reachable-extended-state'
+        result[block.uuid], reasons[block.uuid] = case, reason
+    if debug_cross_check and all(key in module.aux_data for key in ('functionEntries', 'functionBlocks', 'functionNames')):
+        python_cases = {}
         for function in Function.build_functions(module):
             masks = reg_manager.analyze_vectors(function)
             for block in function.get_all_blocks():
                 values = masks.get(block.uuid) if masks is not None else None
                 case = checkpoint_case(values[-1] if values else None)
-                # Overlapping function ownership cannot weaken another proof.
-                result[block.uuid] = max(result.get(block.uuid, 0), case)
-    return {b.uuid: 2 if b.uuid in opaque else result.get(b.uuid, 2)
-            for b in module.code_blocks}
+                python_cases[block.uuid] = max(python_cases.get(block.uuid, 0), case)
+        from collections import Counter
+        differences = Counter()
+        for block in sorted(module.code_blocks, key=lambda b: (b.address or 0, b.size)):
+            other = 2 if block.uuid in opaque else python_cases.get(block.uuid, 2)
+            if other != result[block.uuid]:
+                differences[(result[block.uuid], other)] += 1
+                print(f'[teapot] vector cross-check {block.address!r}: '
+                      f'ddisasm={result[block.uuid]} python={other} reason={reasons[block.uuid]}')
+        print(f'[teapot] vector cross-check disagreements (ddisasm,python): {dict(differences)}')
+    reg_manager.checkpoint_vector_reasons = reasons
+    return result
 
 
 def vector_state(requested='auto'):

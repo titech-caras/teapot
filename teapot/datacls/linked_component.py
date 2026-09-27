@@ -50,7 +50,11 @@ class LinkedComponent:
         """
         names = module.aux_data["liveRegisterNames"].data
         masks = module.aux_data["liveRegisterSets"].data
-        all_live = (1 << len(names)) - 1
+        all_live = (1 << min(64, len(names))) - 1
         for offset in masks:
             masks[offset] = all_live
+        if len(names) > 64:
+            module.aux_data['liveRegisterSetsHigh'] = gtirb.AuxData(
+                {offset: (1 << (len(names) - 64)) - 1 for offset in masks},
+                'mapping<Offset,uint64_t>')
         return len(masks)
