@@ -10,7 +10,8 @@ import unittest
 import gtirb
 from elftools.elf.elffile import ELFFile
 
-from tools.sharedlib.aarch64_return_abi import (SECTION, annotate_assembly, bind, digest, produce)
+from tools.sharedlib.aarch64_return_abi import (
+    SECTION, annotate_assembly, bind, digest, produce, dwarf_pointer_definitions)
 from teapot.utils.return_abi import POINTER_RETURNS, SCHEMA, has_pointer_return_contract
 
 
@@ -68,6 +69,18 @@ void _start(void) {
 
     def current_ir(self):
         return gtirb.IR.load_protobuf(self.root / 'linked.gtirb')
+
+    def test_linked_emit_relocs_does_not_relocate_dwarf_twice(self):
+        binary = self.root / 'retained-relocations'
+        self.run_command(['aarch64-linux-gnu-gcc', *self.flags, '-O1', '-g', '-fno-inline',
+                          '-fno-ipa-cp', '-fno-ipa-sra', '-Wl,--emit-relocs',
+                          self.root / 'fixture.c', '-o', binary])
+        with binary.open('rb') as stream:
+            elf = ELFFile(stream)
+            self.assertIsNotNone(elf.get_section_by_name('.rela.eh_frame'))
+            rows = dwarf_pointer_definitions(elf)
+        self.assertEqual({r['name'] for r in rows}, {'pointer_result'})
+        self.assertEqual(rows[0]['address'], self.manifest['records'][0]['address'])
 
     def test_native_roundtrip_loaded_bytes_and_execution_unchanged(self):
         def allocated(path):

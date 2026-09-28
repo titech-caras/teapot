@@ -88,7 +88,10 @@ def dwarf_pointer_definitions(elf):
     """Only one contiguous, concrete, normal-convention C/C++ definition."""
     if not elf.has_dwarf_info():
         return []
-    dwarf = elf.get_dwarf_info()
+    # --emit-relocs retains link-time relocation records in an already linked
+    # ELF. Applying them a second time corrupts DWARF/CFI addresses (and its
+    # absolute .rela.eh_frame offsets can exceed the section buffer).
+    dwarf = elf.get_dwarf_info(relocate_dwarf_sections=elf['e_type'] == 'ET_REL')
     result = []
     for cu in dwarf.iter_CUs():
         language = cu.get_top_DIE().attributes.get('DW_AT_language')
