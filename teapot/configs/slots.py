@@ -40,6 +40,9 @@ class ScratchpadSlots:
     RISCV64_ORIGINAL_TP = SCRATCHPAD_SIZE - 32768
     X64_REP_STATE = FIRST_SPILL + 8192
     X64_MEM_POLICY_CONDITION = FIRST_SPILL + 12288
+    # Report callbacks use the first eight words. Deferred transient captures
+    # can now span a policy which does not read their pending tags.
+    TRANSIENT_DIFT_CAPTURE = 64
 
     TEXT_DIFT_CAPTURE_SCRATCH_SAVE = SCRATCHPAD_SIZE - 65536
     TEXT_DIFT_LLVM_SCRATCH_SAVE = TEXT_DIFT_CAPTURE_SCRATCH_SAVE + 4096

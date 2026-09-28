@@ -8,6 +8,7 @@ from gtirb_rewriting import Patch
 
 from teapot.configs.blacklist import is_blacklisted_function
 from teapot.configs.runtime import MEMORY_HISTORY_ENTRY_SIZE, MEMORY_HISTORY_SIZE_OFFSET
+from teapot.configs.slots import ScratchpadSlots
 from teapot.passes.mixins import InstVisitorPassMixin, VisitorPassMixin
 from teapot.passes.text.dift.base import TextDiftLLVMBase
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
@@ -30,6 +31,18 @@ class TransientDiftReplayMixin:
         self.memory_policy = memory_policy
         self.port_policy = port_policy
         self.immediate = immediate
+
+    def _reset(self):
+        super()._reset()
+        self.scratchpad_offset = ScratchpadSlots.TRANSIENT_DIFT_CAPTURE // 8
+        self.pending_registers = set()
+        self.pending_memory = False
+        self.pending_queue_apply = False
+
+    def _reader_observes_pending(self, registers, *, memory=False):
+        return bool(self.llvm_ir) and (
+            registers is None or not self.pending_registers.isdisjoint(registers)
+            or (memory and self.pending_memory))
 
     def begin_module(self, module, functions, rewriting_ctx):
         for policy in (self.memory_policy, self.port_policy):
@@ -69,7 +82,14 @@ class TransientDiftReplayMixin:
             info = memory._build_policy_patch(inst, inst_idx, inst_offset, block, function)
         port = self.port_reader if self.port_reader and self.port_reader[0] == inst_idx else None
         rep = self.arch.name == "x64" and self.arch.rep_string_kind(inst) is not None
-        if info is not None or port is not None or rep:
+        memory_reads_pending = info is not None and (
+            self._reader_observes_pending(info.tag_registers, memory=info.reads_memory_tags)
+            # There is one runtime queue. Consume the previous load's queued
+            # tags before another policy can enqueue tags for a different load.
+            or (info.queues_tags and self.pending_queue_apply))
+        port_reads_pending = port is not None and self._reader_observes_pending(
+            port[1][1], memory=self.arch.memory_operand(inst) is not None)
+        if memory_reads_pending or port_reads_pending or rep:
             self._flush_dift(block, function, inst_idx, inst_offset)
         if info is not None:
             self.reg_manager.add_live_registers(function, block, inst_idx, info.live_registers)
@@ -80,14 +100,20 @@ class TransientDiftReplayMixin:
             self.reg_manager.add_live_registers(function, block, inst_idx, registers)
             patch = self.port_policy.allocate_registers(function, block, inst_idx)(patch)
             self.port_policy.insert_at(block, inst_offset, Patch.from_function(patch))
-        self.load_reader = False
+        self._queue_apply_requested = info is not None and info.queues_tags
         if not rep and getattr(self, "propagate", True):
             # REP's transient replacement already owns per-element propagation
             # and policies. Never call the normal-copy post-REP tag handler.
             TextDiftLLVMBase.visit_inst(self, inst, inst_idx, inst_offset,
                                        block, function, live_registers)
-        if self.load_reader or self.immediate or inst_idx == len(self._current_instructions) - 1:
+        if self.immediate or inst_idx == len(self._current_instructions) - 1:
             self._flush_dift(block, function, inst_idx, inst_offset)
+
+    def _build_dift_patch(self, block, inst, inst_offset, regs_read, regs_write, **kwargs):
+        patch = super()._build_dift_patch(block, inst, inst_offset, regs_read, regs_write, **kwargs)
+        self.pending_registers.update(regs_write)
+        self.pending_memory |= kwargs['mem_write'] is not None
+        return patch
 
     def _format_llvm_ir(self, body, *, target_triple=None):
         ir = super()._format_llvm_ir(body, target_triple=target_triple)
@@ -99,9 +125,9 @@ class TransientDiftReplayMixin:
         return ir.replace("define dso_local void @func", globals + "\ndefine dso_local void @func")
 
     def _after_instruction_effects(self, mem_read):
-        if mem_read is None:
+        if mem_read is None or not getattr(self, '_queue_apply_requested', True):
             return
-        self.load_reader = True
+        self.pending_queue_apply = True
         pending = self._load("i8", "@dift_reg_queue_pending")
         empty = self._icmp("eq", "i8", pending, 0)
         label = f"queued_{self.tempval_cnt}"

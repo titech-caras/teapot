@@ -55,7 +55,8 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
             inst, mem_operand_str, mem_operand.size,
             conditional=self.arch.conditional_move_suffix(inst), mem_operand=mem_operand,
             write_reg=write_reg)
-        return MemOperandPolicyPatch(patch, set())
+        return MemOperandPolicyPatch(
+            patch, set(), self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand))
 
     def _build_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
                      conditional: Optional[str], mem_operand, write_reg: Optional[Register] = None,

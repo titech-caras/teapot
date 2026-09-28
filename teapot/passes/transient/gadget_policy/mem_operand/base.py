@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Set
+from typing import List, Optional, Set
 
 import gtirb
 from capstone import CS_OP_MEM, CS_OP_REG, CsInsn
@@ -19,6 +19,11 @@ from teapot.passes.mixins import ArchSpecificPassMixin, InstVisitorPassMixin
 class MemOperandPolicyPatch:
     patch: object
     live_registers: Set[Register]
+    # Physical liveness above is not the set of taint tags read by a policy.
+    # None conservatively means any tag (for third-party policy builders).
+    tag_registers: Optional[Set[Register]] = None
+    reads_memory_tags: bool = False
+    queues_tags: bool = True
 
 
 class TransientMemOperandPoliciesPassBase(ArchSpecificPassMixin, InstVisitorPassMixin):

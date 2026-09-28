@@ -5,12 +5,84 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
+
+import gtirb
+from gtirb_live_register_analysis import LiveRegisterManager
+from gtirb_rewriting import Assembler, PassManager
 
 from teapot.arch import X64Architecture, AArch64Architecture, RISCV64Architecture
 from teapot.passes.transient.lazy_dift import transient_replay_pass
+from teapot.passes.transient.gadget_policy.mem_operand.x64 import X64TransientMemOperandPoliciesPass
+from test_live_register_preservation import make_module
 
 
 class LazyDiftTests(unittest.TestCase):
+    def test_independent_policy_does_not_flush_but_queue_and_address_readers_do(self):
+        arch = X64Architecture()
+        ir, module, block, abi, _ = make_module(arch, gtirb.Module.ISA.X64, b'')
+        assembler = Assembler(module)
+        assembler.assemble('.intel_syntax noprefix\n'
+                           'mov rax,[0x2000]\n'  # no dynamic-address policy
+                           'mov rbx,[rsi]\n'     # independent reader, produces queue
+                           'mov rcx,[rax]\n'     # reads pending rax; consumes old queue first
+                           'mov rdx,[rdi]\n'     # independent address, but reuses the queue
+                           'ret')
+        code = assembler.finalize().text_section.data
+        block.byte_interval.contents = code
+        block.byte_interval.size = block.size = len(code)
+        for name in ('scratchpad', 'dift_reg_tags', 'dift_reg_queued_tags', 'dift_reg_queue_pending',
+                     'old_rsp', 'memory_history_top', 'report_gadget_KASPER_CACHE',
+                     'report_gadget_KASPER_MDS'):
+            gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
+        manager = LiveRegisterManager(module, abi)
+        memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.analyzer.decoder, arch)
+        replay = transient_replay_pass(arch, manager, block.section, manager.analyzer.decoder,
+                                      memory_policy=memory)
+        observed = []
+        original = replay._flush_dift
+
+        def record(block, function, index, offset):
+            if replay.llvm_ir:
+                observed.append((index, {r.name for r in replay.pending_registers},
+                                 replay.pending_queue_apply))
+            original(block, function, index, offset)
+
+        passes = PassManager()
+        passes.add(replay)
+        with patch.object(replay, '_flush_dift', side_effect=record):
+            passes.run(ir)
+        self.assertEqual(observed, [(2, {'rax', 'rbx'}, True), (3, {'rcx'}, True), (4, {'rdx'}, True)])
+
+    def test_capture_survives_an_independent_report_callback(self):
+        for arch in (X64Architecture(), AArch64Architecture(), RISCV64Architecture()):
+            with self.subTest(arch=arch.name):
+                replay = self._pass(arch)
+                replay._reset()
+                slot = replay.scratchpad_offset
+                address = replay._load('i64', replay._build_gep('i64', 'scratchpad', slot,
+                                                             ptr_type=replay.SCRATCHPAD_ARR_TYPE))
+                replay._store_shadow_mem_tags('64', address, 0, 1)
+                self._execute(arch, replay, r'''
+#include <assert.h>
+#include <stdint.h>
+#include <string.h>
+struct entry { void *addr; uint64_t data; uint8_t size; uint8_t padding[7]; };
+struct entry history[8], *memory_history_top = history;
+extern uint64_t scratchpad[];
+unsigned char dift_reg_queued_tags[48] __attribute__((aligned(16)));
+unsigned char dift_reg_queue_pending[8];
+extern void func(void);
+int main(void) {
+    unsigned char tag = 17;
+    scratchpad[SLOT] = (uintptr_t)&tag;
+    memset(scratchpad, 0, 64); /* report_gadget callback's spill area */
+    func();
+    assert(tag == 64 && history[0].addr == &tag && history[0].data == 17);
+    return 0;
+}
+'''.replace('SLOT', str(slot)))
+
     def _pass(self, arch):
         return transient_replay_pass(arch, SimpleNamespace(abi=arch.abi), None, None,
                                      dift_layout=SimpleNamespace(xor_mask=0))

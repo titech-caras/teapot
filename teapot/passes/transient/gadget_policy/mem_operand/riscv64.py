@@ -57,7 +57,8 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
             inst, mem_operand, access_size, write_regs, address_regs,
             mem_symexpr=self.arch.mem_operand_address_expression(block, inst, mem_operand, inst_offset),
             reads_registers={reg.name for reg in regs_read.union(regs_write)})
-        return MemOperandPolicyPatch(patch, regs_read.union(regs_write))
+        return MemOperandPolicyPatch(
+            patch, regs_read.union(regs_write), set(address_regs), queues_tags=bool(write_regs))
 
     def _build_patch(self, inst: CsInsn, mem_operand, access_size: int, write_regs,
                      address_regs, *, mem_symexpr=None, reads_registers=None):

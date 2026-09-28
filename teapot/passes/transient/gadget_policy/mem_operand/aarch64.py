@@ -48,7 +48,7 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
         patch = self._build_patch(
             inst, mem_operand, access_size, write_regs, mem_symexpr,
             reads_registers={reg.name for reg in regs_read})
-        return MemOperandPolicyPatch(patch, regs_read)
+        return MemOperandPolicyPatch(patch, regs_read, regs_read, queues_tags=bool(write_regs))
 
     def _build_patch(self, inst: CsInsn, mem_operand, access_size: int, write_regs,
                      mem_symexpr: Optional[gtirb.SymbolicExpression], *,
