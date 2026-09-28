@@ -151,9 +151,11 @@ class TeapotPipeline:
         if self.linked_component is not None:
             if len(self.ir.modules) != 1 or self.arch.name not in ("x64", "aarch64", "riscv64"):
                 raise ValueError("separate component rewriting requires one supported ELF64 module")
-            # AArch64 MTE tag storage changes only how ASan tags are stored;
-            # every pass stays enabled and nesting stays off.
-            if replace(self.options, aarch64_tag_storage=ASAN_TAG_STORAGE_SHADOW) != InstrumentationOptions():
+            # Tag storage and validated target identification are link contracts;
+            # neither permits disabling passes or enabling nesting. Non-AArch64
+            # BTI was rejected above before relaxing this option comparison.
+            if replace(self.options, aarch64_tag_storage=ASAN_TAG_STORAGE_SHADOW,
+                       target_identification="software") != InstrumentationOptions():
                 raise ValueError("component prototype requires all default instrumentation, nesting off")
         if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE and self.arch.name != "aarch64":
             raise ValueError("--aarch64-tag-storage=mte is only valid for AArch64 modules")
@@ -224,6 +226,11 @@ class TeapotPipeline:
         if not self.arch.run_text_passes_before_transient():
             self._run_text_passes()
 
+        if self.options.target_identification == 'aarch64-bti':
+            # Outline before the in-place branch relaxer grows joined byte
+            # intervals. A later rewriting context would see stale interior
+            # alignment residues; final layout belongs to the printer.
+            self.arch.outline_native_landings(self)
         if self.options.enable_conditional_branch_relax and self.arch.needs_conditional_branch_relax():
             integral_tls_symbols = _integral_tls_symbol_values(self.module)
             try:

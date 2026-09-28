@@ -47,6 +47,10 @@ class AArch64OutlineNativeLandingsPass(Pass):
             raise ValueError('input collides with reserved native-landing section')
         decoder = GtirbInstructionDecoder(module.isa)
         for block in self.normal_section.code_blocks:
+            # Section-end anchors have no instructions (and Capstone 6 rejects
+            # an empty input buffer). Component bounds leave such anchors too.
+            if not block.size:
+                continue
             for instruction in decoder.get_instructions(block):
                 if instruction.size != 4:
                     continue

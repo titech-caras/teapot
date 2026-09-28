@@ -13,6 +13,7 @@ from gtirb_capstone.instructions import GtirbInstructionDecoder
 from teapot.arch import AArch64Architecture, X64Architecture
 from teapot.arch.aarch64.bti import AArch64BTIArchitecture
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
+from teapot.datacls.linked_component import LinkedComponent
 from teapot.passes.transient.indirect_branch_check_pass import TransientIndirectBranchCheckDestPass
 from test_live_register_preservation import make_module, symbol_references
 
@@ -108,3 +109,34 @@ class AArch64BTIBackendTests(unittest.TestCase):
             with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, 'requires target'):
                 TeapotPipeline(ir, options=InstrumentationOptions(
                     target_identification='aarch64-bti', **{flag: False})).run()
+
+    def test_bti_component_uses_global_link_bounds_without_defining_aliases(self):
+        # Run the real component pipeline: exported library functions need the
+        # same BTI marker as main, but each object must not define global bounds.
+        for exported in ('provider', 'main'):
+            arch = AArch64Architecture()
+            ir, module, block, _, registers = make_module(
+                arch, gtirb.Module.ISA.ARM64, bytes.fromhex('00008052c0035fd6'))
+            symbol = next(module.symbols_named('test_function'))
+            symbol.name = exported
+            module.aux_data['liveRegisterSets'].data = {
+                gtirb.Offset(block, inst.address - block.address): (1 << len(registers)) - 1
+                for inst in GtirbInstructionDecoder(module.isa).get_instructions(block)}
+            ir.cfg.add(gtirb.Edge(block, gtirb.ProxyBlock(module=module),
+                                  gtirb.Edge.Label(gtirb.Edge.Type.Return)))
+            context = LinkedComponent('a' * 64, frozenset({exported}), frozenset({exported}))
+            pipeline = TeapotPipeline(ir, 'aarch64-vma42',
+                                     InstrumentationOptions(target_identification='aarch64-bti'),
+                                     linked_component=context)
+            with self.subTest(exported=exported), redirect_stdout(io.StringIO()):
+                pipeline.run()
+                self.assertEqual(pipeline.text_section.name, '.teapot_bti_normal')
+                entry = symbol.referent
+                self.assertEqual(entry.byte_interval.contents[entry.offset:entry.offset + 8],
+                                 AArch64BTIArchitecture().nop_bytes)
+                self.assertEqual(module.aux_data['teapotTargetIdentification'].data, 'aarch64-bti-v1')
+                for suffix in ('text_start', 'text_end', 'transient_start', 'transient_end'):
+                    self.assertFalse(list(module.symbols_named('__teapot_bti_' + suffix)))
+                for name in ('normal_start', 'normal_end', 'transient_start', 'transient_end'):
+                    self.assertIsInstance(next(module.symbols_named('__teapot_linked_' + name)).referent,
+                                          gtirb.ProxyBlock)

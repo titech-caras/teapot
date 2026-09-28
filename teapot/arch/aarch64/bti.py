@@ -70,7 +70,7 @@ class AArch64BTIArchitecture(AArch64Architecture):
         return patch
 
     @staticmethod
-    def finalize_bti_layout(pipeline):
+    def outline_native_landings(pipeline):
         from gtirb_rewriting import PassManager
         from teapot.passes.common.aarch64_outline_native_landings_pass import AArch64OutlineNativeLandingsPass
 
@@ -82,10 +82,21 @@ class AArch64BTIArchitecture(AArch64Architecture):
         manager = PassManager()
         manager.add(outline)
         pipeline._run_pass_manager(manager, 'outline-native-landings')
-        if outline.outlined:
-            # New cross-section direct branches also need range convergence.
-            pipeline.arch.relax_conditional_branches(module)
-            pipeline._refresh_register_analysis()
+        # The ordinary final branch-relaxation round follows this pass and
+        # includes these new cross-section branches. Do not start a rewriting
+        # context after raw relaxation has grown blocks within joined intervals.
+
+    @staticmethod
+    def finalize_bti_layout(pipeline):
+        module = pipeline.module
+        section_name = '.teapot_bti_normal'
+        if pipeline.linked_component is not None:
+            # Component bounds are external final-link symbols. Do not emit
+            # duplicate global BTI definitions (or aliases of ProxyBlocks) in
+            # each object: the component driver defines all four bounds once.
+            pipeline.text_section.name = section_name
+            module.aux_data["teapotTargetIdentification"] = gtirb.AuxData("aarch64-bti-v1", "string")
+            return
         symbols = (
             ("text_start", pipeline.text_section_start_symbol),
             ("text_end", pipeline.text_section_end_symbol),
