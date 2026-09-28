@@ -35,7 +35,8 @@ from teapot.datacls.dift_layout import LAYOUTS, _layout_data_path
 from teapot.arch import module_isa_name
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.utils.serialization import compact_for_pprinter
-from experiments.reusable_libraries.targets import for_machine, mode_for, mode_metadata, MODES
+from experiments.reusable_libraries.targets import (
+    for_machine, mode_for, mode_metadata, target_for, MODES, TARGET_IDENTIFICATIONS)
 
 
 def sha(path):
@@ -132,8 +133,9 @@ def component_bindings(item, converter, context):
 
 
 def validate_object(path, component_id, expected_exports, expected_fdes,
-                    machine='EM_X86_64', cfi_reader=None):
-    isa, target = for_machine(machine)
+                    machine='EM_X86_64', cfi_reader=None, target_identification='software'):
+    isa, _ = for_machine(machine)
+    target = target_for(isa, target_identification)
     with path.open("rb") as stream:
         elf = ELFFile(stream)
         assert elf["e_type"] == "ET_REL" and elf["e_machine"] == machine
@@ -147,10 +149,10 @@ def validate_object(path, component_id, expected_exports, expected_fdes,
             assert isinstance(symbol["st_shndx"], int), name
             section = elf.get_section(symbol["st_shndx"])
             offset = symbol["st_value"]
-            assert section.name == ".teapot_component_text", (name, section.name)
+            assert section.name == target['text_section'], (name, section.name)
             assert section.data()[offset:offset + len(target['marker'])] == target['marker'], (
                 "export is missing its full normal-to-transient marker", name)
-        for name, flags in ((".teapot_component_text", 6), (".teapot_transient", 6),
+        for name, flags in ((target['text_section'], 6), (".teapot_transient", 6),
                             (".teapot_component_guards." + component_id, 3)):
             section = elf.get_section_by_name(name)
             assert section is not None and section["sh_flags"] & 7 == flags, (name, section)
@@ -178,7 +180,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     for fde in item["application_fdes"]:
         assert fde["start"] in cfi_starts, ("unrecovered original unwind range", fde)
     for symbol in module.symbols:
-        if SYMBOL_SUFFIX in symbol.name or symbol.name.startswith(("__teapot_linked_", "__teapot_component_")):
+        if SYMBOL_SUFFIX in symbol.name or symbol.name.startswith((
+                "__teapot_linked_", "__teapot_component_", "__teapot_bti_")):
             raise RuntimeError("reserved instrumentation symbol in original input: " + symbol.name)
     if isa == 'ARM64':
         # Bind proved pointer returns directly to the untouched standalone IR.
@@ -213,7 +216,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         raise RuntimeError("component liveness unexpectedly fell back to Python")
     # Section names are changed only after all passes have run. Final linker
     # bounds include these application sections, never the runtime's .text.
-    pipeline.text_section.name = ".teapot_component_text"
+    pipeline.text_section.name = target_for(isa, args.target_identification)['text_section']
     pipeline.guard_section.name = ".teapot_component_guards." + component_id
     guard_count = sum(interval.size for interval in pipeline.guard_section.byte_intervals) // 4
     for label in ("__guard_start" + SYMBOL_SUFFIX, "__guard_end" + SYMBOL_SUFFIX):
@@ -249,7 +252,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
                                 *(['-mno-relax', '-Wa,-mno-relax'] if isa == 'RISCV64' else []),
                                 *(['-march=armv8.5-a+memtag'] if args.mode_tag_storage == 'mte' else [])])
     validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]),
-                    item['machine'], converter.eh_cfi_entries)
+                    item['machine'], converter.eh_cfi_entries, args.target_identification)
     recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "fixed.S", "component.o",
                 "proven-data-decoder-warnings.json", "selected-version-bindings.json", "compaction.json"]
     if args.preserve_selected_lifecycle:
@@ -257,7 +260,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     if isa == 'ARM64':
         recorded.append('pointer-return-contracts.json')
     result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"],
-              **mode_metadata(isa, args.mode),
+              **mode_metadata(isa, args.mode, args.target_identification),
               "exports": sorted(own_exports), "linked_exports": sorted(exports(item, converter, False)),
               "guard_count": guard_count,
               "rewrite_seconds": rewrite_seconds, "liveness": "ddisasm",
@@ -301,7 +304,8 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
         for name, expected in result["files"].items():
             assert sha(entry / name) == expected, "cached artifact hash mismatch: " + name
         validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]),
-                        item['machine'], converter.eh_cfi_entries)
+                        item['machine'], converter.eh_cfi_entries,
+                        context.get('target_identification', 'software'))
     return {**result, "cache_hit": True, "cache_path": str(entry), "input_path": item["path"]}
 
 
@@ -322,6 +326,8 @@ def main():
     parser.add_argument("--cc", default="gcc")
     parser.add_argument("--mode", choices=tuple(MODES),
                         help="instrumentation mode; defaults to the ISA's historical component mode")
+    parser.add_argument('--target-identification', choices=TARGET_IDENTIFICATIONS, default='software',
+                        help='BTI requires AArch64 and a matching experimental runtime')
     parser.add_argument("--jobs", type=int, default=2)
     parser.add_argument("--resolve-selected-versions", action="store_true")
     parser.add_argument("--preserve-selected-lifecycle", action="store_true")
@@ -346,7 +352,9 @@ def main():
     isa, target = for_machine(executable['machine'])
     args.mode, mode = mode_for(isa, args.mode)
     args.mode_layout, args.mode_tag_storage = mode['layout'], mode['tag_storage']
-    args.instrumentation_options = InstrumentationOptions(aarch64_tag_storage=mode['tag_storage'])
+    target_for(isa, args.target_identification)
+    args.instrumentation_options = InstrumentationOptions(
+        aarch64_tag_storage=mode['tag_storage'], target_identification=args.target_identification)
     selected = [converter.inspect(path, "selected", **conversion_options) for path in args.select]
     external = [converter.inspect(path, "external") for path in args.external]
     order = converter.validate_closure(executable, selected, external)
@@ -367,6 +375,7 @@ def main():
                "options": asdict(args.instrumentation_options), "ROB_LEN": ROB_LEN,
                "configuration": configuration_identity(),
                "mode": args.mode,
+               "target_identification": args.target_identification,
                "liveness_contract": "standalone-ddisasm-abi-v1",
                "conversion_options": conversion_options,
                "dift_layout": args.mode_layout, 'isa': isa,
@@ -382,13 +391,58 @@ def main():
     if args.preserve_selected_lifecycle:
         objects = [Path(component["cache_path"]) / "component.o" for component in components]
         link_support.append(converter.build_lifecycle_dispatcher(args, objects[0], objects[1:], order).name)
-    layout = ["SECTIONS {", "  .teapot_component_text : ALIGN(16) {",
+    if args.target_identification == 'aarch64-bti':
+        link_support.append(build_bti_startup(args).name)
+    layout = component_layout(components, args.target_identification)
+    (args.out / "layout.ld").write_text(layout)
+    total_guards = sum(component['guard_count'] for component in components)
+    for index, component in enumerate(components):
+        shutil.copyfile(Path(component["cache_path"]) / "component.o",
+                        args.out / ("component-{:03d}.o".format(index)))
+    dump(args.out / "components.json", {"components": components, "total_guards": total_guards,
+                                       **mode_metadata(isa, args.mode, args.target_identification),
+                                       "link_support": link_support,
+                                       "status": "objects_ready_final_link_and_behavior_not_yet_verified"})
+    print(json.dumps({"components": len(components), "cache_hits": sum(c["cache_hit"] for c in components),
+                      "total_guards": total_guards}), flush=True)
+
+
+def build_bti_startup(args):
+    # Preinit runs before any selected-library constructors. This entry prepares
+    # the signal/BTI machinery without enabling speculation or tainting argv;
+    # main retains the existing libcheckpoint_enable_aarch64_bti call.
+    source = args.out / 'bti-startup.c'
+    source.write_text('extern void libcheckpoint_prepare_aarch64_bti_components(void);\n'
+                      '__attribute__((used, section(".preinit_array")))\n'
+                      'void (*const __teapot_bti_component_preinit)(void) =\n'
+                      '    libcheckpoint_prepare_aarch64_bti_components;\n')
+    obj = args.out / 'bti-startup.o'
+    run(args.out, 'compile-bti-startup', [args.cc, '-c', '-fno-pie', '-fno-pic', source, '-o', obj])
+    return obj
+
+
+def component_layout(components, target_identification='software'):
+    if target_identification not in TARGET_IDENTIFICATIONS:
+        raise ValueError('unsupported target identification: ' + target_identification)
+    if target_identification == 'aarch64-bti':
+        layout = ["SECTIONS {", "  .teapot_bti_normal ALIGN(65536) : {",
+                  "    __teapot_bti_guard_start = .;",
+                  "    __teapot_linked_normal_start = .; __teapot_bti_text_start = .;",
+                  "    KEEP(*(.teapot_bti_normal))",
+                  "    __teapot_linked_normal_end = .; __teapot_bti_text_end = .;",
+                  "    . = ALIGN(16); KEEP(*(.teapot_bti_probe))",
+                  "    . = ALIGN(65536); __teapot_bti_guard_end = .; }"]
+    else:
+        layout = ["SECTIONS {", "  .teapot_component_text : ALIGN(16) {",
               "    __teapot_linked_normal_start = .; KEEP(*(.teapot_component_text))",
-              "    __teapot_linked_normal_end = .; }",
-              "  .teapot_transient : ALIGN(16) {",
+              "    __teapot_linked_normal_end = .; }"]
+    layout += ["  .teapot_transient : ALIGN(16) {",
               "    __teapot_linked_transient_start = .; KEEP(*(.teapot_transient))",
-              "    __teapot_linked_transient_end = .; }",
-              "} INSERT AFTER .text;", "SECTIONS {", "  .teapot_component_guards : ALIGN(4) {",
+              "    __teapot_linked_transient_end = .; }"]
+    if target_identification == 'aarch64-bti':
+        layout += ["  __teapot_bti_transient_start = __teapot_linked_transient_start;",
+                   "  __teapot_bti_transient_end = __teapot_linked_transient_end;"]
+    layout += ["} INSERT AFTER .text;", "SECTIONS {", "  .teapot_component_guards : ALIGN(4) {",
               "    __guard_start__teapot__ = .;"]
     total_guards = 0
     for component in components:
@@ -402,16 +456,7 @@ def main():
         total_guards += component["guard_count"]
     assert total_guards < 0x80000000, "coverage index relocation would overflow"
     layout += ["    __guard_end__teapot__ = .; }", "} INSERT AFTER .data;"]
-    (args.out / "layout.ld").write_text("\n".join(layout) + "\n")
-    for index, component in enumerate(components):
-        shutil.copyfile(Path(component["cache_path"]) / "component.o",
-                        args.out / ("component-{:03d}.o".format(index)))
-    dump(args.out / "components.json", {"components": components, "total_guards": total_guards,
-                                       **mode_metadata(isa, args.mode),
-                                       "link_support": link_support,
-                                       "status": "objects_ready_final_link_and_behavior_not_yet_verified"})
-    print(json.dumps({"components": len(components), "cache_hits": sum(c["cache_hit"] for c in components),
-                      "total_guards": total_guards}), flush=True)
+    return "\n".join(layout) + "\n"
 
 
 if __name__ == "__main__":

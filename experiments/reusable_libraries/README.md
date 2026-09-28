@@ -37,6 +37,7 @@ python3 experiments/reusable_libraries/rewrite_components.py \
     --out OUT --cache CACHE [--mode MODE] --converter tools/sharedlib/convert.py \
     --teapot TEAPOT --rewriting GTIRB_REWRITING --lra LIVE_REGISTER_ANALYSIS \
     --runtime-contract CONTRACT.json --ddisasm DDISASM --pprinter GTIRB_PPRINTER [--cc CC] [--jobs N] \
+    [--target-identification software|aarch64-bti] \
     [--resolve-selected-versions] [--preserve-selected-lifecycle] [--preserve-nonlocal-jumps] \
     [--preserve-weak-imports]
 ```
@@ -47,6 +48,27 @@ paths may be checkout roots or their installed `site-packages` package directori
 The runtime
 contract is a JSON description of the runtime the objects will be linked with, for example the hashes of its
 archives; it is stored in the key as given. The four opt-in flags are the converter's.
+
+### AArch64 BTI (opt-in)
+
+`--target-identification aarch64-bti` works with the AArch64 layout/tag-storage modes above;
+it does not enable PAC or change the permissive transient-target policy. Build libcheckpoint
+with `-DTEAPOT_EXPERIMENTAL_AARCH64_BTI=ON` and the same layout and tag storage.
+Every executable and selected library must use the same target-identification mode. The
+mode is part of each cache key and manifest. Software objects cannot be mixed into a BTI link.
+
+Use the generated `layout.ld` **instead of** also passing `AArch64Bti.ld`: it collects all
+components' `.teapot_bti_normal` inputs into one 64 KiB-aligned guarded output section,
+defines the bounds once, and places the enforcement probes and padding beyond the allowed
+application targets. The transient copy, native-landing detours, runtime and writable data
+remain outside that region. Export markers start with `bti jc`; return and range checks remain.
+
+Include **every** object in the manifest's `link_support`, including `bti-startup.o`. Its
+preinit entry installs the runtime signal handler and verifies/enables BTI before selected
+constructors, without enabling speculation early. Main enables speculation as before. The
+new strong runtime entry rejects linking an old/non-BTI archive, and runtime activation
+refuses unsupported CPUs/OS mappings rather than silently falling back. Constructors and
+external, unrewritten code are not newly made speculative by this mode.
 
 For each component the driver:
 
@@ -72,7 +94,7 @@ storage, based on the guard-start symbol after input-section alignment.
 
 ```
 python3 experiments/reusable_libraries/validate_link.py --binary APP.instrumented --objects OUT \
-    --out validation.json [--isa ISA] [--mode MODE]
+    --out validation.json [--isa ISA] [--mode MODE] [--target-identification software|aarch64-bti]
 ```
 
 The validator derives ISA, mode, DIFT layout and tag storage from the manifests and checks every component agrees.
@@ -82,6 +104,9 @@ the coverage-guard bases and that no two components' guards overlap, the selecte
 FDEs, and the ASan runtime's place in `DT_NEEDED` (or its absence in MTE modes), with no selected SONAME still
 needed. Passing it is a structural
 result, not behavior verification.
+For BTI it also verifies isolated RX guard pages, the probe/bound aliases, absence of unmatched
+native BTI/PAC landings in normal text, and the actual preinit pointer. Hardware enforcement
+is separately checked at startup on the final mapping.
 
 ## Cache
 

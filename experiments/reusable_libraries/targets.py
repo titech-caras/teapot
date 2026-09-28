@@ -23,6 +23,18 @@ MODES = {
     'riscv64': dict(isa='RISCV64', layout='riscv64-sv39', tag_storage='shadow', asan='libasan.so.8'),
 }
 DEFAULT_MODE = {'X64': 'x64', 'ARM64': 'aarch64-vma42', 'RISCV64': 'riscv64'}
+TARGET_IDENTIFICATIONS = ('software', 'aarch64-bti')
+
+
+def target_for(isa, target_identification='software'):
+    if target_identification not in TARGET_IDENTIFICATIONS:
+        raise ValueError('unsupported target identification: ' + target_identification)
+    if target_identification == 'aarch64-bti':
+        if isa != 'ARM64':
+            raise ValueError('BTI components require AArch64')
+        return dict(TARGETS[isa], marker=bytes.fromhex('df2403d59fa280d2'),
+                    text_section='.teapot_bti_normal')
+    return dict(TARGETS[isa], text_section='.teapot_component_text')
 
 
 def mode_for(isa, name=None):
@@ -40,6 +52,8 @@ def for_machine(machine):
     return matches[0]
 
 
-def mode_metadata(isa, name=None):
+def mode_metadata(isa, name=None, target_identification='software'):
     name, mode = mode_for(isa, name)
-    return dict(isa=isa, mode=name, dift_layout=mode['layout'], tag_storage=mode['tag_storage'])
+    target_for(isa, target_identification)
+    return dict(isa=isa, mode=name, dift_layout=mode['layout'], tag_storage=mode['tag_storage'],
+                target_identification=target_identification)

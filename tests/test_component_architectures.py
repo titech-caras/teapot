@@ -5,7 +5,8 @@ from teapot.arch import module_isa_name
 from teapot.arch.aarch64.architecture import AArch64Architecture
 from teapot.arch.riscv64.architecture import RISCV64Architecture
 from teapot.arch.x64.architecture import X64Architecture
-from experiments.reusable_libraries.targets import TARGETS, MODES, for_machine, mode_metadata
+from experiments.reusable_libraries.targets import TARGETS, MODES, for_machine, mode_metadata, target_for
+from teapot.arch.aarch64.bti import AArch64BTIArchitecture
 from experiments.reusable_libraries.validate_link import validate_dynamic_symbol_names, validate_mode_contract
 from unittest.mock import Mock
 
@@ -30,6 +31,22 @@ class ComponentArchitecturesTests(unittest.TestCase):
                         validate_mode_contract(mixed)
         with self.assertRaisesRegex(ValueError, 'no complete build mode'):
             validate_mode_contract({'components': []})
+
+    def test_bti_contract_rejects_software_objects_and_other_isas(self):
+        contract = mode_metadata('ARM64', 'aarch64-vma48', 'aarch64-bti')
+        manifest = dict(contract, components=[dict(contract, component_id='library')])
+        self.assertEqual(validate_mode_contract(manifest, target_identification='aarch64-bti'),
+                         ('ARM64', 'aarch64-vma48'))
+        with self.assertRaisesRegex(ValueError, 'target identification mismatch'):
+            validate_mode_contract(manifest, target_identification='software')
+        manifest['components'][0]['target_identification'] = 'software'
+        with self.assertRaisesRegex(ValueError, 'component build mode mismatch'):
+            validate_mode_contract(manifest)
+        for isa in ('X64', 'RISCV64'):
+            with self.assertRaisesRegex(ValueError, 'require AArch64'):
+                mode_metadata(isa, target_identification='aarch64-bti')
+        self.assertEqual(target_for('ARM64', 'aarch64-bti')['marker'],
+                         AArch64BTIArchitecture().nop_bytes)
 
     def test_dynamic_symbol_name_bounds_are_checked_before_execution(self):
         for strings, offset, valid in ((b'\0api\0', 1, True),
