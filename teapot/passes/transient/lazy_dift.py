@@ -4,6 +4,9 @@ Policies and propagation share a visitor so insertion order at one application
 instruction is explicit: pending replay, policy, address capture, load replay
 and queued-tag apply. No pending runtime queue survives a block or rollback.
 """
+from dataclasses import dataclass
+import re
+
 from gtirb_rewriting import Patch
 
 from teapot.configs.blacklist import is_blacklisted_function
@@ -14,6 +17,15 @@ from teapot.passes.text.dift.base import TextDiftLLVMBase
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from teapot.passes.text.dift.aarch64 import AArch64TextDiftPropagationLLVMPass
 from teapot.passes.text.dift.riscv64 import RISCV64TextDiftPropagationLLVMPass
+
+
+@dataclass(frozen=True)
+class ReplayEffect:
+    instruction: int
+    ir: tuple
+    registers: frozenset
+    memory: bool
+    queue: bool
 
 
 class TransientDiftReplayMixin:
@@ -38,11 +50,108 @@ class TransientDiftReplayMixin:
         self.pending_registers = set()
         self.pending_memory = False
         self.pending_queue_apply = False
+        self.effects = []
+
+    def _get_tempval(self):
+        # Named SSA values let a prefix and suffix become independent LLVM
+        # functions without renumbering references or capture-slot indices.
+        self.tempval_cnt += 1
+        return f'%tag{self.tempval_cnt}'
 
     def _reader_observes_pending(self, registers, *, memory=False):
         return bool(self.llvm_ir) and (
             registers is None or not self.pending_registers.isdisjoint(registers)
             or (memory and self.pending_memory))
+
+    def _required_prefix(self, registers, *, memory=False, queue=False):
+        return max((i + 1 for i, effect in enumerate(self.effects)
+                    if registers is None or not effect.registers.isdisjoint(registers)
+                    or (memory and effect.memory) or (queue and effect.queue)), default=0)
+
+    def _allocate_replay_scratch(self, assembly, registers, live):
+        """Use dead GPRs for RISC LLVM bodies; wrappers own remaining spills.
+
+        x64 already remaps through ALLOCATE_BLOCK_PATCH_REGISTERS. RISC bodies
+        have no calls and may rename all general temporaries, including LLVM's
+        chosen frame register, but never SP/TP/GP or architectural zero.
+        """
+        if self.arch.name == 'x64':
+            return assembly, registers, len(registers.registers)
+        movable = [r for r in registers if r.name not in {'sp', 'tp', 'gp', 'zero', 'x31'}]
+        pool = list(self.reg_manager.abi._scratch_registers())
+        pool += [r for r in movable if r not in pool]
+        allocated = ([r for r in pool if r not in live] +
+                     [r for r in pool if r in live])[:len(movable)]
+        mapping = dict(zip(movable, allocated))
+
+        def replace(match):
+            name = match.group(0)
+            reg = self.reg_manager.abi.get_register(name)
+            target = mapping.get(reg)
+            if target is None:
+                return name
+            if self.arch.name == 'aarch64':
+                return name[0] + target.name[1:]
+            return target.name
+
+        pattern = (r'\b[wx](?:[0-9]|[12][0-9]|30)\b' if self.arch.name == 'aarch64' else
+                   r'\b(?:ra|[ast][0-9]+|x(?:[0-9]|[12][0-9]|3[01]))\b')
+        assembly = re.sub(pattern, replace, assembly)
+        registers = [mapping.get(r, r) for r in registers]
+        return assembly, registers, max(2, len(movable))
+
+    def _flush_dift(self, block, function, inst_idx, inst_offset, *, required_prefix=None):
+        if not self.effects:
+            return
+        required = len(self.effects) if required_prefix is None else required_prefix
+        # Captures for instruction i are before i, but ordinarily move a batch
+        # no earlier than i+1. The terminal instruction's own effects must still
+        # be flushed before it transfers control (the existing block contract).
+        first = min(self.effects[required - 1].instruction + 1, inst_idx)
+        compiled = {}
+        best = None
+        for index in range(first, inst_idx + 1):
+            offset = sum(i.size for i in self._current_instructions[:index])
+            adjusted_block, adjusted_index = self.insertion_register_location(block, index)
+            # A moved HI/LO insertion is not this instruction boundary. Keep the
+            # reader's existing safe placement fallback, but never slide to it.
+            if index != inst_idx and (adjusted_block is not block or adjusted_index != index):
+                continue
+            count = sum(e.instruction < index or index == inst_idx for e in self.effects)
+            if count < required:
+                continue
+            if count not in compiled:
+                body = '\n'.join(line for e in self.effects[:count] for line in e.ir)
+                module = self._parse_and_optimize_llvm(self._format_llvm_ir(
+                    body, target_triple=self.target_triple))
+                assembly = self._extract_function_asm(self.target_machine.emit_assembly(module))
+                compiled[count] = assembly, self._get_register_usage(assembly)
+            assembly, registers = compiled[count]
+            plan = self._scratch_plan(function, block, index)
+            assembly, registers, needed = self._allocate_replay_scratch(
+                assembly, registers, plan.live_registers)
+            dead = len(set(self.reg_manager.abi._scratch_registers()) - plan.live_registers)
+            cost = max(0, needed - dead) + (self.reg_manager.abi.flag_register() in plan.live_registers)
+            # Minimum spills + flag save; stable ties toward the reader.
+            key = (cost, -index)
+            if best is None or key < best[0]:
+                best = key, index, offset, count, assembly, registers, plan
+        _, index, offset, count, assembly, registers, plan = best
+        self._emit_replay(block, function, index, offset, assembly, registers, plan)
+        self.effects = self.effects[count:]
+        if not self.effects:
+            self._reset()
+        else:
+            self.llvm_ir = [line for effect in self.effects for line in effect.ir]
+            self.pending_registers = set().union(*(effect.registers for effect in self.effects))
+            self.pending_memory = any(effect.memory for effect in self.effects)
+            self.pending_queue_apply = any(effect.queue for effect in self.effects)
+
+    def _emit_replay(self, block, function, index, offset, assembly, registers, plan):
+        patch = self._build_optimized_dift_values_patch(assembly, registers, scratch_plan=plan)
+        if self.ALLOCATE_BLOCK_PATCH_REGISTERS:
+            patch = self.allocate_registers(function, block, index)(patch)
+        self.insert_at(block, offset, Patch.from_function(patch))
 
     def begin_module(self, module, functions, rewriting_ctx):
         for policy in (self.memory_policy, self.port_policy):
@@ -90,7 +199,12 @@ class TransientDiftReplayMixin:
         port_reads_pending = port is not None and self._reader_observes_pending(
             port[1][1], memory=self.arch.memory_operand(inst) is not None)
         if memory_reads_pending or port_reads_pending or rep:
-            self._flush_dift(block, function, inst_idx, inst_offset)
+            required = len(self.effects) if rep else max(
+                self._required_prefix(info.tag_registers, memory=info.reads_memory_tags,
+                                      queue=info.queues_tags) if info is not None else 0,
+                self._required_prefix(port[1][1], memory=self.arch.memory_operand(inst) is not None)
+                if port is not None else 0)
+            self._flush_dift(block, function, inst_idx, inst_offset, required_prefix=required)
         if info is not None:
             self.reg_manager.add_live_registers(function, block, inst_idx, info.live_registers)
             patch = memory.allocate_registers(function, block, inst_idx)(info.patch)
@@ -101,6 +215,7 @@ class TransientDiftReplayMixin:
             patch = self.port_policy.allocate_registers(function, block, inst_idx)(patch)
             self.port_policy.insert_at(block, inst_offset, Patch.from_function(patch))
         self._queue_apply_requested = info is not None and info.queues_tags
+        self._effect_index = inst_idx
         if not rep and getattr(self, "propagate", True):
             # REP's transient replacement already owns per-element propagation
             # and policies. Never call the normal-copy post-REP tag handler.
@@ -110,9 +225,14 @@ class TransientDiftReplayMixin:
             self._flush_dift(block, function, inst_idx, inst_offset)
 
     def _build_dift_patch(self, block, inst, inst_offset, regs_read, regs_write, **kwargs):
+        start = len(self.llvm_ir)
         patch = super()._build_dift_patch(block, inst, inst_offset, regs_read, regs_write, **kwargs)
         self.pending_registers.update(regs_write)
         self.pending_memory |= kwargs['mem_write'] is not None
+        self.effects.append(ReplayEffect(
+            getattr(self, '_effect_index', 0), tuple(self.llvm_ir[start:]), frozenset(regs_write),
+            kwargs['mem_write'] is not None,
+            kwargs['mem_read'] is not None and getattr(self, '_queue_apply_requested', True)))
         return patch
 
     def _format_llvm_ir(self, body, *, target_triple=None):

@@ -18,6 +18,40 @@ from test_live_register_preservation import make_module
 
 
 class LazyDiftTests(unittest.TestCase):
+    def test_flush_uses_a_dead_flag_boundary_and_keeps_the_later_prefix_pending(self):
+        for body, expected in (
+                ('mov rax,rdi\ncmp rsi,rdx\nje .Lend\n.Lend:', [1]),
+                ('mov rax,rsi\ncmp r10,r11\nmov rbx,rdx\nmov rdi,[rax]\nret', [1, 4])):
+            with self.subTest(body=body):
+                arch = X64Architecture()
+                ir, module, block, abi, registers = make_module(arch, gtirb.Module.ISA.X64, b'')
+                assembler = Assembler(module)
+                assembler.assemble('.intel_syntax noprefix\n' + body)
+                code = assembler.finalize().text_section.data
+                block.byte_interval.contents = code
+                block.byte_interval.size = block.size = len(code)
+                if body.endswith('.Lend:'):
+                    ir.cfg.add(gtirb.Edge(block, gtirb.ProxyBlock(module=module),
+                                        gtirb.Edge.Label(gtirb.EdgeType.Branch, conditional=True, direct=True)))
+                for name in ('scratchpad', 'dift_reg_tags', 'dift_reg_queued_tags', 'dift_reg_queue_pending',
+                             'old_rsp', 'memory_history_top', 'report_gadget_KASPER_CACHE',
+                             'report_gadget_KASPER_MDS'):
+                    gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
+                manager = LiveRegisterManager(module, abi)
+                for index, inst in enumerate(manager.analyzer.decoder.get_instructions(block)):
+                    # Boundary 1 has spare GPRs; later boundaries force spills.
+                    module.aux_data['liveRegisterSets'].data[gtirb.Offset(block, inst.address-block.address)] = \
+                        0 if index == 1 else (1 << len(registers)) - 1
+                memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.analyzer.decoder, arch)
+                replay = transient_replay_pass(arch, manager, block.section, manager.analyzer.decoder,
+                                              memory_policy=memory)
+                passes = PassManager()
+                passes.add(replay)
+                with patch.object(replay, '_emit_replay', wraps=replay._emit_replay) as emit:
+                    passes.run(ir)
+                self.assertEqual([c.args[2] for c in emit.call_args_list], expected)
+                self.assertNotIn(abi.flag_register(), emit.call_args_list[0].args[-1].live_registers)
+
     def test_independent_policy_does_not_flush_but_queue_and_address_readers_do(self):
         arch = X64Architecture()
         ir, module, block, abi, _ = make_module(arch, gtirb.Module.ISA.X64, b'')
@@ -42,11 +76,11 @@ class LazyDiftTests(unittest.TestCase):
         observed = []
         original = replay._flush_dift
 
-        def record(block, function, index, offset):
+        def record(block, function, index, offset, **kwargs):
             if replay.llvm_ir:
                 observed.append((index, {r.name for r in replay.pending_registers},
                                  replay.pending_queue_apply))
-            original(block, function, index, offset)
+            original(block, function, index, offset, **kwargs)
 
         passes = PassManager()
         passes.add(replay)
