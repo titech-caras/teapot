@@ -76,7 +76,8 @@ class TransientDiftReplayMixin:
         chosen frame register, but never SP/TP/GP or architectural zero.
         """
         if self.arch.name == 'x64':
-            return assembly, registers, len(registers.registers)
+            dead = len(set(self.reg_manager.abi._scratch_registers()) - live)
+            return assembly, registers, max(0, len(registers.registers) - dead)
         movable = [r for r in registers if r.name not in {'sp', 'tp', 'gp', 'zero', 'x31'}]
         pool = list(self.reg_manager.abi._scratch_registers())
         pool += [r for r in movable if r not in pool]
@@ -100,7 +101,14 @@ class TransientDiftReplayMixin:
         registers = [mapping.get(r, r) for r in registers]
         wrapper_count = 2 if self.arch.name == 'aarch64' else int(
             any(r.name == 'sp' for r in registers) or bool(re.search(r'\bf[ast][0-9]+\b', assembly)))
-        return assembly, registers, max(wrapper_count, len(movable))
+        controls = self._plan_scratch_registers(wrapper_count, live).registers
+        # Count the actual mapped GPRs plus wrapper temporaries, not just the
+        # ABI scratch pool: LLVM may also have used an argument/callee register
+        # that is dead at this boundary, and controls can share a body register.
+        clobbered = (set(registers) | set(controls)) - {
+            self.reg_manager.abi.get_register(name)
+            for name in (('sp',) if self.arch.name == 'aarch64' else ('sp', 'tp', 'gp', 'zero'))}
+        return assembly, registers, len(clobbered & live)
 
     def _flush_dift(self, block, function, inst_idx, inst_offset, *, required_prefix=None):
         if not self.effects:
@@ -130,10 +138,9 @@ class TransientDiftReplayMixin:
                 compiled[count] = assembly, self._get_register_usage(assembly)
             assembly, registers = compiled[count]
             plan = self._scratch_plan(function, block, index)
-            assembly, registers, needed = self._allocate_replay_scratch(
+            assembly, registers, spills = self._allocate_replay_scratch(
                 assembly, registers, plan.live_registers)
-            dead = len(set(self.reg_manager.abi._scratch_registers()) - plan.live_registers)
-            cost = max(0, needed - dead) + (self.reg_manager.abi.flag_register() in plan.live_registers)
+            cost = spills + (self.reg_manager.abi.flag_register() in plan.live_registers)
             # Minimum spills + flag save; stable ties toward the reader.
             key = (cost, -index)
             if best is None or key < best[0]:
