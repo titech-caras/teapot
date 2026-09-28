@@ -85,19 +85,25 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase):
     def _build_optimized_dift_values_patch(self, assembly: str, registers, *, scratch_plan=None):
         if scratch_plan is None:
             scratch_plan = self._plan_scratch_registers(2)
+        has_call = bool(re.search(r'(?m)^\s*call\s+', assembly))
+        uses_stack = has_call or any(reg.name == 'sp' for reg in registers)
+        uses_tp = any(reg.name == 'tp' for reg in registers)
+        float_regs = sorted(set(re.findall(
+            r"\b(?:f[ts](?:[0-9]|1[01])|fa[0-7]|f(?:[0-9]|[12][0-9]|3[01]))\b",
+            assembly)))
+        if has_call:
+            float_regs = [f'f{idx}' for idx in range(32)]
+        # Extraction rejects calls. Only an actual stack operand or FP-control
+        # save needs a wrapper temporary; leaf integer snippets need neither.
+        controls = scratch_plan.registers[:1] if uses_stack or float_regs else ()
         saved_regs = []
         primary_scratch = scratch_plan.registers[0]
-        for reg in (primary_scratch, *registers):
+        for reg in (*controls, *registers):
             if (reg.name in {"zero", "sp", "tp"} or reg in saved_regs
                     or reg not in scratch_plan.live_registers):
                 continue
             saved_regs.append(reg)
         stack_delta = TEXT_DIFT_LLVM_STACK_SP_OFFSET - TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET
-        float_regs = sorted(set(re.findall(
-            r"\b(?:f[ts](?:[0-9]|1[01])|fa[0-7]|f(?:[0-9]|[12][0-9]|3[01]))\b",
-            assembly)))
-        if re.search(r"(?m)^\s*call\s+", assembly):
-            float_regs = [f"f{idx}" for idx in range(32)]
         float_offset = len(saved_regs) * 8
         control_offset = float_offset + len(float_regs) * 8
         assert control_offset + 8 <= TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT
@@ -105,8 +111,10 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase):
         @self.arch.constraints()
         def patch(ctx: InsertionContext):
             # mcasm starts at RV64I. Match LLVM's features for this assembly
-            # transaction, including FP state saves around generated calls.
+            # transaction, including preservation of generated FP operations.
             asm = '.attribute arch, "rv64imafd"\n'
+            if not (saved_regs or float_regs or uses_stack or uses_tp):
+                return asm + assembly.strip() + '\n'
             asm += self.arch.load_address("tp", f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
             for idx, reg in enumerate(saved_regs):
                 asm += f"sd {reg}, {idx * 8}(tp)\n"
@@ -114,22 +122,28 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase):
                 asm += f"fsd {reg}, {float_offset + idx * 8}(tp)\n"
             if float_regs:
                 asm += f"frcsr {primary_scratch}\nsd {primary_scratch}, {control_offset}(tp)\n"
-            asm += f"""
+            if uses_stack:
+                asm += f"""
                 li {primary_scratch}, {TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}
                 add {primary_scratch}, tp, {primary_scratch}
                 sd sp, 0({primary_scratch})
                 li {primary_scratch}, {stack_delta}
                 add sp, tp, {primary_scratch}
+                """
+            # Tag accesses can fault. Restore application TLS even if LLVM
+            # never names TP: an application signal handler needs it too.
+            asm += f"""
                 {self.arch.load_address("tp", f"scratchpad+{RISCV64_ORIGINAL_TP_OFFSET}")}
                 ld tp, 0(tp)
             """
             asm += assembly.strip() + "\n"
             asm += self.arch.load_address("tp", f"scratchpad+{TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET}")
-            asm += f"""
+            if uses_stack:
+                asm += f"""
                 li {primary_scratch}, {TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT}
                 add {primary_scratch}, tp, {primary_scratch}
                 ld sp, 0({primary_scratch})
-            """
+                """
             for idx, reg in enumerate(float_regs):
                 asm += f"fld {reg}, {float_offset + idx * 8}(tp)\n"
             if float_regs:

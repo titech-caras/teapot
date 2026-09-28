@@ -98,7 +98,9 @@ class TransientDiftReplayMixin:
                    r'\b(?:ra|[ast][0-9]+|x(?:[0-9]|[12][0-9]|3[01]))\b')
         assembly = re.sub(pattern, replace, assembly)
         registers = [mapping.get(r, r) for r in registers]
-        return assembly, registers, max(2, len(movable))
+        wrapper_count = 2 if self.arch.name == 'aarch64' else int(
+            any(r.name == 'sp' for r in registers) or bool(re.search(r'\bf[ast][0-9]+\b', assembly)))
+        return assembly, registers, max(wrapper_count, len(movable))
 
     def _flush_dift(self, block, function, inst_idx, inst_offset, *, required_prefix=None):
         if not self.effects:

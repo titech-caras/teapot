@@ -17,8 +17,11 @@ def replay_asm(replay, inst, regs_read, regs_write, *, block=None,
     parsed = replay._parse_and_optimize_llvm(replay._format_llvm_ir(
         '\n'.join(replay.llvm_ir), target_triple=replay.target_triple))
     asm = replay._extract_function_asm(replay.target_machine.emit_assembly(parsed))
+    registers = replay._get_register_usage(asm)
+    if hasattr(replay, '_allocate_replay_scratch'):
+        asm, registers, _ = replay._allocate_replay_scratch(asm, registers, plan.live_registers)
     flush = replay._build_optimized_dift_values_patch(
-        asm, replay._get_register_usage(asm), scratch_plan=plan)
+        asm, registers, scratch_plan=plan)
     if replay.arch.name == 'x64':
         from test_x64_rep_dift import wrapped_patch
         return wrapped_patch(replay.arch, capture) + wrapped_patch(replay.arch, flush)
