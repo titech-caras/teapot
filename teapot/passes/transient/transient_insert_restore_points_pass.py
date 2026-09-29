@@ -86,8 +86,26 @@ class TransientInsertRestorePointsPass(VisitorPassMixin, RegInstAwarePassMixin):
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
         instruction_len_sum: List[int] = [0] + list(itertools.accumulate(i.size for i in instructions))
+        # Marker pads are landing machinery, not application work: they must
+        # not shrink the speculation window. They can sit anywhere in the block
+        # until the anchor pass moves them to its start.
+        marker = b"".join(word.to_bytes(4, "little") for word in self.arch.transient_pad_words())
+        contents = bytes(block.contents)
+        pad_ranges = []
+        start = contents.find(marker) if marker else -1
+        while start != -1:
+            pad_ranges.append((start, start + len(marker)))
+            start = contents.find(marker, start + len(marker))
+
+        def instruction_cost(instruction):
+            offset = instruction.address - block.address
+            end = offset + instruction.size
+            if any(offset < pad_end and pad_start < end for pad_start, pad_end in pad_ranges):
+                return 0
+            return self.arch.static_instruction_cost(instruction)
+
         instruction_cost_sum = [0] + list(itertools.accumulate(
-            self.arch.static_instruction_cost(inst) for inst in instructions))
+            instruction_cost(inst) for inst in instructions))
 
         unconditional_rollback_idx = self.__unconditional_rollback_at(block, instructions)
         if unconditional_rollback_idx is not None:

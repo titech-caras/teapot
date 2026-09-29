@@ -89,28 +89,55 @@ class X64ControlFlowPatchesMixin:
 
         return self.mem_operand_to_str(block, last_inst, dest_operand)
 
+    def transient_pad_words(self):
+        """The marker pair this mode places at the copy's reachable targets."""
+        return tuple(self.MAGIC_WORDS)
+
+    def transient_pad_passes(self, transient_section, decoder):
+        """Design step 5: marker pads at the copy's reachable indirect targets."""
+        from teapot.passes.transient.pad_transient_targets_pass import PadTransientTargetsPass
+
+        return [PadTransientTargetsPass(transient_section, decoder, self.transient_pad_words(),
+                                        directive=".long", arch=self)]
+
+    def transient_anchor_passes(self, transient_section):
+        """Design step 5: pads displaced by later passes move back to block starts."""
+        from teapot.passes.transient.pad_transient_targets_pass import AnchorTransientPadsPass
+
+        return [AnchorTransientPadsPass(transient_section, self.transient_pad_words(),
+                                        directive=".long")]
+
+    def indirect_branch_check_options(self, instruction):
+        # Returns keep the copy sub-range clause: the return address after a
+        # call need not carry a pad, while normal text still needs the pair.
+        # `rep ret` reaches here as a two-word mnemonic.
+        return ({"ret_clause": True}
+                if instruction.mnemonic.split()[-1] in {"ret", "retf"} else {})
+
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
-                                    text_end_symbol: gtirb.Symbol, reads_registers=None):
+                                    text_end_symbol: gtirb.Symbol, reads_registers=None, *, ret_clause=False):
         @self.constraints(scratch_registers=2, clobbers_flags=True,
                           reads_registers=reads_registers or set())
         def patch(ctx):
             r1, r2 = ctx.scratch_registers
-            return f"""
-                mov {r1}, {operand_str}
+            # One window from normal text to the copy's end; the copy follows
+            # normal text in the link. In-window branch targets need the pair,
+            # and returns optionally keep the copy sub-range clause.
+            ret_accept = f"""
                 lea {r2}, [rip+{transient_start_symbol.name}]
                 cmp {r1}, {r2}
-                jb .L__indbr_check_text_marker{SYMBOL_SUFFIX}
-                lea {r2}, [rip+{transient_end_symbol.name}]
-                cmp {r1}, {r2}
-                jb .L__indbr_check_skip{SYMBOL_SUFFIX}
-            .L__indbr_check_text_marker{SYMBOL_SUFFIX}:
+                jae .L__indbr_check_skip{SYMBOL_SUFFIX}
+            """ if ret_clause else ""
+            return f"""
+                mov {r1}, {operand_str}
                 lea {r2}, [rip+{text_start_symbol.name}]
                 cmp {r1}, {r2}
                 jb restore_checkpoint_MALFORMED_INDIRECT_BR
-                lea {r2}, [rip+{text_end_symbol.name}]
+                lea {r2}, [rip+{transient_end_symbol.name}]
                 cmp {r1}, {r2}
                 jae restore_checkpoint_MALFORMED_INDIRECT_BR
+                {ret_accept}
                 cmp dword ptr [{r1}], 0x{self.MAGIC_WORDS[0]:08x}
                 jne restore_checkpoint_MALFORMED_INDIRECT_BR
                 cmp dword ptr [{r1} + 4], 0x{self.MAGIC_WORDS[1]:08x}
@@ -147,3 +174,9 @@ class X64ControlFlowPatchesMixin:
     def is_control_transfer_instruction(instruction) -> bool:
         mnemonic = instruction.mnemonic.split()[-1]
         return mnemonic in {"call", "jmp", "ret"} or mnemonic.startswith(("j", "loop"))
+
+    @staticmethod
+    def is_direct_transfer_instruction(instruction) -> bool:
+        """A symbolic jmp/call/loop operand is an immediate, direct target."""
+        mnemonic = instruction.mnemonic.split()[-1].lower()
+        return mnemonic in {"call", "jmp"} or mnemonic.startswith(("j", "loop"))

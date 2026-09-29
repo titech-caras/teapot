@@ -1,7 +1,8 @@
 """Execute the actual emitted software target predicate and normal bouncer.
 
 These are regression gates for hardware experiments, not a hardware backend.
-The unrestricted transient range and full marker test must not be narrowed.
+Every ISA now uses one window (normal text through the copy's end) and requires
+the marker pair for branch targets; returns keep the copy sub-range clause.
 """
 from pathlib import Path
 import platform
@@ -114,8 +115,14 @@ extern unsigned char text_start[], text_end[], transient_start[], transient_end[
 extern unsigned char complete_marker[], wrong_second[], bare_landing[], prefixed_marker[];
 extern unsigned char trusted_runtime_landing[], marker_crossing_end[];
 static int expected(uintptr_t p) {
+#ifdef NEW_WINDOW_PREDICATE
+    /* One window: an in-window target needs the pair; returns keep the copy
+       sub-range clause through a separate patch. */
+    if (p < (uintptr_t)text_start || p >= (uintptr_t)transient_end) return 0;
+#else
     if (p >= (uintptr_t)transient_start && p < (uintptr_t)transient_end) return 1;
     if (p < (uintptr_t)text_start || p >= (uintptr_t)text_end) return 0;
+#endif
     uint32_t a, b;
     memcpy(&a, (void *)p, 4);
     memcpy(&b, (void *)(p + 4), 4);
@@ -131,7 +138,7 @@ int main(void) {
     }
     /* Every byte, not just block starts or aligned instruction addresses. */
     for (uintptr_t p = (uintptr_t)transient_start; p < (uintptr_t)transient_end; p++) {
-        assert(check_target(p) == 1); count++;
+        assert(check_target(p) == expected(p)); count++;
     }
     for (uintptr_t p = (uintptr_t)text_start; p < (uintptr_t)text_end; p++) {
         assert(check_target(p) == expected(p)); count++;
@@ -161,6 +168,7 @@ int main(void) {
             command = [compiler, "-O2", "-no-pie", "-fno-pie",
                        f"-DMAGIC0=0x{arch.MAGIC_WORDS[0]:08x}U",
                        f"-DMAGIC1=0x{arch.MAGIC_WORDS[1]:08x}U",
+                       "-DNEW_WINDOW_PREDICATE",
                        str(root / "policy.c"), str(root / "policy.S"), "-o", str(root / "policy")]
             built = subprocess.run(command, capture_output=True, text=True, timeout=30)
             self.assertEqual(built.returncode, 0, built.stderr)
@@ -190,7 +198,10 @@ int main(void) {
             edge = gtirb.Edge.Type.Return if inst.mnemonic.startswith('ret') else gtirb.Edge.Type.Branch
             with self.subTest(instruction=str(inst)):
                 self.assertEqual(arch.indirect_branch_operand(edge, inst), operand)
-                self.assertEqual(arch.indirect_branch_check_options(inst), {'strip_pac': True})
+                options = {'strip_pac': True}
+                if inst.mnemonic.startswith('ret'):
+                    options['ret_clause'] = True
+                self.assertEqual(arch.indirect_branch_check_options(inst), options)
                 self.assertTrue(arch.dift_should_skip_instruction(inst))
         scratch = tuple(arch.abi.get_register(name) for name in ('x8', 'x9', 'x10'))
         self._execute(arch, 'aarch64-linux-gnu-gcc',

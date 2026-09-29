@@ -60,6 +60,14 @@ class ArchitectureControlFlowMixin(ABC):
     def is_control_transfer_instruction(self, instruction) -> bool:
         return False
 
+    def is_direct_transfer_instruction(self, instruction) -> bool:
+        """True for a branch or call whose target is an immediate operand."""
+        return False
+
+    def transient_pad_words(self):
+        """The marker pair this mode places at the copy's reachable targets."""
+        return ()
+
     def is_instrumentation_helper_instruction(self, inst, inst_idx: int, instructions) -> bool:
         return False
 

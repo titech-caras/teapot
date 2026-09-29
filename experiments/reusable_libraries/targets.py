@@ -23,15 +23,15 @@ MODES = {
     'riscv64': dict(isa='RISCV64', layout='riscv64-sv39', tag_storage='shadow', asan='libasan.so.8'),
 }
 DEFAULT_MODE = {'X64': 'x64', 'ARM64': 'aarch64-vma42', 'RISCV64': 'riscv64'}
-TARGET_IDENTIFICATIONS = ('software', 'aarch64-bti')
+TARGET_IDENTIFICATIONS = ('software', 'aarch64-bti-pac')
 
 
 def target_for(isa, target_identification='software'):
     if target_identification not in TARGET_IDENTIFICATIONS:
         raise ValueError('unsupported target identification: ' + target_identification)
-    if target_identification == 'aarch64-bti':
+    if target_identification == 'aarch64-bti-pac':
         if isa != 'ARM64':
-            raise ValueError('BTI components require AArch64')
+            raise ValueError('BTI/PAC components require AArch64')
         return dict(TARGETS[isa], marker=bytes.fromhex('df2403d59fa280d2'),
                     text_section='.teapot_bti_normal')
     return dict(TARGETS[isa], text_section='.teapot_component_text')

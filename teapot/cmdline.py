@@ -23,8 +23,8 @@ def main():
                         help='Compare DDisasm checkpoint vector masks with Python analysis (diagnostic only)')
     parser.add_argument("--conservative-flags", action="store_true",
                         help="Keep the producer's conservative flag masks instead of Python ABI flag liveness.")
-    parser.add_argument("--target-identification", choices=("software", "aarch64-bti"),
-                        default="software", help="Experimental BTI requires its matching runtime and linker script.")
+    parser.add_argument("--target-identification", choices=("software", "aarch64-bti-pac"),
+                        default="software", help="The experimental BTI+PAC mode requires its matching runtime and linker script.")
     parser.add_argument("input", nargs="?")
     parser.add_argument("output", nargs="?")
     parser.add_argument(

@@ -141,13 +141,14 @@ class TeapotPipeline:
         self.module = self.ir.modules[0]
         self.arch = get_arch(self.module)
         if self.options.target_identification != "software":
-            if self.options.target_identification != "aarch64-bti" or self.arch.name != "aarch64":
-                raise ValueError("the experimental BTI backend requires AArch64")
+            if (self.options.target_identification != "aarch64-bti-pac" or
+                    self.arch.name != "aarch64"):
+                raise ValueError("the experimental BTI/PAC backend requires AArch64")
             if not all((self.options.enable_indirect_transform, self.options.enable_indirect_check,
                         self.options.enable_checkpoints)):
-                raise ValueError("BTI requires target transformation, checking and checkpoints")
-            from teapot.arch.aarch64.bti import AArch64BTIArchitecture
-            self.arch = AArch64BTIArchitecture()
+                raise ValueError("BTI/PAC requires target transformation, checking and checkpoints")
+            from teapot.arch.aarch64.bti_pac import AArch64BTIPACArchitecture
+            self.arch = AArch64BTIPACArchitecture()
         if self.linked_component is not None:
             if len(self.ir.modules) != 1 or self.arch.name not in ("x64", "aarch64", "riscv64"):
                 raise ValueError("separate component rewriting requires one supported ELF64 module")
@@ -206,6 +207,7 @@ class TeapotPipeline:
 
         self._run_normalize_passes()
         self._create_instrumentation_sections()
+        self._run_pad_passes()
         self.checkpoint_df_blocks |= {
             self.text_transient_mapping.code_blocks_map[uuid].uuid
             for uuid in tuple(self.checkpoint_df_blocks)
@@ -226,7 +228,18 @@ class TeapotPipeline:
         if not self.arch.run_text_passes_before_transient():
             self._run_text_passes()
 
-        if self.options.target_identification == 'aarch64-bti':
+        # Anchor the pads after every pass that writes to the copy: an indirect
+        # branch must land on the marker, not on the guard push, memory logging
+        # or landing restore those passes insert at the copy's block starts.
+        # The move is size-neutral, so the relaxers still see the final layout.
+        # RISC-V inserts late landing entries at copy block starts, so its pads
+        # are anchored after them; the AArch64 branch relaxer edits raw byte
+        # intervals and must not be followed by a rewriting context, so its
+        # pads are anchored before it.
+        if not self.arch.needs_late_text_checkpoints():
+            self._run_anchor_passes()
+
+        if self.options.target_identification == 'aarch64-bti-pac':
             # Outline before the in-place branch relaxer grows joined byte
             # intervals. A later rewriting context would see stale interior
             # alignment residues; final layout belongs to the printer.
@@ -241,10 +254,35 @@ class TeapotPipeline:
 
         if self.arch.needs_late_text_checkpoints():
             self._run_late_text_checkpoint_passes()
-        if self.options.target_identification == "aarch64-bti":
+            self._run_anchor_passes()
+        if self.options.target_identification == "aarch64-bti-pac":
             self.arch.finalize_bti_layout(self)
+        elif self.linked_component is None:
+            # Decision 6: software mode also gives the application's normal text
+            # its own section, so the per-ISA linker script can place it
+            # immediately before the speculative copy. Nothing in the generated
+            # code depends on the layout; only the bounds symbols do.
+            self.text_section.name = ".teapot_normal"
+            self._emit_software_window_bounds()
         if source_lines is not None:
             source_lines.finish(GtirbInstructionDecoder(self.module.isa))
+
+    def _emit_software_window_bounds(self):
+        """Hidden aliases the runtime checks at activation (one ordered window)."""
+        symbols = (
+            ("__teapot_soft_text_start", self.text_section_start_symbol),
+            ("__teapot_soft_text_end", self.text_section_end_symbol),
+            ("__teapot_soft_transient_start", self.transient_section_start_symbol),
+            ("__teapot_soft_transient_end", self.transient_section_end_symbol),
+        )
+        info = self.module.aux_data.setdefault("elfSymbolInfo", gtirb.AuxData(
+            {}, "mapping<UUID,tuple<uint64_t,string,string,string,uint64_t>>"))
+        for name, source in symbols:
+            if next(self.module.symbols_named(name), None) is not None:
+                raise ValueError("input collides with reserved software window symbol " + name)
+            alias = gtirb.Symbol(name=name, payload=source.referent,
+                                 at_end=source.at_end, module=self.module)
+            info.data[alias] = (0, "NOTYPE", "GLOBAL", "HIDDEN", 0)
 
     def _run_pass_manager(self, pass_manager: PassManager, label: str):
         print(f"[teapot] begin {label}", flush=True)
@@ -319,6 +357,26 @@ class TeapotPipeline:
 
         self.landing_pad_targets = set()
         self.checkpoint_spare_registers = {}
+
+    def _run_pad_passes(self):
+        """Arch pad passes for the freshly made speculative copy (design step 5)."""
+        make_passes = getattr(self.arch, "transient_pad_passes", None)
+        if make_passes is None:
+            return
+        pass_manager = PassManager()
+        for arch_pass in make_passes(self.transient_section, self.decoder):
+            pass_manager.add(arch_pass)
+        self._run_pass_manager(pass_manager, "transient-pads")
+
+    def _run_anchor_passes(self):
+        """Move pads that later copy-writing passes displaced off block starts."""
+        make_passes = getattr(self.arch, "transient_anchor_passes", None)
+        if make_passes is None:
+            return
+        pass_manager = PassManager()
+        for arch_pass in make_passes(self.transient_section):
+            pass_manager.add(arch_pass)
+        self._run_pass_manager(pass_manager, "transient-anchor")
 
     def _run_preprocess_passes(self):
         pass_manager = PassManager()

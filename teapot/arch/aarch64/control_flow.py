@@ -10,8 +10,12 @@ from teapot.utils.misc import generate_distinct_label_name
 
 
 AARCH64_CALL_MNEMONICS = frozenset(("bl", "blr", "blraa", "blrab", "blraaz", "blrabz"))
+AARCH64_DIRECT_TRANSFER_MNEMONICS = frozenset(("b", "bl", "cbz", "cbnz", "tbz", "tbnz"))
 AARCH64_PAC_BRANCHES = frozenset(("braa", "brab", "braaz", "brabz", "blraa", "blrab",
                                 "blraaz", "blrabz", "retaa", "retab"))
+AARCH64_PAC_AUTH_WORDS = frozenset((0xd50323bf, 0xd50323ff, 0xd65f0bff, 0xd65f0fff))
+AARCH64_PAC_WORD_BASES = frozenset((0xdac10000, 0xdac12000, 0xdac11000, 0xdac13000))
+AARCH64_PAC_HINT_WORDS = frozenset((0xd503233f, 0xd503237f))
 
 
 class AArch64ControlFlowPatchesMixin:
@@ -145,6 +149,24 @@ class AArch64ControlFlowPatchesMixin:
     def indirect_transform_uses_live_registers(self) -> bool:
         return True
 
+    def transient_pad_words(self):
+        """The marker pair this mode places at the copy's reachable targets."""
+        return ((0xd50324df, self.MAGIC_WORDS[1])
+                if getattr(self, "uses_bti_landing_checks", False) else tuple(self.MAGIC_WORDS))
+
+    def transient_pad_passes(self, transient_section, decoder):
+        """Design step 5: marker pads at the copy's reachable indirect targets."""
+        from teapot.passes.transient.pad_transient_targets_pass import PadTransientTargetsPass
+
+        return [PadTransientTargetsPass(transient_section, decoder, self.transient_pad_words(),
+                                        arch=self)]
+
+    def transient_anchor_passes(self, transient_section):
+        """Design step 5: pads displaced by later passes move back to block starts."""
+        from teapot.passes.transient.pad_transient_targets_pass import AnchorTransientPadsPass
+
+        return [AnchorTransientPadsPass(transient_section, self.transient_pad_words())]
+
     def indirect_branch_operand(self, edge_type, last_inst, block: gtirb.CodeBlock = None) -> Optional[str]:
         if edge_type == gtirb.cfg.Edge.Type.Return:
             return last_inst.op_str.strip() or "x30"
@@ -152,7 +174,10 @@ class AArch64ControlFlowPatchesMixin:
         return last_inst.op_str.split(",", 1)[0].strip() or None
 
     def indirect_branch_check_options(self, instruction):
-        return {"strip_pac": True} if instruction.mnemonic in AARCH64_PAC_BRANCHES else {}
+        options = {"strip_pac": True} if instruction.mnemonic in AARCH64_PAC_BRANCHES else {}
+        if instruction.mnemonic in ("ret", "retaa", "retab"):
+            options["ret_clause"] = True
+        return options
 
     def instruction_must_rollback(self, instruction) -> bool:
         return (instruction.mnemonic in {
@@ -164,9 +189,22 @@ class AArch64ControlFlowPatchesMixin:
     def is_control_transfer_instruction(self, instruction) -> bool:
         return instruction.mnemonic in {"b", "bl", "blr", "br", "ret"} | AARCH64_PAC_BRANCHES
 
+    def is_direct_transfer_instruction(self, instruction) -> bool:
+        """A direct branch or call takes its target as an immediate operand."""
+        mnemonic = instruction.mnemonic.lower()
+        return mnemonic in AARCH64_DIRECT_TRANSFER_MNEMONICS or mnemonic.startswith("b.")
+
+    @staticmethod
+    def is_pac_word(word: int) -> bool:
+        """True for PAC signing, authentication and authenticated-return words."""
+        if word in AARCH64_PAC_AUTH_WORDS or word in AARCH64_PAC_HINT_WORDS:
+            return True
+        return (word & 0xffffd800) in AARCH64_PAC_WORD_BASES
+
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
-                                    text_end_symbol: gtirb.Symbol, reads_registers=None, *, strip_pac=False):
+                                    text_end_symbol: gtirb.Symbol, reads_registers=None, *, strip_pac=False,
+                                    ret_clause=False):
         @self.constraints(scratch_registers=3,
                           clobbers_flags=True,
                           reads_registers=reads_registers or set())
@@ -179,22 +217,24 @@ class AArch64ControlFlowPatchesMixin:
             # globally for ordinary AArch64 input that contains no PAC forms.
             normalize = (f".inst {0xdac143e0 | aarch64_register_number(getattr(target_reg, 'name', target_reg)):#x}"
                          if strip_pac else "")
+            # Returns keep the copy sub-range clause: a ret inside the copy is
+            # accepted by range, while a normal-text return needs the pair.
+            ret_accept = f"""
+                {self.load_address(temp_reg, transient_start_symbol.name)}
+                cmp {target_reg}, {temp_reg}
+                b.hs 1f
+            """ if ret_clause else ""
+            # One window: normal text immediately precedes the copy in the link.
             return f"""
                 mov {target_reg}, {operand_str}
                 {normalize}
-                {self.load_address(temp_reg, transient_start_symbol.name)}
-                cmp {target_reg}, {temp_reg}
-                b.lo 4f
-                {self.load_address(temp_reg, transient_end_symbol.name)}
-                cmp {target_reg}, {temp_reg}
-                b.lo 1f
-            4:
                 {self.load_address(temp_reg, text_start_symbol.name)}
                 cmp {target_reg}, {temp_reg}
                 b.lo 2f
-                {self.load_address(temp_reg, text_end_symbol.name)}
+                {self.load_address(temp_reg, transient_end_symbol.name)}
                 cmp {target_reg}, {temp_reg}
                 b.hs 2f
+                {ret_accept}
                 ldr {self.w_reg(temp_reg)}, [{target_reg}]
                 {self.mov_w_imm32(self.w_reg(magic_reg), self.MAGIC_WORDS[0])}
                 cmp {self.w_reg(temp_reg)}, {self.w_reg(magic_reg)}

@@ -272,24 +272,56 @@ class RISCV64ControlFlowPatchesMixin:
         mnemonic = instruction.mnemonic
         return mnemonic in {"jal", "jalr"} or mnemonic.startswith("b")
 
+    def is_direct_transfer_instruction(self, instruction) -> bool:
+        """Jumps and branches take an immediate target; JALR is indirect."""
+        mnemonic = instruction.mnemonic.lower()
+        if mnemonic.startswith("c."):
+            mnemonic = mnemonic[2:]
+        return mnemonic in {"j", "jal"} or mnemonic.startswith("b")
+
+    def transient_pad_words(self):
+        """The marker pair this mode places at the copy's reachable targets."""
+        return tuple(self.MAGIC_WORDS)
+
+    def transient_pad_passes(self, transient_section, decoder):
+        """Design step 5: marker pads at the copy's reachable indirect targets."""
+        from teapot.passes.transient.pad_transient_targets_pass import PadTransientTargetsPass
+
+        return [PadTransientTargetsPass(transient_section, decoder, self.transient_pad_words(),
+                                        arch=self)]
+
+    def transient_anchor_passes(self, transient_section):
+        """Design step 5: pads displaced by later passes move back to block starts."""
+        from teapot.passes.transient.pad_transient_targets_pass import AnchorTransientPadsPass
+
+        return [AnchorTransientPadsPass(transient_section, self.transient_pad_words())]
+
+    def indirect_branch_check_options(self, instruction):
+        # Returns keep the copy sub-range clause: the return address after a
+        # call need not carry a pad, while normal text still needs the pair.
+        return {"ret_clause": True} if self.is_return_instruction(instruction) else {}
+
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
-                                    text_end_symbol: gtirb.Symbol, reads_registers=None):
+                                    text_end_symbol: gtirb.Symbol, reads_registers=None, *, ret_clause=False):
         @self.constraints(scratch_registers=3,
                           reads_registers=reads_registers or set())
         def patch(ctx):
             target_reg, temp_reg, magic_reg = ctx.scratch_registers[:3]
+            # One window from normal text to the copy's end; the copy follows
+            # normal text in the link. In-window branch targets need the pair,
+            # and returns optionally keep the copy sub-range clause.
+            ret_accept = f"""
+                {self.load_address(temp_reg, transient_start_symbol.name)}
+                bgeu {target_reg}, {temp_reg}, 1f
+            """ if ret_clause else ""
             return f"""
                 {self.materialize_target(target_reg, operand_str)}
-                {self.load_address(temp_reg, transient_start_symbol.name)}
-                bltu {target_reg}, {temp_reg}, 4f
-                {self.load_address(temp_reg, transient_end_symbol.name)}
-                bltu {target_reg}, {temp_reg}, 1f
-            4:
                 {self.load_address(temp_reg, text_start_symbol.name)}
                 bltu {target_reg}, {temp_reg}, 2f
-                {self.load_address(temp_reg, text_end_symbol.name)}
+                {self.load_address(temp_reg, transient_end_symbol.name)}
                 bgeu {target_reg}, {temp_reg}, 2f
+                {ret_accept}
                 lw {temp_reg}, 0({target_reg})
                 li {magic_reg}, 0x{self.MAGIC_WORDS[0]:08x}
                 bne {temp_reg}, {magic_reg}, 2f

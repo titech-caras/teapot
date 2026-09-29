@@ -31,7 +31,12 @@ class ReturnSlotAnalysis:
         self.decoder = decoder
         self.sp, self.fp, self.link = arch.saved_return_registers()
 
-    def analyze(self, function, *, checkpoint_sources=()):
+    def analyze(self, function, *, checkpoint_sources=(), accept_pac=False):
+        """Prove one saved-return lifetime. With accept_pac, PAC signing and
+        authentication instructions are transparent to the incoming LR
+        (matching the signed-return mode); the caller must still gate this to
+        the mode that inserts them."""
+        self.accept_pac = accept_pac
         blocks = set(function.get_all_blocks())
         entries = set(function.get_entry_blocks())
         if len(entries) != 1:
@@ -53,7 +58,7 @@ class ReturnSlotAnalysis:
                 assignments[key] = self.arch.stack_register_assignment(inst)
                 if self.arch.abi.is_call_instruction(inst):
                     calls.add(key)
-                if not self.arch.is_control_transfer_instruction(inst):
+                if not self.arch.is_control_transfer_instruction(inst) and not self._pac(inst):
                     link_used |= self.link in writes[key] or self.link in self.arch.access_registers(
                         self.arch.abi, inst, 0)
                 if access is None or access.return_offset is None:
@@ -183,7 +188,8 @@ class ReturnSlotAnalysis:
                             raise UnsupportedReturnSlot("reload is not dominated by its save")
                         phase, original_link = 2, True
                     elif key in calls or (self.link in writes[key] and
-                                          not self.arch.is_control_transfer_instruction(instructions[block][index])):
+                                          not self.arch.is_control_transfer_instruction(instructions[block][index]) and
+                                          not self._pac(instructions[block][index])):
                         # The operand-access fallback can mark JR's sole
                         # operand as written. A non-linking transfer cannot
                         # replace the return address; calls still do.
@@ -209,6 +215,10 @@ class ReturnSlotAnalysis:
                 raise UnsupportedReturnSlot("slot base is lost at the insertion boundary")
             sites.append(ReturnSlotSite(key[0], key[1] + int(poison), base, slot - frame[base], poison))
         return tuple(sites)
+
+    def _pac(self, instruction) -> bool:
+        return (self.accept_pac and instruction is not None and instruction.size == 4 and
+                self.arch.is_pac_word(int.from_bytes(instruction.bytes, "little")))
 
     def _frame_after(self, frame, writes, assignment):
         result = {reg: None if reg in writes else offset for reg, offset in frame.items()}

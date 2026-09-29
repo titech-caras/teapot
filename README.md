@@ -239,15 +239,24 @@ sed -i -f scripts/fix_asm.sed a.inst.S
 For RV64, use a RISC-V-capable `gtirb-pprinter` build and assembler path; see
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the current smoke-test notes.
 
-4. Recompile the instrumented assembly file.
+4. Recompile the instrumented assembly file. Whole-program rewrites put the application's normal
+text in `.teapot_normal`, and the indirect-target check treats normal text plus the speculative copy
+as one window, so link with the per-ISA window script that libcheckpoint ships in `cmake/`:
+`X64Software.ld`, `Riscv64Software.ld` or `AArch64Software.ld`.
 ```shell
-gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint -lhfuzz -lasan
+gcc -o a.inst a.inst.S -no-pie -nostartfiles -Wl,-T,/path/to/libcheckpoint/cmake/X64Software.ld \
+    -lcheckpoint -lhfuzz -lasan
 ```
 For AArch64 MTE tag storage, compile with an MTE-capable target and omit
 `-lasan`:
 ```shell
-aarch64-linux-gnu-gcc -march=armv8.5-a+memtag -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint
+aarch64-linux-gnu-gcc -march=armv8.5-a+memtag -o a.inst a.inst.S -no-pie -nostartfiles \
+    -Wl,-T,/path/to/libcheckpoint/cmake/AArch64Software.ld -lcheckpoint
 ```
+Without the script, the linker may place the copy before the normal text. The runtime then refuses
+to start, with exit status 78. `python3 /path/to/libcheckpoint/cmake/validate_software_layout.py a.inst`
+checks a linked binary. The `aarch64-bti-pac` mode uses `AArch64Bti.ld` instead (see
+`experiments/hardware_targets/BTI.md`).
 In the provided Docker image, run MTE smoke tests with:
 ```shell
 qemu-aarch64-mte -cpu max -R 0x40000000000 -s 33554432 -L /opt/aarch64-mte-sysroot ./a.inst

@@ -33,9 +33,9 @@ class ComponentArchitecturesTests(unittest.TestCase):
             validate_mode_contract({'components': []})
 
     def test_bti_contract_rejects_software_objects_and_other_isas(self):
-        contract = mode_metadata('ARM64', 'aarch64-vma48', 'aarch64-bti')
+        contract = mode_metadata('ARM64', 'aarch64-vma48', 'aarch64-bti-pac')
         manifest = dict(contract, components=[dict(contract, component_id='library')])
-        self.assertEqual(validate_mode_contract(manifest, target_identification='aarch64-bti'),
+        self.assertEqual(validate_mode_contract(manifest, target_identification='aarch64-bti-pac'),
                          ('ARM64', 'aarch64-vma48'))
         with self.assertRaisesRegex(ValueError, 'target identification mismatch'):
             validate_mode_contract(manifest, target_identification='software')
@@ -44,8 +44,8 @@ class ComponentArchitecturesTests(unittest.TestCase):
             validate_mode_contract(manifest)
         for isa in ('X64', 'RISCV64'):
             with self.assertRaisesRegex(ValueError, 'require AArch64'):
-                mode_metadata(isa, target_identification='aarch64-bti')
-        self.assertEqual(target_for('ARM64', 'aarch64-bti')['marker'],
+                mode_metadata(isa, target_identification='aarch64-bti-pac')
+        self.assertEqual(target_for('ARM64', 'aarch64-bti-pac')['marker'],
                          AArch64BTIArchitecture().nop_bytes)
 
     def test_dynamic_symbol_name_bounds_are_checked_before_execution(self):

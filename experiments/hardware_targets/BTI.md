@@ -1,5 +1,9 @@
 # Opt-in AArch64 BTI experiment (2026-09-22)
 
+> Folded 2026-09-29 (decision 8): BTI and PAC are one feature, enabled together.
+> The mode is now `--target-identification aarch64-bti-pac`; this document keeps
+> the original BTI-only experiment record.
+
 This backend is opt-in (`--target-identification aarch64-bti`), not the default.
 The user approved replacing the first marker with BTI and requested AArch64
 only for now; this supersedes the earlier literal-marker objection for this opt-in

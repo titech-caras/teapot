@@ -36,12 +36,17 @@ class AArch64BTIBackendTests(unittest.TestCase):
             SimpleNamespace(scratch_registers=('x9', 'x10')))
         slow = arch.indirect_branch_check_patch('x0', *bounds)(
             SimpleNamespace(scratch_registers=('x9', 'x10', 'x11')))
-        for bound in bounds:
-            self.assertIn(bound.name, fast)
+        self.assertIn('normal_begin', fast)
+        self.assertIn('shadow_end', fast)
+        self.assertNotIn('shadow_begin', fast)
+        self.assertNotIn('normal_end', fast)
+        self.assertIn('normal_begin', slow)
+        self.assertIn('shadow_end', slow)
+        self.assertNotIn('shadow_begin', slow)
+        self.assertNotIn('normal_end', slow)
         self.assertIn('restore_checkpoint_MALFORMED_INDIRECT_BR', fast)
-        self.assertNotIn('ldr w', fast.split('5:')[0])
+        self.assertNotIn('ldr w', fast)
         self.assertIn('tst x9, #3', fast)
-        self.assertIn('ldr w10, [x0, #4]', fast.split('5:')[1])
         self.assertIn('ldr w', slow)
 
     def test_real_pass_keeps_software_check_for_ret(self):
@@ -82,7 +87,7 @@ class AArch64BTIBackendTests(unittest.TestCase):
         ir.cfg.add(gtirb.Edge(block, gtirb.ProxyBlock(module=module),
                               gtirb.Edge.Label(gtirb.Edge.Type.Return)))
         pipeline = TeapotPipeline(ir, 'aarch64-vma42',
-                                 InstrumentationOptions(target_identification='aarch64-bti'))
+                                 InstrumentationOptions(target_identification='aarch64-bti-pac'))
         with redirect_stdout(io.StringIO()):
             pipeline.run()
         self.assertEqual(pipeline.reg_manager.analysis_source, 'ddisasm')
@@ -93,22 +98,22 @@ class AArch64BTIBackendTests(unittest.TestCase):
         for suffix in ('text_start', 'text_end', 'transient_start', 'transient_end'):
             alias = next(module.symbols_named('__teapot_bti_' + suffix))
             self.assertEqual(module.aux_data['elfSymbolInfo'].data[alias][2], 'GLOBAL')
-        # The BTI build calls its own runtime entry point, after the marker, and not the ordinary one.
+        # The combined build calls its own runtime entry point, after the marker, and not the ordinary one.
         calls = symbol_references(pipeline.text_section)
-        self.assertIn('libcheckpoint_enable_aarch64_bti', calls)
-        self.assertGreaterEqual(min(calls['libcheckpoint_enable_aarch64_bti']), entry.address + 8)
+        self.assertIn('libcheckpoint_enable_aarch64_bti_pac', calls)
+        self.assertGreaterEqual(min(calls['libcheckpoint_enable_aarch64_bti_pac']), entry.address + 8)
         self.assertNotIn('libcheckpoint_enable', calls)
 
     def test_non_arm_and_disabled_required_checks_are_rejected(self):
         ir, _, _, _, _ = make_module(X64Architecture(), gtirb.Module.ISA.X64, b'\xc3')
         with self.assertRaisesRegex(ValueError, 'requires AArch64'):
-            TeapotPipeline(ir, options=InstrumentationOptions(target_identification='aarch64-bti')).run()
+            TeapotPipeline(ir, options=InstrumentationOptions(target_identification='aarch64-bti-pac')).run()
         ir, _, _, _, _ = make_module(AArch64Architecture(), gtirb.Module.ISA.ARM64,
                                       bytes.fromhex('c0035fd6'))
         for flag in ('enable_checkpoints', 'enable_indirect_check', 'enable_indirect_transform'):
             with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, 'requires target'):
                 TeapotPipeline(ir, options=InstrumentationOptions(
-                    target_identification='aarch64-bti', **{flag: False})).run()
+                    target_identification='aarch64-bti-pac', **{flag: False})).run()
 
     def test_bti_component_uses_global_link_bounds_without_defining_aliases(self):
         # Run the real component pipeline: exported library functions need the
@@ -126,7 +131,7 @@ class AArch64BTIBackendTests(unittest.TestCase):
                                   gtirb.Edge.Label(gtirb.Edge.Type.Return)))
             context = LinkedComponent('a' * 64, frozenset({exported}), frozenset({exported}))
             pipeline = TeapotPipeline(ir, 'aarch64-vma42',
-                                     InstrumentationOptions(target_identification='aarch64-bti'),
+                                     InstrumentationOptions(target_identification='aarch64-bti-pac'),
                                      linked_component=context)
             with self.subTest(exported=exported), redirect_stdout(io.StringIO()):
                 pipeline.run()
@@ -134,7 +139,7 @@ class AArch64BTIBackendTests(unittest.TestCase):
                 entry = symbol.referent
                 self.assertEqual(entry.byte_interval.contents[entry.offset:entry.offset + 8],
                                  AArch64BTIArchitecture().nop_bytes)
-                self.assertEqual(module.aux_data['teapotTargetIdentification'].data, 'aarch64-bti-v1')
+                self.assertEqual(module.aux_data['teapotTargetIdentification'].data, 'aarch64-bti-pac-v1')
                 for suffix in ('text_start', 'text_end', 'transient_start', 'transient_end'):
                     self.assertFalse(list(module.symbols_named('__teapot_bti_' + suffix)))
                 for name in ('normal_start', 'normal_end', 'transient_start', 'transient_end'):

@@ -40,9 +40,9 @@ __guard_end__teapot___{key}:
             runtime = root / 'runtime.S'
             runtime.write_text('''
 .text
-.global _start, libcheckpoint_prepare_aarch64_bti_components
+.global _start, libcheckpoint_prepare_aarch64_bti_pac_components
 _start:
-libcheckpoint_prepare_aarch64_bti_components: .long 0
+libcheckpoint_prepare_aarch64_bti_pac_components: .long 0
 .section .teapot_bti_probe,"ax",@progbits
 .balign 4
 .global teapot_bti_probe_valid, teapot_bti_probe_invalid, teapot_bti_probe_brk, teapot_bti_probe_hlt
@@ -52,11 +52,11 @@ teapot_bti_probe_brk: .long 0xd4200000
 teapot_bti_probe_hlt: .long 0xd4400000
 .section .preinit_array,"aw",@preinit_array
 .global __teapot_bti_component_preinit
-__teapot_bti_component_preinit: .quad libcheckpoint_prepare_aarch64_bti_components
+__teapot_bti_component_preinit: .quad libcheckpoint_prepare_aarch64_bti_pac_components
 .section .note.GNU-stack,"",@progbits
 ''')
             layout, binary = root / 'layout.ld', root / 'linked'
-            layout.write_text(component_layout(components, 'aarch64-bti'))
+            layout.write_text(component_layout(components, 'aarch64-bti-pac'))
             subprocess.run(['cc', '-no-pie', '-nostdlib', *map(str, objects), str(runtime),
                             '-Wl,-T,' + str(layout), '-o', str(binary)], check=True, capture_output=True)
             with binary.open('rb') as stream:
@@ -65,13 +65,13 @@ __teapot_bti_component_preinit: .quad libcheckpoint_prepare_aarch64_bti_componen
                 ranges = {kind: tuple(symbols['__teapot_linked_' + kind + '_' + end]
                                       for end in ('start', 'end')) for kind in ('normal', 'transient')}
                 lo, hi = validate_bti_layout(elf, symbols.__getitem__, ranges)
-                self.assertEqual(hi - lo, 65536)
+                self.assertEqual(hi - lo, 131072)
                 self.assertLess(ranges['normal'][1], hi)
                 for name, bad in (('__teapot_bti_guard_end', hi - 4),
                                   ('__teapot_bti_text_end', ranges['normal'][1] - 4),
                                   ('teapot_bti_probe_invalid', lo),
                                   ('__teapot_bti_component_preinit', lo),
-                                  ('libcheckpoint_prepare_aarch64_bti_components', lo)):
+                                  ('libcheckpoint_prepare_aarch64_bti_pac_components', lo)):
                     broken = dict(symbols, **{name: bad})
                     with self.subTest(symbol=name), self.assertRaises(AssertionError):
                         validate_bti_layout(elf, broken.__getitem__, ranges)

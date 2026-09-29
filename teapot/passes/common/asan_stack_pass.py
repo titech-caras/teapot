@@ -22,12 +22,13 @@ class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
     def __init__(self, reg_manager: LiveRegisterManager,
                  section: gtirb.Section, decoder: GtirbInstructionDecoder, arch: Architecture,
                  insert_memlog: bool, *, dift_layout=None, tag_storage: str = ASAN_TAG_STORAGE_SHADOW,
-                 transient: bool = False):
+                 transient: bool = False, accept_pac: bool = False):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.section = section
         self.arch = arch
         self.insert_memlog = insert_memlog
         self.transient = transient
+        self.accept_pac = accept_pac
         self.dift_layout = dift_layout or get_dift_layout(arch.name)
         self.tag_storage = tag_storage
         self.coverage = Counter()
@@ -51,7 +52,8 @@ class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
                 checkpoint_sources = {section for section in self.module.sections
                                       if self.transient and section.name in {".text", ".teapot_trampolines"}}
                 sites = ReturnSlotAnalysis(self.arch, self.decoder).analyze(
-                    function, checkpoint_sources=checkpoint_sources)
+                    function, checkpoint_sources=checkpoint_sources,
+                    accept_pac=self.accept_pac)
             except UnsupportedReturnSlot as error:
                 self.coverage["unsupported"] += 1
                 self.unsupported_reasons[str(error)] += 1

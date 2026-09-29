@@ -25,6 +25,17 @@ class AArch64BTIArchitecture(AArch64Architecture):
             ldp x0, x1, [sp], #32
         """)
 
+    def normalize_passes(self, decoder, reg_manager):
+        from teapot.passes.preprocessing.normalize_original_pac_bti_pass import (
+            NormalizeOriginalPacBtiPass,
+        )
+
+        # Design step 4: native hint PAC/BTI is transformed in place before the
+        # speculative copy, so both copies carry the same code and the landing
+        # scan sees only Teapot markers.
+        return [NormalizeOriginalPacBtiPass(decoder)] + super().normalize_passes(
+            decoder, reg_manager)
+
     def indirect_branch_hardware_check_patch(self, operand_str, transient_start_symbol,
                                              transient_end_symbol, text_start_symbol,
                                              text_end_symbol, reads_registers=None):
@@ -32,39 +43,22 @@ class AArch64BTIArchitecture(AArch64Architecture):
                           reads_registers=reads_registers or set())
         def patch(ctx):
             target, temp = ctx.scratch_registers[:2]
+            # One window from normal text to the copy's end; the copy follows
+            # normal text in the link. Aligned in-window targets rely on BTI for
+            # the landing check; anything else is a malformed target.
             return f"""
                 mov {target}, {operand_str}
-                {self.load_address(temp, transient_start_symbol.name)}
-                cmp {target}, {temp}
-                b.lo 4f
-                {self.load_address(temp, transient_end_symbol.name)}
-                cmp {target}, {temp}
-                b.lo 3f
-            4:
                 {self.load_address(temp, text_start_symbol.name)}
                 cmp {target}, {temp}
                 b.lo 2f
-                {self.load_address(temp, text_end_symbol.name)}
+                {self.load_address(temp, transient_end_symbol.name)}
                 cmp {target}, {temp}
                 b.hs 2f
                 tst {target}, #3
-                b.eq 3f
-            5:
-                // Preserve the old byte-address predicate on unaligned normal
-                // targets; only aligned instruction targets use BTI. Scratch
-                // registers exclude operand_str, so it survives this fallback.
-                ldr {self.w_reg(temp)}, [{target}]
-                {self.mov_w_imm32(self.w_reg(target), self.MAGIC_WORDS[0])}
-                cmp {self.w_reg(temp)}, {self.w_reg(target)}
-                b.ne 2f
-                ldr {self.w_reg(temp)}, [{operand_str}, #4]
-                {self.mov_w_imm32(self.w_reg(target), self.MAGIC_WORDS[1])}
-                cmp {self.w_reg(temp)}, {self.w_reg(target)}
-                b.ne 2f
-                b 3f
+                b.eq 1f
             2:
                 b restore_checkpoint_MALFORMED_INDIRECT_BR
-            3:
+            1:
                 nop
             """
         return patch

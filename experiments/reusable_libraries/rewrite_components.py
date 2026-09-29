@@ -391,7 +391,7 @@ def main():
     if args.preserve_selected_lifecycle:
         objects = [Path(component["cache_path"]) / "component.o" for component in components]
         link_support.append(converter.build_lifecycle_dispatcher(args, objects[0], objects[1:], order).name)
-    if args.target_identification == 'aarch64-bti':
+    if args.target_identification == 'aarch64-bti-pac':
         link_support.append(build_bti_startup(args).name)
     layout = component_layout(components, args.target_identification)
     (args.out / "layout.ld").write_text(layout)
@@ -409,13 +409,17 @@ def main():
 
 def build_bti_startup(args):
     # Preinit runs before any selected-library constructors. This entry prepares
-    # the signal/BTI machinery without enabling speculation or tainting argv;
-    # main retains the existing libcheckpoint_enable_aarch64_bti call.
+    # the signal/BTI machinery (and, in PAC mode, PAC activation) without
+    # enabling speculation or tainting argv; main retains the existing
+    # libcheckpoint_enable_aarch64_bti[_pac] call.
+    prepare = ('libcheckpoint_prepare_aarch64_bti_pac_components'
+               if args.target_identification == 'aarch64-bti-pac'
+               else 'libcheckpoint_prepare_aarch64_bti_components')
     source = args.out / 'bti-startup.c'
-    source.write_text('extern void libcheckpoint_prepare_aarch64_bti_components(void);\n'
+    source.write_text(f'extern void {prepare}(void);\n'
                       '__attribute__((used, section(".preinit_array")))\n'
                       'void (*const __teapot_bti_component_preinit)(void) =\n'
-                      '    libcheckpoint_prepare_aarch64_bti_components;\n')
+                      f'    {prepare};\n')
     obj = args.out / 'bti-startup.o'
     run(args.out, 'compile-bti-startup', [args.cc, '-c', '-fno-pie', '-fno-pic', source, '-o', obj])
     return obj
@@ -424,24 +428,25 @@ def build_bti_startup(args):
 def component_layout(components, target_identification='software'):
     if target_identification not in TARGET_IDENTIFICATIONS:
         raise ValueError('unsupported target identification: ' + target_identification)
-    if target_identification == 'aarch64-bti':
+    if target_identification == 'aarch64-bti-pac':
         layout = ["SECTIONS {", "  .teapot_bti_normal ALIGN(65536) : {",
                   "    __teapot_bti_guard_start = .;",
                   "    __teapot_linked_normal_start = .; __teapot_bti_text_start = .;",
                   "    KEEP(*(.teapot_bti_normal))",
                   "    __teapot_linked_normal_end = .; __teapot_bti_text_end = .;",
+                  "    . = ALIGN(65536);",
+                  "    __teapot_linked_transient_start = .; __teapot_bti_transient_start = .;",
+                  "    KEEP(*(.teapot_transient))",
+                  "    __teapot_linked_transient_end = .; __teapot_bti_transient_end = .;",
                   "    . = ALIGN(16); KEEP(*(.teapot_bti_probe))",
                   "    . = ALIGN(65536); __teapot_bti_guard_end = .; }"]
     else:
         layout = ["SECTIONS {", "  .teapot_component_text : ALIGN(16) {",
               "    __teapot_linked_normal_start = .; KEEP(*(.teapot_component_text))",
-              "    __teapot_linked_normal_end = .; }"]
-    layout += ["  .teapot_transient : ALIGN(16) {",
+              "    __teapot_linked_normal_end = .; }",
+              "  .teapot_transient : ALIGN(16) {",
               "    __teapot_linked_transient_start = .; KEEP(*(.teapot_transient))",
               "    __teapot_linked_transient_end = .; }"]
-    if target_identification == 'aarch64-bti':
-        layout += ["  __teapot_bti_transient_start = __teapot_linked_transient_start;",
-                   "  __teapot_bti_transient_end = __teapot_linked_transient_end;"]
     layout += ["} INSERT AFTER .text;", "SECTIONS {", "  .teapot_component_guards : ALIGN(4) {",
               "    __guard_start__teapot__ = .;"]
     total_guards = 0

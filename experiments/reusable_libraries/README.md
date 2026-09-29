@@ -37,7 +37,7 @@ python3 experiments/reusable_libraries/rewrite_components.py \
     --out OUT --cache CACHE [--mode MODE] --converter tools/sharedlib/convert.py \
     --teapot TEAPOT --rewriting GTIRB_REWRITING --lra LIVE_REGISTER_ANALYSIS \
     --runtime-contract CONTRACT.json --ddisasm DDISASM --pprinter GTIRB_PPRINTER [--cc CC] [--jobs N] \
-    [--target-identification software|aarch64-bti] \
+    [--target-identification software|aarch64-bti-pac] \
     [--resolve-selected-versions] [--preserve-selected-lifecycle] [--preserve-nonlocal-jumps] \
     [--preserve-weak-imports]
 ```
@@ -49,13 +49,13 @@ The runtime
 contract is a JSON description of the runtime the objects will be linked with, for example the hashes of its
 archives; it is stored in the key as given. The four opt-in flags are the converter's.
 
-### AArch64 BTI (opt-in)
+### AArch64 BTI+PAC (opt-in)
 
-`--target-identification aarch64-bti` works with the AArch64 layout/tag-storage modes above;
-it does not enable PAC or change the permissive transient-target policy. Build libcheckpoint
+`--target-identification aarch64-bti-pac` works with the AArch64 layout/tag-storage modes above;
+BTI and PAC are one feature, enabled together. Build libcheckpoint
 with `-DTEAPOT_EXPERIMENTAL_AARCH64_BTI=ON` and the same layout and tag storage.
 Every executable and selected library must use the same target-identification mode. The
-mode is part of each cache key and manifest. Software objects cannot be mixed into a BTI link.
+mode is part of each cache key and manifest. Software objects cannot be mixed into a BTI/PAC link.
 
 Use the generated `layout.ld` **instead of** also passing `AArch64Bti.ld`: it collects all
 components' `.teapot_bti_normal` inputs into one 64 KiB-aligned guarded output section,
@@ -94,7 +94,7 @@ storage, based on the guard-start symbol after input-section alignment.
 
 ```
 python3 experiments/reusable_libraries/validate_link.py --binary APP.instrumented --objects OUT \
-    --out validation.json [--isa ISA] [--mode MODE] [--target-identification software|aarch64-bti]
+    --out validation.json [--isa ISA] [--mode MODE] [--target-identification software|aarch64-bti-pac]
 ```
 
 The validator derives ISA, mode, DIFT layout and tag storage from the manifests and checks every component agrees.

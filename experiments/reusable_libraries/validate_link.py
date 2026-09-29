@@ -46,7 +46,7 @@ def validate_mode_contract(manifest, *, isa=None, mode=None, target_identificati
     return actual_isa, actual_mode
 
 
-def validate_bti_layout(elf, address, ranges):
+def validate_bti_layout(elf, address, ranges, target_identification='aarch64-bti-pac'):
     """Verify the mapping that runtime activation will scan and guard.
 
     The probe/padding is guarded but is deliberately not an application target.
@@ -60,7 +60,8 @@ def validate_bti_layout(elf, address, ranges):
     for kind, prefix in (('normal', 'text'), ('transient', 'transient')):
         assert ranges[kind] == (address('__teapot_bti_' + prefix + '_start'),
                                 address('__teapot_bti_' + prefix + '_end')), 'BTI/application bounds disagree'
-    assert ranges['transient'][0] >= hi, 'BTI guards transient code'
+    assert ranges['transient'][0] >= ranges['normal'][1], 'BTI copy must follow normal text'
+    assert ranges['transient'][1] <= hi - 8, 'BTI copy must stay inside the guard'
     for section in elf.iter_sections():
         if section.name != '.teapot_bti_normal' and section['sh_flags'] & 2 and section['sh_size']:
             start, end = section['sh_addr'], section['sh_addr'] + section['sh_size']
@@ -70,15 +71,25 @@ def validate_bti_layout(elf, address, ranges):
                 segment['p_vaddr'] + segment['p_memsz'] >= hi]
     assert len(mappings) == 1 and mappings[0]['p_flags'] & 7 == 5, 'BTI guard must have one RX mapping'
     data = normal.data()
-    marker = target_for('ARM64', 'aarch64-bti')['marker']
-    for offset in range(0, ranges['normal'][1] - lo, 4):
-        word = int.from_bytes(data[offset:offset + 4], 'little')
-        if word in (0xd50324df, 0xd503245f, 0xd503249f, 0xd503233f, 0xd503237f):
-            assert data[offset:offset + 8] == marker, 'unmatched native BTI/PAC landing in normal text'
+    marker = target_for('ARM64', 'aarch64-bti-pac')['marker']
+    backends = (0xd50324df, 0xd503245f, 0xd503249f, 0xd503233f, 0xd503237f)
+    # The runtime scans both sub-ranges of the guarded section; mirror it, so a
+    # stray native landing in the copied text refuses the link here too.
+    for kind in ('normal', 'transient'):
+        start, end = ranges[kind]
+        for offset in range(start - lo, end - lo, 4):
+            word = int.from_bytes(data[offset:offset + 4], 'little')
+            if word in backends:
+                assert data[offset:offset + 8] == marker, (
+                    'unmatched native BTI/PAC landing in ' + kind + ' text')
     for name in ('valid', 'invalid', 'brk', 'hlt'):
         probe = address('teapot_bti_probe_' + name)
-        assert ranges['normal'][1] <= probe <= hi - 4 and probe % 4 == 0, 'BTI probe enters application targets'
-    prepare = address('libcheckpoint_prepare_aarch64_bti_components')
+        assert ranges['transient'][1] <= probe <= hi - 4 and probe % 4 == 0, (
+            'BTI probe enters application targets')
+    prepare_symbol = ('libcheckpoint_prepare_aarch64_bti_pac_components'
+                      if target_identification == 'aarch64-bti-pac'
+                      else 'libcheckpoint_prepare_aarch64_bti_components')
+    prepare = address(prepare_symbol)
     assert not lo <= prepare < hi, 'BTI initializer is guarded'
     callback = address('__teapot_bti_component_preinit')
     preinit = elf.get_section_by_name('.preinit_array')
@@ -132,14 +143,23 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
             section = elf.get_section_by_name(name)
             start = address("__teapot_linked_" + kind + "_start")
             end = address("__teapot_linked_" + kind + "_end")
-            assert section["sh_flags"] & 7 == 6
-            if kind == 'normal' and target_identification == 'aarch64-bti':
-                assert start == section['sh_addr'] and end <= start + section['sh_size']
+            if section is None:
+                # The BTI mode merges the copy into the one guarded section.
+                assert (target_identification == 'aarch64-bti-pac' and
+                        kind == 'transient'), name
             else:
-                assert (start, end) == (section["sh_addr"], section["sh_addr"] + section["sh_size"])
+                assert section["sh_flags"] & 7 == 6
+                if kind == 'normal' and target_identification == 'aarch64-bti-pac':
+                    assert start == section['sh_addr'] and end <= start + section['sh_size']
+                else:
+                    assert (start, end) == (section["sh_addr"], section["sh_addr"] + section["sh_size"])
             assert start < end
             ranges[kind] = (start, end)
         assert ranges["normal"][1] <= ranges["transient"][0]
+        assert not any(ranges["normal"][1] < section["sh_addr"] < ranges["transient"][0]
+                       for section in elf.iter_sections()
+                       if section["sh_flags"] & 2 and section["sh_size"]), \
+            'a section lies between the two application copies'
         for name in (target['checkpoint'], "restore_checkpoint", "report_gadget_KASPER_MDS"):
             entry = address(name)
             assert all(not start <= entry < end for start, end in ranges.values()), name
@@ -147,8 +167,8 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
             if section["sh_flags"] & 4 and section.name not in (target['text_section'], ".teapot_transient"):
                 start, end = section["sh_addr"], section["sh_addr"] + section["sh_size"]
                 assert all(end <= lower or start >= upper for lower, upper in ranges.values()), section.name
-        bti_guard = (validate_bti_layout(elf, address, ranges)
-                     if target_identification == 'aarch64-bti' else None)
+        bti_guard = (validate_bti_layout(elf, address, ranges, target_identification)
+                     if target_identification == 'aarch64-bti-pac' else None)
         guard_section = elf.get_section_by_name(".teapot_component_guards")
         guard_start, guard_end = address("__guard_start__teapot__"), address("__guard_end__teapot__")
         assert (guard_start, guard_end) == (guard_section["sh_addr"], guard_section["sh_addr"] + guard_section["sh_size"])
