@@ -31,13 +31,13 @@ FROM scratch AS pprinter-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#0107fb639ab60a51a021c60ed93477cfb41557e1 /
 
 FROM scratch AS ddisasm-src
-ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#de7d141b4eec540ef6d867700ef776b67882ae64 /
+ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#3dda1afa8bd7dbd0007b3fcb948876bd30c68f99 /
 
 FROM scratch AS rewriting-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#e47b9e40b2ac2475a52193dcd4cb9def80154caf /
 
 FROM scratch AS lra-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#4b5f6e416ec03807c486d60391790f1483eba842 /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#3116e33fdcfbf1e1c5213d84b478ca31b3651790 /
 
 FROM --platform=linux/amd64 ubuntu:24.04 AS frontend-build-base
 ENV DEBIAN_FRONTEND=noninteractive
@@ -137,7 +137,7 @@ RUN cmake -S /src/ddisasm -B /build/ddisasm -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
-    -DDDISASM_BUILD_REVISION=de7d141b4eec540ef6d867700ef776b67882ae64 \
+    -DDDISASM_BUILD_REVISION=3dda1afa8bd7dbd0007b3fcb948876bd30c68f99 \
     -DDDISASM_ENABLE_TESTS=OFF -DDDISASM_GENERATE_MANY=ON \
     -DDDISASM_X86_64=ON -DDDISASM_ARM_64=ON \
     -DDDISASM_RISCV_32=ON -DDDISASM_RISCV_64=ON \

@@ -10,13 +10,14 @@ The submodule `libcheckpoint` contains the runtime library.
 
 ### Checkpoint efficiency options
 
-Python LRA supplies x64 arithmetic-flag and AArch64 NZCV liveness within each
-function, using may-preserve/read-before-write summaries for known callees.
-Local calls may preserve flags under IPA register allocation; returns and tail
-exits retain flags left unwritten from entry. External/PLT and indirect calls
-use the ABI boundary. DDisasm still supplies GPR masks. `--conservative-flags`
-restores the older flag policy. `--force-checkpoint-df` uses the DF-saving x64
-entry everywhere; normally a CFG scan selects it only where DF may be set.
+DDisasm supplies the live-register masks, the condition flags included: the six
+x64 arithmetic flags one by one and AArch64 NZCV as one. Neither ABI preserves
+the flags across a call, so every call kills them and none is live into a
+return. For lifts whose masks lack `liveRegisterFlagRule`, such as those of
+older DDisasm versions, LRA recomputes the flags by the same rule.
+`--conservative-flags` keeps the flags live at every instruction.
+`--force-checkpoint-df` uses the DF-saving x64 entry everywhere; normally a CFG
+scan selects it only where DF may be set.
 
 `--x64-vector-state=auto` (default) selects each checkpoint independently:
 integer-only saves no vector registers, low-XMM saves XMM0–7 with eight MOVAPS,

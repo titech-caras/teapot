@@ -22,7 +22,7 @@ def main():
     parser.add_argument('--debug-vector-liveness', action='store_true',
                         help='Compare DDisasm checkpoint vector masks with Python analysis (diagnostic only)')
     parser.add_argument("--conservative-flags", action="store_true",
-                        help="Keep the producer's conservative flag masks instead of Python ABI flag liveness.")
+                        help="Keep the condition flags live at every instruction instead of dead across calls and returns.")
     parser.add_argument("--target-identification", choices=("software", "aarch64-bti-pac"),
                         default="software", help="The experimental BTI+PAC mode requires its matching runtime and linker script.")
     parser.add_argument("input", nargs="?")
