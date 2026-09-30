@@ -208,7 +208,13 @@ COPY --from=lra-src / /tmp/gtirb-live-register-analysis/
 
 # Named contexts also allow the unpublished Python dependency commits to build.
 # Their default stages use exactly the revisions pinned in requirements.txt.
+# A GitHub source stage keeps a shallow .git without tags, from which
+# setuptools-scm cannot derive gtirb-rewriting's version. Without tags, use the
+# version a full clone of the pinned commit derives (v0.4.1-11-ge47b9e4).
+ARG GTIRB_REWRITING_VERSION=0.4.2.dev11+ge47b9e40b
 RUN python3 -m venv /opt/venv \
+    && if ! git -C /tmp/gtirb-rewriting describe --tags > /dev/null 2>&1; then \
+        export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GTIRB_REWRITING="$GTIRB_REWRITING_VERSION"; fi \
     && sed -E '/^gtirb-(rewriting|live-register-analysis) @ /d' \
         /tmp/teapot-requirements.txt > /tmp/teapot-pypi-requirements.txt \
     && python3 -m pip install --no-cache-dir \

@@ -49,7 +49,9 @@ The snapshot root must contain the project's source files, not a parent
 directory. Export the pinned commit with `git archive` or use a clean checkout.
 The `rewriting-src` context is the exception: use a clean Git clone with its
 `.git` directory and tags, because its Python package derives its version from
-Git metadata. The default GitHub stage preserves that metadata automatically.
+Git metadata. The default GitHub stage is a shallow clone without tags, so the
+Dockerfile then supplies the version a full clone of the pinned commit derives,
+`GTIRB_REWRITING_VERSION`. Update it together with that pin.
 Local overrides are deliberately the caller's responsibility and do not
 implicitly select the Dockerfile's commit. Keep them at the pinned commits
 for reproducible version labels.
