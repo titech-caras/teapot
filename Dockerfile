@@ -29,7 +29,7 @@ FROM scratch AS rewriting-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#e47b9e40b2ac2475a52193dcd4cb9def80154caf /
 
 FROM scratch AS lra-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#2d2970f626cf9367a16d1b6c7e97d5d62994714c /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#4b5f6e416ec03807c486d60391790f1483eba842 /
 
 FROM --platform=linux/amd64 ubuntu:24.04 AS frontend-build-base
 ENV DEBIAN_FRONTEND=noninteractive
