@@ -9,15 +9,23 @@ ADD --keep-git-dir=true https://github.com/capstone-engine/capstone.git#b2bf6327
 FROM scratch AS gtirb-src
 ADD --keep-git-dir=true https://github.com/GrammaTech/gtirb.git#eb6a7af1bb9754de004147f292dc1c7728f62e56 /
 
+# libehp's only submodule, ELFIO, points at a GitHub mirror that no longer
+# exists, and a Git source always fetches submodules. The build does not use
+# ELFIO (USE_ELFIO stays OFF), so take the commit's source archive instead.
+FROM --platform=linux/amd64 ubuntu:24.04 AS libehp-archive
+ADD https://github.com/GrammaTech/libehp/archive/5e41e26b88d415f3c7d3eb47f9f0d781cc519459.tar.gz /libehp.tar.gz
+RUN mkdir /libehp && tar -xzf /libehp.tar.gz -C /libehp --strip-components=1
+
 FROM scratch AS libehp-src
-ADD --keep-git-dir=true https://github.com/GrammaTech/libehp.git#5e41e26b88d415f3c7d3eb47f9f0d781cc519459 /
+COPY --from=libehp-archive /libehp/ /
 
 FROM scratch AS souffle-src
 ADD --keep-git-dir=true https://github.com/souffle-lang/souffle.git#b60c8e9f3b9cc6b3e8b980a44fa53033328accee /
 
-# Upstream 0.16.6 plus its iterator fix, already used by the evaluation stack.
+# Upstream 0.16.6. dependency-patches/lief.patch adds its iterator fix, which the
+# evaluation stack already uses; GitHub no longer serves that fix's commit.
 FROM scratch AS lief-src
-ADD --keep-git-dir=true https://github.com/lief-project/LIEF.git#60c648a447c81d857ec4d2d4476537b662037a80 /
+ADD --keep-git-dir=true https://github.com/lief-project/LIEF.git#d52c66d6da4d67c69438989df83a5415236ae08b /
 
 FROM scratch AS pprinter-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#0107fb639ab60a51a021c60ed93477cfb41557e1 /
@@ -90,7 +98,10 @@ RUN cmake -S /src/souffle -B /build/souffle -G Ninja \
 
 FROM frontend-build-base AS lief-build
 COPY --from=lief-src / /src/lief/
-RUN cmake -S /src/lief -B /build/lief -G Ninja \
+COPY docker/dependency-patches/lief.patch /patches/lief.patch
+RUN cd /src/lief && git apply --check /patches/lief.patch \
+    && git apply /patches/lief.patch \
+    && cmake -S /src/lief -B /build/lief -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/teapot-frontend \
     -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF \
     -DLIEF_PYTHON_API=OFF -DLIEF_TESTS=OFF -DLIEF_EXAMPLES=OFF \

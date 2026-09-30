@@ -1,0 +1,108 @@
+diff --git a/include/LIEF/MachO/BindingInfo.hpp b/include/LIEF/MachO/BindingInfo.hpp
+index 1834aead..44365ebc 100644
+--- a/include/LIEF/MachO/BindingInfo.hpp
++++ b/include/LIEF/MachO/BindingInfo.hpp
+@@ -52,6 +52,11 @@ class LIEF_API BindingInfo : public Object {
+ 
+   BindingInfo() = default;
+   BindingInfo(const BindingInfo& other);
++  BindingInfo& operator=(const BindingInfo& other);
++
++  BindingInfo(BindingInfo&&) noexcept = default;
++  BindingInfo& operator=(BindingInfo&&) noexcept = default;
++
+   void swap(BindingInfo& other) noexcept;
+ 
+   /// Check if a MachO::SegmentCommand is associated with this binding
+diff --git a/include/LIEF/MachO/ChainedBindingInfo.hpp b/include/LIEF/MachO/ChainedBindingInfo.hpp
+index ac0ad449..a6716178 100644
+--- a/include/LIEF/MachO/ChainedBindingInfo.hpp
++++ b/include/LIEF/MachO/ChainedBindingInfo.hpp
+@@ -58,7 +58,9 @@ class LIEF_API ChainedBindingInfo : public BindingInfo {
+ 
+   ChainedBindingInfo& operator=(ChainedBindingInfo other);
+   ChainedBindingInfo(const ChainedBindingInfo& other);
++
+   ChainedBindingInfo(ChainedBindingInfo&&) noexcept;
++  ChainedBindingInfo& operator=(ChainedBindingInfo&&) noexcept;
+ 
+   void swap(ChainedBindingInfo& other) noexcept;
+ 
+diff --git a/include/LIEF/MachO/DyldBindingInfo.hpp b/include/LIEF/MachO/DyldBindingInfo.hpp
+index cb730806..c4ae7677 100644
+--- a/include/LIEF/MachO/DyldBindingInfo.hpp
++++ b/include/LIEF/MachO/DyldBindingInfo.hpp
+@@ -58,6 +58,7 @@ class LIEF_API DyldBindingInfo : public BindingInfo {
+   DyldBindingInfo& operator=(const DyldBindingInfo& other) = default;
+   DyldBindingInfo(const DyldBindingInfo& other) = default;
+ 
++  DyldBindingInfo& operator=(DyldBindingInfo&&) noexcept = default;
+   DyldBindingInfo(DyldBindingInfo&&) noexcept = default;
+ 
+   void swap(DyldBindingInfo& other) noexcept;
+diff --git a/include/LIEF/MachO/IndirectBindingInfo.hpp b/include/LIEF/MachO/IndirectBindingInfo.hpp
+index cac6723d..4602e57d 100644
+--- a/include/LIEF/MachO/IndirectBindingInfo.hpp
++++ b/include/LIEF/MachO/IndirectBindingInfo.hpp
+@@ -43,9 +43,9 @@ class LIEF_API IndirectBindingInfo : public BindingInfo {
+   IndirectBindingInfo& operator=(const IndirectBindingInfo& other) = default;
+   IndirectBindingInfo(const IndirectBindingInfo& other) = default;
+ 
++  IndirectBindingInfo& operator=(IndirectBindingInfo&&) noexcept = default;
+   IndirectBindingInfo(IndirectBindingInfo&&) noexcept = default;
+ 
+-
+   BindingInfo::TYPES type() const override {
+     return BindingInfo::TYPES::INDIRECT_SYMBOL;
+   }
+diff --git a/include/LIEF/Object.hpp b/include/LIEF/Object.hpp
+index acb465f0..3ea66129 100644
+--- a/include/LIEF/Object.hpp
++++ b/include/LIEF/Object.hpp
+@@ -45,6 +45,9 @@ class LIEF_API Object {
+   Object(const Object& other);
+   Object& operator=(const Object& other);
+ 
++  Object(Object&& other) noexcept = default;
++  Object& operator=(Object&& other) noexcept = default;
++
+   template<class T>
+   LIEF_LOCAL output_t<T> as();
+ 
+diff --git a/src/MachO/BindingInfo.cpp b/src/MachO/BindingInfo.cpp
+index 9de6febe..336f2511 100644
+--- a/src/MachO/BindingInfo.cpp
++++ b/src/MachO/BindingInfo.cpp
+@@ -32,6 +32,19 @@ BindingInfo::BindingInfo(const BindingInfo& other) :
+   address_{other.address_}
+ {}
+ 
++
++BindingInfo& BindingInfo::operator=(const BindingInfo& other) {
++  if (&other == this) {
++    return *this;
++  }
++  Object::operator=(other);
++  library_ordinal_ = other.library_ordinal_;
++  addend_ = other.addend_;
++  is_weak_import_ = other.is_weak_import_;
++  address_ = other.address_;
++  return *this;
++}
++
+ void BindingInfo::swap(BindingInfo& other) noexcept {
+   std::swap(segment_,         other.segment_);
+   std::swap(symbol_,          other.symbol_);
+diff --git a/src/MachO/ChainedBindingInfo.cpp b/src/MachO/ChainedBindingInfo.cpp
+index ba9e507e..89ee5b89 100644
+--- a/src/MachO/ChainedBindingInfo.cpp
++++ b/src/MachO/ChainedBindingInfo.cpp
+@@ -21,6 +21,8 @@ namespace LIEF {
+ namespace MachO {
+ 
+ ChainedBindingInfo::ChainedBindingInfo(ChainedBindingInfo&&) noexcept = default;
++ChainedBindingInfo& ChainedBindingInfo::operator=(ChainedBindingInfo&&) noexcept = default;
++
+ ChainedBindingInfo::ChainedBindingInfo(const ChainedBindingInfo& other) :
+   BindingInfo(other),
+   format_{other.format_},
