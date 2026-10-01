@@ -98,52 +98,32 @@ class X64ControlFlowPatchesMixin:
         from teapot.passes.transient.pad_transient_targets_pass import PadTransientTargetsPass
 
         return [PadTransientTargetsPass(transient_section, decoder, self.transient_pad_words(),
-                                        directive=".long", arch=self)]
+                                        directive=".long", arch=self, pad_return_sites=True)]
 
     def transient_anchor_passes(self, transient_section):
         """Design step 5: pads displaced by later passes move back to block starts."""
         from teapot.passes.transient.pad_transient_targets_pass import AnchorTransientPadsPass
 
         return [AnchorTransientPadsPass(transient_section, self.transient_pad_words(),
-                                        directive=".long")]
-
-    def indirect_branch_check_options(self, instruction):
-        # Returns keep the copy sub-range clause: the return address after a
-        # call need not carry a pad, while normal text still needs the pair.
-        # `rep ret` reaches here as a two-word mnemonic.
-        return ({"ret_clause": True}
-                if instruction.mnemonic.split()[-1] in {"ret", "retf"} else {})
+                                        directive=".long",
+                                        padded=getattr(self, "transient_padded_blocks", ()))]
 
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
-                                    text_end_symbol: gtirb.Symbol, reads_registers=None, *, ret_clause=False):
-        @self.constraints(scratch_registers=2, clobbers_flags=True,
+                                    text_end_symbol: gtirb.Symbol, reads_registers=None):
+        @self.constraints(scratch_registers=1, clobbers_flags=True,
                           reads_registers=reads_registers or set())
         def patch(ctx):
-            r1, r2 = ctx.scratch_registers
-            # One window from normal text to the copy's end; the copy follows
-            # normal text in the link. In-window branch targets need the pair,
-            # and returns optionally keep the copy sub-range clause.
-            ret_accept = f"""
-                lea {r2}, [rip+{transient_start_symbol.name}]
-                cmp {r1}, {r2}
-                jae .L__indbr_check_skip{SYMBOL_SUFFIX}
-            """ if ret_clause else ""
+            r1 = ctx.scratch_registers[0]
+            # Every target in normal text and the copy carries the marker pair,
+            # return sites included, and uninstrumented code does not. A wild
+            # target faults on the load, and the runtime rolls that back.
             return f"""
                 mov {r1}, {operand_str}
-                lea {r2}, [rip+{text_start_symbol.name}]
-                cmp {r1}, {r2}
-                jb restore_checkpoint_MALFORMED_INDIRECT_BR
-                lea {r2}, [rip+{transient_end_symbol.name}]
-                cmp {r1}, {r2}
-                jae restore_checkpoint_MALFORMED_INDIRECT_BR
-                {ret_accept}
                 cmp dword ptr [{r1}], 0x{self.MAGIC_WORDS[0]:08x}
                 jne restore_checkpoint_MALFORMED_INDIRECT_BR
                 cmp dword ptr [{r1} + 4], 0x{self.MAGIC_WORDS[1]:08x}
                 jne restore_checkpoint_MALFORMED_INDIRECT_BR
-            .L__indbr_check_skip{SYMBOL_SUFFIX}:
-                nop
             """
 
         return patch

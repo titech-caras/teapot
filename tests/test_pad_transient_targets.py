@@ -1,4 +1,6 @@
 """Speculative-copy pad target selection (design step 5)."""
+import io
+from contextlib import redirect_stdout
 import types
 import unittest
 
@@ -136,6 +138,46 @@ class PadTransientTargetsTests(unittest.TestCase):
         block = min(section.code_blocks, key=lambda candidate: candidate.offset)
         self.assertEqual(bytes(block.contents)[:8], marker)
 
+    def test_pad_pushed_into_a_split_block_moves_back(self):
+        # RISC-V restore landings contain labels: inserting one at a padded
+        # block's start splits it, and the pad ends up starting the later piece.
+        from test_live_register_preservation import make_module as make_raw_module
+
+        marker = (0x11400013).to_bytes(4, "little") + (0x51400013).to_bytes(4, "little")
+        landing = (0x00100093).to_bytes(4, "little") * 2   # two inserted words
+        body = (0x00000013).to_bytes(4, "little")          # the block's own instruction
+        _, module, first, _, _ = make_raw_module(
+            AArch64Architecture(), gtirb.Module.ISA.ARM64, b"\0" * 4)
+        interval = first.byte_interval
+        interval.contents = landing + marker + body
+        interval.size = len(interval.contents)
+        first.offset, first.size = 0, len(landing)
+        split = gtirb.CodeBlock(offset=len(landing), size=len(marker) + len(body),
+                                byte_interval=interval)
+        words = (0x11400013, 0x51400013)
+        pad = AnchorTransientPadsPass(first.section, words, padded={first.uuid})
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
+        self.assertEqual(pad.anchored, 1)
+        self.assertEqual(bytes(first.contents)[:8], marker)
+        self.assertEqual(bytes(interval.contents), marker + landing + body)
+        self.assertNotEqual(bytes(split.contents)[:8], marker)
+        # Without knowing the block was padded, the pass leaves the split pad alone.
+        self.assertEqual(AnchorTransientPadsPass(first.section, words).padded, frozenset())
+
+    def test_pad_pass_tells_the_anchor_which_blocks_it_padded(self):
+        module, section, blocks = copy_module()
+        arch = AArch64Architecture()
+        pad = arch.transient_pad_passes(section, None)[0]
+        expected = {block.uuid for block in pad.target_blocks()}
+        self.assertTrue(expected)
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], types.SimpleNamespace(insert_at=lambda *args: None))
+        self.assertEqual(arch.transient_padded_blocks, expected)
+        self.assertEqual(arch.transient_anchor_passes(section)[0].padded, expected)
+
     def test_pad_at_the_block_start_is_left_alone(self):
         module, section, _ = self.marker_module(marker_at_start=True)
         pad = AnchorTransientPadsPass(section, (0xd50324df, 0xd280a29f))
@@ -161,6 +203,35 @@ class PadTransientTargetsTests(unittest.TestCase):
         # trailing label has no instruction to pad and is skipped.
         self.assertEqual(pad.target_blocks(), {real})
         self.assertEqual(ir, section.ir)
+
+    def test_software_mode_pads_every_return_site(self):
+        # Blocks: a call with a fallthrough, a call the lift thinks never
+        # returns, a direct branch, and the three blocks that follow them.
+        module = gtirb.Module(name="pad", isa=gtirb.Module.ISA.ARM64)
+        ir = gtirb.IR(modules=[module])
+        section = gtirb.Section(name=".teapot_transient", module=module)
+        interval = gtirb.ByteInterval(section=section, contents=b"\x1f\x20\x03\xd5" * 6, size=24)
+        call, after_call, noreturn, after_noreturn, branch, after_branch = (
+            gtirb.CodeBlock(offset=offset, size=4, byte_interval=interval)
+            for offset in range(0, 24, 4))
+        callee = gtirb.ProxyBlock(module=module)
+        for source, target, kind in ((call, callee, gtirb.Edge.Type.Call),
+                                     (call, after_call, gtirb.Edge.Type.Fallthrough),
+                                     (noreturn, callee, gtirb.Edge.Type.Call),
+                                     (branch, call, gtirb.Edge.Type.Branch)):
+            ir.cfg.add(gtirb.Edge(source, target, gtirb.Edge.Label(kind, direct=True)))
+        software = PadTransientTargetsPass(section, None, (0xd280229f, 0xd280a29f),
+                                           pad_return_sites=True)
+        self.assertEqual(software.target_blocks(), {after_call, after_noreturn})
+        combined = PadTransientTargetsPass(section, None, (0xd280229f, 0xd280a29f))
+        self.assertEqual(combined.target_blocks(), set())
+
+    def test_only_the_combined_mode_leaves_return_sites_unpadded(self):
+        _, section, _ = copy_module()
+        for arch in (AArch64Architecture(), X64Architecture(), RISCV64Architecture()):
+            with self.subTest(isa=arch.name):
+                self.assertTrue(arch.transient_pad_passes(section, None)[0].pad_return_sites)
+        self.assertFalse(AArch64BTIArchitecture().transient_pad_passes(section, None)[0].pad_return_sites)
 
 
 if __name__ == "__main__":

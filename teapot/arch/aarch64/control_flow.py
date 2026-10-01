@@ -158,14 +158,17 @@ class AArch64ControlFlowPatchesMixin:
         """Design step 5: marker pads at the copy's reachable indirect targets."""
         from teapot.passes.transient.pad_transient_targets_pass import PadTransientTargetsPass
 
-        return [PadTransientTargetsPass(transient_section, decoder, self.transient_pad_words(),
-                                        arch=self)]
+        # The combined mode keeps the copy's return range clause.
+        return [PadTransientTargetsPass(
+            transient_section, decoder, self.transient_pad_words(), arch=self,
+            pad_return_sites=not getattr(self, "uses_bti_landing_checks", False))]
 
     def transient_anchor_passes(self, transient_section):
         """Design step 5: pads displaced by later passes move back to block starts."""
         from teapot.passes.transient.pad_transient_targets_pass import AnchorTransientPadsPass
 
-        return [AnchorTransientPadsPass(transient_section, self.transient_pad_words())]
+        return [AnchorTransientPadsPass(transient_section, self.transient_pad_words(),
+                                        padded=getattr(self, "transient_padded_blocks", ()))]
 
     def indirect_branch_operand(self, edge_type, last_inst, block: gtirb.CodeBlock = None) -> Optional[str]:
         if edge_type == gtirb.cfg.Edge.Type.Return:
@@ -175,8 +178,13 @@ class AArch64ControlFlowPatchesMixin:
 
     def indirect_branch_check_options(self, instruction):
         options = {"strip_pac": True} if instruction.mnemonic in AARCH64_PAC_BRANCHES else {}
-        if instruction.mnemonic in ("ret", "retaa", "retab"):
-            options["ret_clause"] = True
+        # Software mode checks the marker pair alone. The combined mode keeps
+        # the window, since BTI enforces landings only on guarded pages, and
+        # returns keep the copy sub-range clause there.
+        if getattr(self, "uses_bti_landing_checks", False):
+            options["window"] = True
+            if instruction.mnemonic in ("ret", "retaa", "retab"):
+                options["ret_clause"] = True
         return options
 
     def instruction_must_rollback(self, instruction) -> bool:
@@ -204,7 +212,7 @@ class AArch64ControlFlowPatchesMixin:
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
                                     text_end_symbol: gtirb.Symbol, reads_registers=None, *, strip_pac=False,
-                                    ret_clause=False):
+                                    window=False, ret_clause=False):
         @self.constraints(scratch_registers=3,
                           clobbers_flags=True,
                           reads_registers=reads_registers or set())
@@ -217,17 +225,16 @@ class AArch64ControlFlowPatchesMixin:
             # globally for ordinary AArch64 input that contains no PAC forms.
             normalize = (f".inst {0xdac143e0 | aarch64_register_number(getattr(target_reg, 'name', target_reg)):#x}"
                          if strip_pac else "")
-            # Returns keep the copy sub-range clause: a ret inside the copy is
-            # accepted by range, while a normal-text return needs the pair.
+            # Combined mode: one window, normal text immediately preceding the
+            # copy, and returns inside the copy accepted by range. Software
+            # mode: every target carries the marker pair, return sites
+            # included; a wild target faults on the load, which rolls back.
             ret_accept = f"""
                 {self.load_address(temp_reg, transient_start_symbol.name)}
                 cmp {target_reg}, {temp_reg}
                 b.hs 1f
             """ if ret_clause else ""
-            # One window: normal text immediately precedes the copy in the link.
-            return f"""
-                mov {target_reg}, {operand_str}
-                {normalize}
+            window_test = f"""
                 {self.load_address(temp_reg, text_start_symbol.name)}
                 cmp {target_reg}, {temp_reg}
                 b.lo 2f
@@ -235,6 +242,11 @@ class AArch64ControlFlowPatchesMixin:
                 cmp {target_reg}, {temp_reg}
                 b.hs 2f
                 {ret_accept}
+            """ if window else ""
+            return f"""
+                mov {target_reg}, {operand_str}
+                {normalize}
+                {window_test}
                 ldr {self.w_reg(temp_reg)}, [{target_reg}]
                 {self.mov_w_imm32(self.w_reg(magic_reg), self.MAGIC_WORDS[0])}
                 cmp {self.w_reg(temp_reg)}, {self.w_reg(magic_reg)}

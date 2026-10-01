@@ -1,8 +1,10 @@
 """Execute the actual emitted software target predicate and normal bouncer.
 
 These are regression gates for hardware experiments, not a hardware backend.
-Every ISA now uses one window (normal text through the copy's end) and requires
-the marker pair for branch targets; returns keep the copy sub-range clause.
+In software mode every ISA checks the marker pair alone, for branches, calls and
+returns alike. A target whose pair load faults is rejected, as the runtime rolls
+a fault during simulation back. The combined AArch64 mode keeps one window
+(normal text through the copy's end) around the same pair test.
 """
 from pathlib import Path
 import platform
@@ -15,19 +17,23 @@ import unittest
 import gtirb
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
+from teapot.arch.aarch64.bti import AArch64BTIArchitecture
 from teapot.arch.decoders import aarch64_decoder
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.passes.transient.indirect_branch_check_pass import TransientIndirectBranchCheckDestPass
 
 
 class IndirectTargetPolicyTests(unittest.TestCase):
-    def _execute(self, arch, compiler, launcher, operand, scratch, result, *, signed=False):
+    def _execute(self, arch, compiler, launcher, operand, scratch, result, *, signed=False,
+                 window=False):
         if not shutil.which(compiler) or launcher and not shutil.which(launcher[0]):
             self.skipTest("requires target compiler and emulator")
         symbols = [gtirb.Symbol(name=name) for name in (
             "transient_start", "transient_end", "text_start", "text_end")]
-        check = arch.indirect_branch_check_patch(operand, *symbols,
-            **({'strip_pac': True} if signed else {}))(
+        options = {'strip_pac': True} if signed else {}
+        if window:
+            options['window'] = True
+        check = arch.indirect_branch_check_patch(operand, *symbols, **options)(
             SimpleNamespace(scratch_registers=scratch))
         bouncer = arch.indirect_branch_target_patch(
             gtirb.Symbol(name="transient_bounced"), use_scratch_registers=arch.name != "x64")(
@@ -54,6 +60,11 @@ ret
 trusted_runtime_landing:
 {directive} 0x{landing:08x}
 {result} 99
+ret
+.global other_module_target
+other_module_target:
+{marker}
+{result} 98
 ret
 .section normal_test,"ax",%progbits
 .p2align 4
@@ -106,6 +117,8 @@ indirect_branch_flags_scratch:
 """
         source = r"""
 #include <assert.h>
+#include <setjmp.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -113,22 +126,31 @@ extern int check_target(uintptr_t), normal_bouncer(void);
 extern uint64_t checkpoint_cnt;
 extern unsigned char text_start[], text_end[], transient_start[], transient_end[];
 extern unsigned char complete_marker[], wrong_second[], bare_landing[], prefixed_marker[];
-extern unsigned char trusted_runtime_landing[], marker_crossing_end[];
+extern unsigned char trusted_runtime_landing[], marker_crossing_end[], other_module_target[];
+/* A fault while checking or reading a target is a rejection: during
+   simulation the runtime turns a kernel fault into a rollback. */
+static sigjmp_buf fault;
+static void on_fault(int sig) { (void)sig; siglongjmp(fault, 1); }
+static int guarded_check(uintptr_t p) {
+    if (sigsetjmp(fault, 1)) return 0;
+    return check_target(p);
+}
 static int expected(uintptr_t p) {
-#ifdef NEW_WINDOW_PREDICATE
-    /* One window: an in-window target needs the pair; returns keep the copy
-       sub-range clause through a separate patch. */
+#ifdef WINDOW_PREDICATE
+    /* Combined mode: an in-window target needs the pair; returns keep the
+       copy sub-range clause through a separate option. */
     if (p < (uintptr_t)text_start || p >= (uintptr_t)transient_end) return 0;
-#else
-    if (p >= (uintptr_t)transient_start && p < (uintptr_t)transient_end) return 1;
-    if (p < (uintptr_t)text_start || p >= (uintptr_t)text_end) return 0;
 #endif
+    if (sigsetjmp(fault, 1)) return 0;
     uint32_t a, b;
     memcpy(&a, (void *)p, 4);
     memcpy(&b, (void *)(p + 4), 4);
     return a == MAGIC0 && b == MAGIC1;
 }
+#define check_target guarded_check
 int main(void) {
+    signal(SIGSEGV, on_fault);
+    signal(SIGBUS, on_fault);
     uintptr_t fixed[] = {0, UINTPTR_MAX, (uintptr_t)text_start - 1, (uintptr_t)text_end,
         (uintptr_t)transient_start - 1, (uintptr_t)transient_end,
         (uintptr_t)trusted_runtime_landing};
@@ -143,6 +165,13 @@ int main(void) {
     for (uintptr_t p = (uintptr_t)text_start; p < (uintptr_t)text_end; p++) {
         assert(check_target(p) == expected(p)); count++;
     }
+    /* Instrumented code elsewhere carries the pair; uninstrumented code does not. */
+    assert(check_target((uintptr_t)trusted_runtime_landing) == 0);
+#ifdef WINDOW_PREDICATE
+    assert(check_target((uintptr_t)other_module_target) == 0);
+#else
+    assert(check_target((uintptr_t)other_module_target) == 1);
+#endif
     assert(check_target((uintptr_t)complete_marker) == 1);
     assert(check_target((uintptr_t)wrong_second) == 0);
     assert(check_target((uintptr_t)bare_landing) == 0);
@@ -168,7 +197,7 @@ int main(void) {
             command = [compiler, "-O2", "-no-pie", "-fno-pie",
                        f"-DMAGIC0=0x{arch.MAGIC_WORDS[0]:08x}U",
                        f"-DMAGIC1=0x{arch.MAGIC_WORDS[1]:08x}U",
-                       "-DNEW_WINDOW_PREDICATE",
+                       *(["-DWINDOW_PREDICATE"] if window else []),
                        str(root / "policy.c"), str(root / "policy.S"), "-o", str(root / "policy")]
             built = subprocess.run(command, capture_output=True, text=True, timeout=30)
             self.assertEqual(built.returncode, 0, built.stderr)
@@ -186,9 +215,21 @@ int main(void) {
     def test_aarch64_exact_target_policy(self):
         arch = AArch64Architecture()
         scratch = tuple(arch.abi.get_register(name) for name in ("x8", "x9", "x10"))
-        self._execute(arch, "aarch64-linux-gnu-gcc",
-                      ["qemu-aarch64", "-L", "/usr/aarch64-linux-gnu"],
-                      "x0", scratch, "mov w0,")
+        for window in (False, True):
+            with self.subTest(window=window):
+                self._execute(arch, "aarch64-linux-gnu-gcc",
+                              ["qemu-aarch64", "-L", "/usr/aarch64-linux-gnu"],
+                              "x0", scratch, "mov w0,", window=window)
+
+    def test_only_the_combined_mode_keeps_the_window_and_return_clause(self):
+        ret, br = SimpleNamespace(mnemonic="ret"), SimpleNamespace(mnemonic="br")
+        for arch in (X64Architecture(), AArch64Architecture(), RISCV64Architecture()):
+            with self.subTest(isa=arch.name):
+                self.assertEqual(arch.indirect_branch_check_options(ret), {})
+                self.assertEqual(arch.indirect_branch_check_options(br), {})
+        bti = AArch64BTIArchitecture()
+        self.assertEqual(bti.indirect_branch_check_options(ret), {"window": True, "ret_clause": True})
+        self.assertEqual(bti.indirect_branch_check_options(br), {"window": True})
 
     def test_aarch64_signed_targets_keep_the_exact_policy_and_original_pointer(self):
         arch = AArch64Architecture()
@@ -198,10 +239,7 @@ int main(void) {
             edge = gtirb.Edge.Type.Return if inst.mnemonic.startswith('ret') else gtirb.Edge.Type.Branch
             with self.subTest(instruction=str(inst)):
                 self.assertEqual(arch.indirect_branch_operand(edge, inst), operand)
-                options = {'strip_pac': True}
-                if inst.mnemonic.startswith('ret'):
-                    options['ret_clause'] = True
-                self.assertEqual(arch.indirect_branch_check_options(inst), options)
+                self.assertEqual(arch.indirect_branch_check_options(inst), {'strip_pac': True})
                 self.assertTrue(arch.dift_should_skip_instruction(inst))
         scratch = tuple(arch.abi.get_register(name) for name in ('x8', 'x9', 'x10'))
         self._execute(arch, 'aarch64-linux-gnu-gcc',

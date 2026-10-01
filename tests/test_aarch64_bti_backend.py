@@ -34,7 +34,10 @@ class AArch64BTIBackendTests(unittest.TestCase):
         bounds = [gtirb.Symbol(name=n) for n in ('shadow_begin', 'shadow_end', 'normal_begin', 'normal_end')]
         fast = arch.indirect_branch_hardware_check_patch('x0', *bounds)(
             SimpleNamespace(scratch_registers=('x9', 'x10')))
-        slow = arch.indirect_branch_check_patch('x0', *bounds)(
+        # The pass hands the combined mode's software predicate its window.
+        self.assertEqual(arch.indirect_branch_check_options(SimpleNamespace(mnemonic='ret')),
+                         {'window': True, 'ret_clause': True})
+        slow = arch.indirect_branch_check_patch('x0', *bounds, window=True)(
             SimpleNamespace(scratch_registers=('x9', 'x10', 'x11')))
         self.assertIn('normal_begin', fast)
         self.assertIn('shadow_end', fast)
