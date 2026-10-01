@@ -97,14 +97,15 @@ class TextEntryMarkerOrderTests(unittest.TestCase):
                 self.assertTrue(calls, 'no call to libcheckpoint_enable was inserted')
                 self.assertGreaterEqual(min(calls), entry.address + 8)  # after the two marker words
 
-    def test_software_mode_names_its_own_text_section(self):
-        # Decision 6: every software link places the application's normal text in
-        # .teapot_normal, so the per-ISA linker script can put it immediately
-        # before the speculative copy.
+    def test_software_mode_needs_no_layout(self):
+        # The software check tests only the marker pair, so normal text keeps
+        # its name and no window bounds are exported for a linker script.
         for arch in (X64Architecture(), AArch64Architecture(), RISCV64Architecture()):
             with self.subTest(arch=arch.name):
                 pipeline = self.rewrite('callback', arch)
-                self.assertEqual(pipeline.text_section.name, '.teapot_normal')
+                self.assertEqual(pipeline.text_section.name, '.text')
+                self.assertFalse([symbol.name for symbol in pipeline.module.symbols
+                                  if symbol.name.startswith('__teapot_soft_')])
 
     def test_all_architectures_register_targets_before_other_entry_effects(self):
         for arch in (X64Architecture(), AArch64Architecture(), RISCV64Architecture()):

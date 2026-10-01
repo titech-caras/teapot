@@ -260,15 +260,10 @@ class TeapotPipeline:
         if self.arch.needs_late_text_checkpoints():
             self._run_late_text_checkpoint_passes()
             self._run_anchor_passes()
+        # Software mode needs no layout: its indirect-target check tests only
+        # the marker pair, so the linker may place the copy anywhere.
         if self.options.target_identification == "aarch64-bti-pac":
             self.arch.finalize_bti_layout(self)
-        elif self.linked_component is None:
-            # Decision 6: software mode also gives the application's normal text
-            # its own section, so the per-ISA linker script can place it
-            # immediately before the speculative copy. Nothing in the generated
-            # code depends on the layout; only the bounds symbols do.
-            self.text_section.name = ".teapot_normal"
-            self._emit_software_window_bounds()
         if source_lines is not None:
             source_lines.finish(GtirbInstructionDecoder(self.module.isa))
 
@@ -303,23 +298,6 @@ class TeapotPipeline:
                         flag not in self.reg_manager.live_registers(function, block, 0)):
                     dead.add(block.uuid)
         self.pad_flags_dead_blocks = frozenset(dead)
-
-    def _emit_software_window_bounds(self):
-        """Hidden aliases the runtime checks at activation (one ordered window)."""
-        symbols = (
-            ("__teapot_soft_text_start", self.text_section_start_symbol),
-            ("__teapot_soft_text_end", self.text_section_end_symbol),
-            ("__teapot_soft_transient_start", self.transient_section_start_symbol),
-            ("__teapot_soft_transient_end", self.transient_section_end_symbol),
-        )
-        info = self.module.aux_data.setdefault("elfSymbolInfo", gtirb.AuxData(
-            {}, "mapping<UUID,tuple<uint64_t,string,string,string,uint64_t>>"))
-        for name, source in symbols:
-            if next(self.module.symbols_named(name), None) is not None:
-                raise ValueError("input collides with reserved software window symbol " + name)
-            alias = gtirb.Symbol(name=name, payload=source.referent,
-                                 at_end=source.at_end, module=self.module)
-            info.data[alias] = (0, "NOTYPE", "GLOBAL", "HIDDEN", 0)
 
     def _run_pass_manager(self, pass_manager: PassManager, label: str):
         print(f"[teapot] begin {label}", flush=True)
