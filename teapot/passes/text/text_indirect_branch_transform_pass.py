@@ -256,16 +256,18 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                 ".L__indbr_transform_target_" + function.get_name() + "_",
                 block,
                 transient_target)
-            if required_entry:
-                # A cross-component target must begin with the marker, before
-                # any application instruction. In particular, do not apply the
-                # usual RISC-V adjustment that moves a patch after AUIPC/LO.
-                # Inserting before the complete pair is safe; inserting into
-                # a split call pair is not an independently callable entry.
-                if self.rewriting_ctx.resolve_insert_location(block, 0) != (block, 0):
-                    raise ValueError("exported entry lies inside a protected instruction pair")
+            # Every target must begin with the marker, before any application
+            # instruction: an indirect arrival tests the pair at the block's
+            # address. So do not apply the usual RISC-V adjustment that moves a
+            # patch after a leading AUIPC. Inserting before the complete pair is
+            # safe: the rewriter re-anchors its %pcrel_lo (GOT, TLS GD) half.
+            if self.rewriting_ctx.resolve_insert_location(block, 0) == (block, 0):
                 location = (block, 0)
                 insert = self.rewriting_ctx.insert_at
+            elif required_entry:
+                # Inserting into a split call pair is not an independently
+                # callable entry.
+                raise ValueError("exported entry lies inside a protected instruction pair")
             else:
                 location = self.insertion_register_location(block, 0)
                 insert = self.insert_at
@@ -274,9 +276,9 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                 function, *location, block.uuid,
                 flags_live=block.uuid not in self.flags_dead_blocks)
             constraints = patch.constraints
-            # Direct calls and jumps skip the pad. Not when the pad moved past
-            # a RISC-V AUIPC pair (a direct arrival must run the pair), nor
-            # when the rewriter would restore state after the label.
+            # Direct calls and jumps skip the pad. Not when the rewriter moved
+            # the pad (a direct arrival must run what precedes it), nor when it
+            # would restore state after the label.
             operands = (self._direct_operands(block)
                         if location[0] is block and location[1] == 0 else ())
             if operands and not _rewriter_wraps(constraints):

@@ -3,6 +3,7 @@ import io
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 import unittest
+import unittest.mock
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -259,6 +260,65 @@ class PotentialIndirectTargetTests(unittest.TestCase):
         # The target's symbol sits on the AUIPC, not on the JALR that ends the block.
         self.assertEqual(visitor._direct_operands(f), [expression])
         self.assertEqual(visitor._direct_operands(call), [])
+
+    def test_riscv_pad_precedes_a_leading_auipc(self):
+        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from gtirb_rewriting.abi import _ABIS
+
+        from teapot.arch import RISCV64Architecture
+
+        arch = RISCV64Architecture()
+        arch.register_abi(_ABIS)
+        # dispatch: jr a5 (a jump table the lift resolved);
+        # case: auipc a0,%pcrel_hi(g); addi a0,a0,%pcrel_lo(case); ret.
+        module = gtirb.Module(name="rv", isa=gtirb.Module.ISA.ValidButUnsupported,
+                              file_format=gtirb.Module.FileFormat.ELF,
+                              byte_order=gtirb.Module.ByteOrder.Little)
+        ir = gtirb.IR(modules=[module])
+        module.aux_data["archInfo"] = gtirb.AuxData({"ISA": "RISCV64"}, "mapping<string,string>")
+        text = gtirb.Section(name=".text", module=module,
+                             flags={gtirb.Section.Flag.Executable, gtirb.Section.Flag.Loaded,
+                                    gtirb.Section.Flag.Initialized, gtirb.Section.Flag.Readable})
+        interval = gtirb.ByteInterval(section=text, address=0x1000, contents=bytes.fromhex(
+            "67800700" "17050000" "13050500" "67800000"))
+        dispatch = gtirb.CodeBlock(offset=0, size=4, byte_interval=interval)
+        case = gtirb.CodeBlock(offset=4, size=12, byte_interval=interval)
+        data = gtirb.Section(name=".data", module=module, flags={
+            gtirb.Section.Flag.Readable, gtirb.Section.Flag.Loaded, gtirb.Section.Flag.Initialized})
+        g = gtirb.Symbol(name="g", module=module, payload=gtirb.DataBlock(
+            offset=0, size=8, byte_interval=gtirb.ByteInterval(section=data, address=0x2000,
+                                                              contents=bytes(8))))
+        attrs = gtirb.SymbolicExpression.Attribute
+        interval.symbolic_expressions[4] = gtirb.SymAddrConst(0, g, {attrs.PCREL, attrs.HI})
+        interval.symbolic_expressions[8] = gtirb.SymAddrConst(
+            0, gtirb.Symbol(name=".Lcase", payload=case, module=module), {attrs.PCREL, attrs.LO})
+        ir.cfg.add(gtirb.Edge(dispatch, case, gtirb.Edge.Label(gtirb.Edge.Type.Branch, direct=False)))
+        functions = [Function(uuid4(), {dispatch}, {dispatch, case},
+                              {gtirb.Symbol(name="f", payload=dispatch, module=module)})]
+        visitor = TextIndirectBranchTransformPass(
+            text, SimpleNamespace(code_blocks_map={b.uuid: b for b in (dispatch, case)}),
+            CachedGtirbInstructionDecoder(module.isa), arch)
+        marker = patch_constraints()(lambda _ctx: "nop")
+        visitor._indirect_transform_target_patch = Mock(return_value=marker)
+        context = RewritingContext(module, functions)
+        with unittest.mock.patch.object(context, "insert_at", wraps=context.insert_at) as insert_at, \
+                redirect_stdout(io.StringIO()):
+            visitor.begin_module(module, functions, context)
+            # An indirect arrival tests the marker at the case's address.
+            self.assertIn(unittest.mock.call(case, 0, unittest.mock.ANY), insert_at.call_args_list)
+            context.apply()
+            visitor.end_module(module, functions)
+        # The rewriter re-anchored %pcrel_lo on the AUIPC, now after the pad.
+        positions = {expression.attributes and frozenset(expression.attributes): position
+                     for position, expression in interval.symbolic_expressions.items()}
+        high = positions[frozenset({attrs.PCREL, attrs.HI})]
+        low = interval.symbolic_expressions[positions[frozenset({attrs.PCREL, attrs.LO})]]
+        # Each block now starts with its pad (the dispatch has no predecessor):
+        # nop; jr a5; nop; auipc; addi; ret.
+        self.assertEqual(bytes(interval.contents[8:12]), bytes.fromhex("13000000"))
+        self.assertEqual(high, 12)
+        self.assertEqual(low.symbol.referent.offset + (low.symbol.referent.size if low.symbol.at_end else 0),
+                         high)
 
 
 if __name__ == "__main__":
