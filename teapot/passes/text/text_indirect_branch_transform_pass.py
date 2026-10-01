@@ -52,9 +52,13 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
         self.potential_targets = frozenset(potential_targets)
         self.flags_dead_blocks = frozenset(flags_dead_blocks)
         self.pad_counts = {"indirect-edge": 0, "no-predecessor": 0, "exported": 0,
-                           "potential": 0, "return-site": 0, "no-return-call-site": 0}
+                           "potential": 0, "return-site": 0, "no-return-call-site": 0,
+                           "moved-by-rewriter": 0}
         # Label base name -> the direct call and jump operands that should skip that pad.
         self.direct_entries = {}
+        # Symbols naming a block padded at its start; the pipeline checks at the
+        # end that each still names a marker.
+        self.marked_symbols = []
 
         self.decoder = decoder
 
@@ -63,6 +67,7 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
         self.symbol_names = {symbol.name for symbol in module.symbols}
         self.no_return_callers = self._no_return_callers()
         self.direct_entries = {}
+        self.marked_symbols = []
         self.visit_functions(functions, self.text_section)
         counts = ", ".join(f"{name} {count}" for name, count in self.pad_counts.items() if count)
         print(f"[teapot] normal-text pads: {counts}", flush=True)
@@ -264,6 +269,8 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
             if self.rewriting_ctx.resolve_insert_location(block, 0) == (block, 0):
                 location = (block, 0)
                 insert = self.rewriting_ctx.insert_at
+                self.marked_symbols.extend(
+                    symbol for symbol in block.references if not symbol.at_end)
             elif required_entry:
                 # Inserting into a split call pair is not an independently
                 # callable entry.
@@ -271,6 +278,7 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
             else:
                 location = self.insertion_register_location(block, 0)
                 insert = self.insert_at
+                self.pad_counts["moved-by-rewriter"] += 1
             patch = self._indirect_transform_target_patch(
                 indbr_transform_target_symbol,
                 function, *location, block.uuid,

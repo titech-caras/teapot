@@ -328,6 +328,38 @@ class PotentialIndirectTargetTests(unittest.TestCase):
         self.assertEqual(low.symbol.referent.offset + (low.symbol.referent.size if low.symbol.at_end else 0),
                          high)
 
+    def test_pipeline_fails_closed_on_a_target_without_its_marker(self):
+        from teapot.pipeline import TeapotPipeline
+
+        arch = X64Architecture()
+        module = gtirb.Module(name="m", isa=gtirb.Module.ISA.X64)
+        text = gtirb.Section(name=".text", module=module)
+        # padded: marker; ret. displaced: an instruction before the marker,
+        # like the RISC-V pads behind a leading AUIPC.
+        interval = gtirb.ByteInterval(section=text, address=0x1000,
+                                      contents=arch.nop_bytes + b"\xc3" + b"\x90" + arch.nop_bytes + b"\xc3")
+        padded = gtirb.CodeBlock(offset=0, size=9, byte_interval=interval)
+        displaced = gtirb.CodeBlock(offset=9, size=10, byte_interval=interval)
+        copy = gtirb.Section(name=".teapot_transient", module=module)
+        copy_block = gtirb.CodeBlock(offset=0, size=9, byte_interval=gtirb.ByteInterval(
+            section=copy, address=0x2000, contents=arch.nop_bytes + b"\xc3"))
+        arch.transient_padded_blocks = frozenset({copy_block.uuid})
+        good = gtirb.Symbol(name="good", payload=padded, module=module)
+        bad = gtirb.Symbol(name="bad", payload=displaced, module=module)
+        pipeline = SimpleNamespace(arch=arch, transient_section=copy,
+                                   text_target_transform=SimpleNamespace(marked_symbols=[good]))
+        with redirect_stdout(io.StringIO()) as output:
+            TeapotPipeline._verify_target_markers(pipeline)
+        self.assertIn("1 normal-text symbols, 1 copy blocks", output.getvalue())
+        pipeline.text_target_transform.marked_symbols.append(bad)
+        with self.assertRaisesRegex(ValueError, "1 padded targets do not start with the marker, e.g. bad"):
+            TeapotPipeline._verify_target_markers(pipeline)
+        # A copy pad lost behind entry code fails too.
+        pipeline.text_target_transform.marked_symbols.pop()
+        copy_block.byte_interval.contents = b"\x90" + arch.nop_bytes
+        with self.assertRaisesRegex(ValueError, "copy block at 0x2000"):
+            TeapotPipeline._verify_target_markers(pipeline)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -264,8 +264,53 @@ class TeapotPipeline:
         # the marker pair, so the linker may place the copy anywhere.
         if self.options.target_identification == "aarch64-bti-pac":
             self.arch.finalize_bti_layout(self)
+        self._verify_target_markers()
         if source_lines is not None:
             source_lines.finish(GtirbInstructionDecoder(self.module.isa))
+
+    def _verify_target_markers(self):
+        """Fail closed unless every padded target still starts with its marker.
+
+        Passes after the pad passes insert code at block starts, and the anchor
+        pass finds displaced copy pads by their bytes. Check the end state:
+        each symbol of a normal-text block padded at its start, and each padded
+        block of the copy, must name the marker pair.
+        """
+        markers = {bytes(self.arch.nop_bytes)}
+        words = tuple(self.arch.transient_pad_words())
+        if words:
+            markers.add(b"".join(word.to_bytes(4, "little") for word in words))
+        width = len(next(iter(markers)))
+
+        def starts_with_marker(block, at_end=False):
+            interval = block.byte_interval
+            offset = block.offset + (block.size if at_end else 0)
+            return bytes(interval.contents[offset:offset + width]) in markers
+
+        missing = []
+        transform = getattr(self, "text_target_transform", None)
+        symbols = transform.marked_symbols if transform is not None else ()
+        for symbol in symbols:
+            block = symbol.referent
+            if (isinstance(block, gtirb.CodeBlock) and block.byte_interval is not None and
+                    not starts_with_marker(block, symbol.at_end)):
+                missing.append(f"{symbol.name} at {block.address:#x}" if block.address is not None
+                               else symbol.name)
+        padded = getattr(self.arch, "transient_padded_blocks", frozenset())
+        copied = 0
+        transient_section = getattr(self, "transient_section", None)
+        if transient_section is not None:
+            for block in transient_section.code_blocks:
+                if block.uuid in padded and block.size:
+                    copied += 1
+                    if not starts_with_marker(block):
+                        missing.append(f"copy block at {block.address:#x}" if block.address is not None
+                                       else f"copy block {block.uuid}")
+        if missing:
+            raise ValueError(f"{len(missing)} padded targets do not start with the marker, "
+                             f"e.g. {', '.join(missing[:5])}")
+        print(f"[teapot] target markers verified: {len(symbols)} normal-text symbols, "
+              f"{copied} copy blocks", flush=True)
 
     def _find_potential_indirect_targets(self):
         """Normal-text blocks to pad beyond the lift's indirect edges, on the original IR.
@@ -453,6 +498,7 @@ class TeapotPipeline:
                                          if self.linked_component else ()),
                 potential_targets=self.potential_target_blocks,
                 flags_dead_blocks=self.pad_flags_dead_blocks)
+        self.text_target_transform = target_transform
         if target_transform is not None:
             # Every legal normal target address must start with the full
             # marker, not just a separately rewritten component's exports.
