@@ -46,6 +46,12 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
             return
 
         instructions = list(self.decoder.get_instructions(block))
+        # A RISC-V AUIPC+JALR pair whose relocation names its target is a
+        # direct transfer, even when the lift adds an indirect edge to it. A
+        # check would also land before the AUIPC (the rewriter keeps the pair
+        # whole) and test a stale base and displacement.
+        if self.arch.direct_transfer_expression(block, instructions) is not None:
+            return
         last_inst = instructions[-1]
         operand_str = self.arch.indirect_branch_operand(edge.label.type, last_inst, block)
         operand_registers = set()

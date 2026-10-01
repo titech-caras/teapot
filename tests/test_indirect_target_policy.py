@@ -294,6 +294,60 @@ int main(void) {
         edge = SimpleNamespace(label=SimpleNamespace(type=gtirb.cfg.Edge.Type.Return, direct=False))
         self.assertFalse(TransientIndirectBranchCheckDestPass._must_check_edge(edge, main))
 
+    def test_riscv_direct_pairs_are_not_checked(self):
+        from unittest.mock import Mock
+
+        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+
+        from teapot.arch import RISCV64Architecture
+
+        # The production decoder. tail: auipc t1,0; jr 0(t1), the target named by
+        # PCREL HI/LO relocations; the lift gives it an indirect edge (here the
+        # only one, as if listed first). call: auipc ra,0; jalr ra,0(ra) with a PLT relocation.
+        # jump: jalr zero,8(a5), a real register target. ret.
+        module = gtirb.Module(name="rv", isa=gtirb.Module.ISA.ValidButUnsupported,
+                              file_format=gtirb.Module.FileFormat.ELF,
+                              byte_order=gtirb.Module.ByteOrder.Little)
+        ir = gtirb.IR(modules=[module])
+        module.aux_data["archInfo"] = gtirb.AuxData({"ISA": "RISCV64"}, "mapping<string,string>")
+        section = gtirb.Section(name=".teapot_transient", module=module)
+        interval = gtirb.ByteInterval(section=section, address=0x1000, contents=bytes.fromhex(
+            "17030000" "67000300" "97000000" "e7800000" "67808700" "67800000" "67800000"))
+        blocks = {name: gtirb.CodeBlock(offset=offset, size=size, byte_interval=interval)
+                  for name, offset, size in (("tail", 0, 8), ("call", 8, 8), ("jump", 16, 4),
+                                             ("ret", 20, 4), ("target", 24, 4))}
+        attrs = gtirb.SymbolicExpression.Attribute
+        target = gtirb.Symbol(name="target", payload=blocks["target"], module=module)
+        interval.symbolic_expressions[0] = gtirb.SymAddrConst(0, target, {attrs.PCREL, attrs.HI})
+        interval.symbolic_expressions[4] = gtirb.SymAddrConst(
+            0, gtirb.Symbol(name=".Lpcrel_hi", payload=blocks["tail"], module=module), {attrs.PCREL, attrs.LO})
+        interval.symbolic_expressions[8] = gtirb.SymAddrConst(0, target, {attrs.PLT})
+
+        def edge(source, kind, direct, to=blocks["target"]):
+            ir.cfg.add(gtirb.Edge(blocks[source], to, gtirb.Edge.Label(kind, direct=direct)))
+
+        edge("tail", gtirb.Edge.Type.Branch, False, gtirb.ProxyBlock(module=module))
+        edge("call", gtirb.Edge.Type.Call, False, gtirb.ProxyBlock(module=module))
+        edge("jump", gtirb.Edge.Type.Branch, False, gtirb.ProxyBlock(module=module))
+        edge("ret", gtirb.Edge.Type.Return, False, gtirb.ProxyBlock(module=module))
+        visitor = TransientIndirectBranchCheckDestPass.__new__(TransientIndirectBranchCheckDestPass)
+        visitor.arch = RISCV64Architecture()
+        visitor.decoder = CachedGtirbInstructionDecoder(module.isa)
+        visitor.reg_manager = None
+        visitor.transient_section = section
+        (visitor.transient_section_start_symbol, visitor.transient_section_end_symbol,
+         visitor.text_section_start_symbol, visitor.text_section_end_symbol) = (
+            gtirb.Symbol(name=name) for name in ("ts", "te", "xs", "xe"))
+        visitor.insert_at = Mock()
+        ordinary = SimpleNamespace(get_name=lambda: "f" + SYMBOL_SUFFIX)
+        checked = set()
+        for name in ("tail", "call", "jump", "ret"):
+            visitor.insert_at.reset_mock()
+            visitor.visit_code_block(blocks[name], ordinary)
+            if visitor.insert_at.called:
+                checked.add(name)
+        self.assertEqual(checked, {"jump", "ret"})
+
 
 if __name__ == "__main__":
     unittest.main()
