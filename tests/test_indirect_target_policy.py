@@ -348,6 +348,56 @@ int main(void) {
                 checked.add(name)
         self.assertEqual(checked, {"jump", "ret"})
 
+    def test_riscv_pair_proof_rejects_lookalikes(self):
+        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+
+        from teapot.arch import RISCV64Architecture
+
+        # Only a relocation-proven AUIPC+JALR pair skips the check (Codex review).
+        attrs = gtirb.SymbolicExpression.Attribute
+        arch = RISCV64Architecture()
+        auipc_t1, jr_t1, jr_t2 = "17030000", "67000300", "67800300"
+
+        def proof(words, high=None, low=None, low_names_pair=True, low_addend=0):
+            module = gtirb.Module(name="rv", isa=gtirb.Module.ISA.ValidButUnsupported,
+                                  file_format=gtirb.Module.FileFormat.ELF,
+                                  byte_order=gtirb.Module.ByteOrder.Little)
+            gtirb.IR(modules=[module])
+            module.aux_data["archInfo"] = gtirb.AuxData({"ISA": "RISCV64"}, "mapping<string,string>")
+            section = gtirb.Section(name=".teapot_transient", module=module)
+            code = bytes.fromhex("".join(words))
+            interval = gtirb.ByteInterval(section=section, address=0x1000, contents=code + bytes(4))
+            block = gtirb.CodeBlock(offset=0, size=len(code), byte_interval=interval)
+            other = gtirb.CodeBlock(offset=len(code), size=4, byte_interval=interval)
+            target = gtirb.Symbol(name="target", payload=other, module=module)
+            hi = len(code) - 8
+            if high is not None:
+                interval.symbolic_expressions[hi] = gtirb.SymAddrConst(0, target, high)
+            if low is not None:
+                anchor = block if low_names_pair else other
+                interval.symbolic_expressions[hi + 4] = gtirb.SymAddrConst(
+                    low_addend, gtirb.Symbol(name=".Lanchor", payload=anchor, module=module), low)
+            instructions = list(CachedGtirbInstructionDecoder(module.isa).get_instructions(block))
+            return arch.direct_transfer_expression(block, instructions)
+
+        pcrel_hi, pcrel_lo = {attrs.PCREL, attrs.HI}, {attrs.PCREL, attrs.LO}
+        # The two direct forms.
+        self.assertIsNotNone(proof([auipc_t1, jr_t1], pcrel_hi, pcrel_lo))
+        self.assertIsNotNone(proof([auipc_t1, jr_t1], {attrs.PLT}))
+        rejected = {
+            "JALR through another register": proof([auipc_t1, jr_t2], pcrel_hi, pcrel_lo),
+            "AUIPC to the zero register": proof(["17000000", "67000000"], pcrel_hi, pcrel_lo),
+            "LO anchored elsewhere": proof([auipc_t1, jr_t1], pcrel_hi, pcrel_lo, low_names_pair=False),
+            "LO with an addend": proof([auipc_t1, jr_t1], pcrel_hi, pcrel_lo, low_addend=4),
+            "no relocation": proof([auipc_t1, jr_t1]),
+            "HI without its LO": proof([auipc_t1, jr_t1], pcrel_hi),
+            "GOT": proof([auipc_t1, jr_t1], {attrs.GOT}),
+            "TLS GD": proof([auipc_t1, jr_t1], {attrs.TLSGD}),
+            "no AUIPC before the JALR": proof(["13030000", jr_t1], pcrel_hi, pcrel_lo),
+            "a lone register jump": proof([jr_t2]),
+        }
+        self.assertEqual({name for name, result in rejected.items() if result is not None}, set())
+
 
 if __name__ == "__main__":
     unittest.main()
