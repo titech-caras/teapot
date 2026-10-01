@@ -116,14 +116,17 @@ def _address_taken(module, text_section, decoder, arch):
 def _unresolved_jump(block, last, arch):
     """An indirect jump whose targets the lift resolved neither to code nor to a symbol.
 
-    A jump is indirect when no operand is an immediate: a register or memory
-    target (x64 jmp rax, AArch64 br, RISC-V jr); direct and conditional jumps
-    carry an immediate. Capstone 6 puts RISC-V ret in the jump group, so a
+    A jump is direct when the architecture classifies its mnemonic as one and
+    it has an immediate target; otherwise it jumps through a register or memory
+    (x64 jmp rax, AArch64 br, RISC-V jr). The immediate test alone is not
+    enough: the decoder spells RISC-V jr t1 as jalr zero, 0(t1), whose offset
+    is an immediate operand. Capstone 6 puts RISC-V ret in the jump group, so a
     Return edge or the architecture's own test excludes returns. A branch to a
     symbol's proxy, such as a tail call into a library, is resolved.
     """
-    if (not last.group(CS_GRP_JUMP) or last.group(CS_GRP_CALL) or last.group(CS_GRP_RET) or
-            any(operand.type == CS_OP_IMM for operand in last.operands)):
+    direct = (arch.is_direct_transfer_instruction(last) and
+              any(operand.type == CS_OP_IMM for operand in last.operands))
+    if not last.group(CS_GRP_JUMP) or last.group(CS_GRP_CALL) or last.group(CS_GRP_RET) or direct:
         return False
     is_return = getattr(arch, "is_return_instruction", None)
     if (last.mnemonic.split()[-1] in ("ret", "retf", "retaa", "retab") or

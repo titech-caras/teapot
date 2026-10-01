@@ -79,23 +79,31 @@ def module_with_targets():
 
 class PotentialIndirectTargetTests(unittest.TestCase):
     def test_returns_and_symbol_targets_are_not_unresolved_jumps(self):
-        from capstone import CS_ARCH_RISCV, CS_MODE_RISCV64, CS_MODE_RISCVC, Cs
+        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 
         from teapot.arch import RISCV64Architecture
         from teapot.passes.text.indirect_targets import _unresolved_jump
 
-        md = Cs(CS_ARCH_RISCV, CS_MODE_RISCV64 | CS_MODE_RISCVC)
-        md.detail = True
-        ret, jr = (next(md.disasm(bytes.fromhex(word), 0)) for word in ("67800000", "67000500"))
-        module = gtirb.Module(name="m", isa=gtirb.Module.ISA.ValidButUnsupported)
+        # The production decoder: it spells jr a0 as jalr zero, 0(a0), with
+        # an immediate offset operand.
+        module = gtirb.Module(name="m", isa=gtirb.Module.ISA.ValidButUnsupported,
+                              file_format=gtirb.Module.FileFormat.ELF)
+        module.aux_data["archInfo"] = gtirb.AuxData({"ISA": "RISCV64"}, "mapping<string,string>")
         ir = gtirb.IR(modules=[module])
         section = gtirb.Section(name=".text", module=module)
-        interval = gtirb.ByteInterval(section=section, contents=bytes(8))
+        interval = gtirb.ByteInterval(section=section, address=0x1000,
+                                      contents=bytes.fromhex("67800000" "67000500" "8287"))
+        decoder = CachedGtirbInstructionDecoder(module.isa)
+        ret, jr, c_jr = (list(decoder.get_instructions(gtirb.CodeBlock(
+            offset=offset, size=size, byte_interval=interval)))[-1]
+            for offset, size in ((0, 4), (4, 4), (8, 2)))
+        self.assertEqual(jr.mnemonic, "jalr")
         block = gtirb.CodeBlock(offset=0, size=4, byte_interval=interval)
         arch = RISCV64Architecture()
         # Capstone 6 puts RISC-V ret in the jump group.
         self.assertFalse(_unresolved_jump(block, ret, arch))
         self.assertTrue(_unresolved_jump(block, jr, arch))
+        self.assertTrue(_unresolved_jump(block, c_jr, arch))
         external = gtirb.ProxyBlock(module=module)
         gtirb.Symbol(name="puts", payload=external, module=module)
         edge = gtirb.Edge(block, external, gtirb.Edge.Label(gtirb.Edge.Type.Branch, direct=False))
