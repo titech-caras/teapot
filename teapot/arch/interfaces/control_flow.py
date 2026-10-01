@@ -34,7 +34,9 @@ class ArchitectureControlFlowMixin(ABC):
     def indirect_transform_landing_pad_label(self, block_uuid: UUID):
         return None
 
-    def indirect_transform_fallback_patch(self, target_symbol: gtirb.Symbol, *, landing_target_uuid=None):
+    def indirect_transform_fallback_patch(self, target_symbol: gtirb.Symbol, *, landing_target_uuid=None,
+                                          flags_live=True):
+        """The normal-text pad. flags_live=False: the flags are dead where it goes."""
         return self.indirect_branch_target_patch(target_symbol, use_scratch_registers=False)
 
     def trampoline_target_names(self, fallthrough_target_symbol_name: str, branch_target_symbol_name: str, *,

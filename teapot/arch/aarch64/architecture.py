@@ -73,7 +73,8 @@ class AArch64Architecture(
         adjusted_by_iteration = []
         for iteration in range(1, self.MAX_BRANCH_RELAXATION_ITERATIONS + 1):
             relax = AArch64RelaxConditionalBranchesPass(
-                GtirbInstructionDecoder(module.isa)
+                GtirbInstructionDecoder(module.isa),
+                direct_pads=getattr(self, "direct_entry_pads", None),
             )
             relax.begin_module(module, [], None)
             adjusted_by_iteration.append(relax.relaxed_instructions)

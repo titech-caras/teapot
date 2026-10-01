@@ -218,7 +218,8 @@ class RISCV64ControlFlowPatchesMixin:
     def indirect_transform_landing_pad_label(self, block_uuid: UUID):
         return self.landing_pad_entry_label(block_uuid)
 
-    def indirect_transform_fallback_patch(self, target_symbol: gtirb.Symbol, *, landing_target_uuid=None):
+    def indirect_transform_fallback_patch(self, target_symbol: gtirb.Symbol, *, landing_target_uuid=None,
+                                          flags_live=True):
         target_symbol_name = self.landing_pad_entry_label(landing_target_uuid)
         return self.indirect_branch_target_patch(
             target_symbol_name, use_long_jump=True, jump_register="t0", restore_before_jump=False)

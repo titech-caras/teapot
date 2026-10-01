@@ -24,6 +24,7 @@ from teapot.passes.preprocessing.import_symbols_pass import ImportSymbolsPass
 from teapot.passes.preprocessing.normalize_data_block_alignment_pass import (
     NormalizeDataBlockAlignmentPass,
 )
+from teapot.passes.text.indirect_targets import potential_indirect_targets, unsymbolized_data_targets
 from teapot.passes.text.text_indirect_branch_transform_pass import TextIndirectBranchTransformPass
 from teapot.passes.text.text_initialize_library_pass import TextInitializeLibraryPass
 from teapot.passes.text.text_skipped_transform_restore_pass import TextSkippedTransformRestorePass
@@ -124,6 +125,8 @@ class TeapotPipeline:
     component_guard_base = None
     checkpoint_df_blocks = frozenset()
     checkpoint_vector_cases = None
+    potential_target_blocks = frozenset()
+    pad_flags_dead_blocks = frozenset()
     vector_state = None
 
     def __init__(self, ir: gtirb.IR, dift_layout_name=None,
@@ -182,6 +185,8 @@ class TeapotPipeline:
                 self.module, self.reg_manager, self.options.x64_vector_state,
                 debug_cross_check=self.options.debug_vector_liveness)
         print(f"[teapot] live-register analysis: {self.reg_manager.analysis_source}", flush=True)
+        if self.options.enable_indirect_transform:
+            self._find_potential_indirect_targets()
         if self.reg_manager.analysis_source == "python":
             # Invalid tables must not enter the rewriter's offset hooks.
             self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
@@ -266,6 +271,38 @@ class TeapotPipeline:
             self._emit_software_window_bounds()
         if source_lines is not None:
             source_lines.finish(GtirbInstructionDecoder(self.module.isa))
+
+    def _find_potential_indirect_targets(self):
+        """Normal-text blocks to pad beyond the lift's indirect edges, on the original IR.
+
+        On x64 also record the blocks whose flags are dead on entry, where a pad
+        needs no flag save. Masks are read here because the text round runs after
+        other rounds have inserted code at block starts, which reads as all-live.
+        """
+        from gtirb_functions import Function
+
+        # Lifts always name their functions; without them there is nothing to add.
+        if "functionEntries" not in self.module.aux_data:
+            return
+        functions = Function.build_functions(self.module)
+        rules = potential_indirect_targets(self.module, self.text_section, functions,
+                                           self.decoder, self.arch)
+        # Few on the evaluation corpus (0-2 per binary beyond the other rules).
+        rules["unsymbolized-data-word"] = unsymbolized_data_targets(self.module, self.text_section)
+        self.potential_target_blocks = frozenset().union(*rules.values())
+        counts = ", ".join(f"{name} {len(blocks)}" for name, blocks in sorted(rules.items()))
+        print(f"[teapot] potential indirect targets: {counts}", flush=True)
+        flag = self.abi.flag_register()
+        if self.arch.name != "x64" or flag is None:
+            return
+        dead = set()
+        for function in functions:
+            self.reg_manager.analyze(function)
+            for block in function.get_all_blocks():
+                if (isinstance(block, gtirb.CodeBlock) and block.section is self.text_section and
+                        flag not in self.reg_manager.live_registers(function, block, 0)):
+                    dead.add(block.uuid)
+        self.pad_flags_dead_blocks = frozenset(dead)
 
     def _emit_software_window_bounds(self):
         """Hidden aliases the runtime checks at activation (one ordered window)."""
@@ -435,7 +472,9 @@ class TeapotPipeline:
                 self.reg_manager,
                 self.landing_pad_targets,
                 required_target_symbols=(self.linked_component.exported_function_symbols
-                                         if self.linked_component else ()))
+                                         if self.linked_component else ()),
+                potential_targets=self.potential_target_blocks,
+                flags_dead_blocks=self.pad_flags_dead_blocks)
         if target_transform is not None:
             # Every legal normal target address must start with the full
             # marker, not just a separately rewritten component's exports.

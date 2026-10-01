@@ -96,6 +96,56 @@ class AArch64RelaxFixedPointTests(unittest.TestCase):
             bytes.fromhex("100000901002009100023fd6"),
         )
 
+    def test_relaxed_branch_to_a_direct_label_lands_on_the_pad(self):
+        # bl body; b body; pad: nop; body: ret. Direct transfers name the label
+        # after the pad; relaxed into BLR/BR, they are indirect and must land
+        # on the pad itself.
+        module = gtirb.Module(
+            name="aarch64-direct-label",
+            isa=gtirb.Module.ISA.ARM64,
+            file_format=gtirb.Module.FileFormat.ELF,
+            byte_order=gtirb.Module.ByteOrder.Little,
+        )
+        section = gtirb.Section(
+            name=".text",
+            flags={gtirb.Section.Flag.Executable, gtirb.Section.Flag.Readable},
+            module=module,
+        )
+        interval = gtirb.ByteInterval(
+            address=0x400000,
+            contents=b"".join(word.to_bytes(4, "little") for word in (
+                0x94000000, 0x14000000, 0xD503201F, 0xD65F03C0)),
+            section=section,
+        )
+        blocks = [gtirb.CodeBlock(size=4, offset=offset, byte_interval=interval)
+                  for offset in range(0, 16, 4)]
+        pad = gtirb.Symbol(name="f", payload=blocks[2], module=module)
+        label = gtirb.Symbol(name=".L__teapot_direct_entry__f__teapot___1",
+                             payload=blocks[3], module=module)
+        for offset in (0, 4):
+            interval.symbolic_expressions[offset] = gtirb.SymAddrConst(0, label, set())
+        module.aux_data["symbolicExpressionSizes"] = gtirb.AuxData(
+            type_name="mapping<Offset,uint64_t>",
+            data={gtirb.Offset(interval, offset): 4 for offset in (0, 4)},
+        )
+        module.aux_data["functionEntries"] = gtirb.AuxData(
+            type_name="mapping<UUID,set<UUID>>",
+            data={uuid.uuid4(): {blocks[2]}},
+        )
+        arch = AArch64Architecture()
+        arch.direct_entry_pads = {label: pad}
+        with mock.patch.object(
+            AArch64RelaxConditionalBranchesPass,
+            "DIRECT_BRANCH_SAFETY_MARGIN",
+            134217728 - 4,
+        ):
+            arch.relax_conditional_branches(module)
+
+        # Both became ADRP/ADD/BR(L) through IP0, to the pad.
+        self.assertEqual(len(interval.symbolic_expressions), 4)
+        self.assertEqual({expression.symbol for expression in interval.symbolic_expressions.values()},
+                         {pad})
+
 
 if __name__ == "__main__":
     unittest.main()

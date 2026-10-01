@@ -60,7 +60,21 @@ class X64ControlFlowPatchesMixin:
     def conditional_move_suffix(instruction) -> Optional[str]:
         return instruction.mnemonic[4:] if instruction.mnemonic.startswith("cmov") else None
 
-    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, *, use_scratch_registers: bool = False):
+    def indirect_transform_fallback_patch(self, target_symbol: gtirb.Symbol, *, landing_target_uuid=None,
+                                          flags_live=True):
+        return self.indirect_branch_target_patch(target_symbol, flags_live=flags_live)
+
+    def indirect_branch_target_patch(self, target_symbol: gtirb.Symbol, *, use_scratch_registers: bool = False,
+                                     flags_live: bool = True):
+        if not flags_live:
+            # The flags are dead here, for example at a function entry or a
+            # return site, so the checkpoint-count test needs no save.
+            return self.constraints()(lambda ctx: f"""
+                .long 0x{self.MAGIC_WORDS[0]:08x} # xchg rbx, rbx; nop
+                .long 0x{self.MAGIC_WORDS[1]:08x} # xchg rdx, rdx; nop
+                cmp qword ptr checkpoint_cnt, 0
+                jne {target_symbol.name}
+            """)
         return self.constraints()(lambda ctx: f"""
             .long 0x{self.MAGIC_WORDS[0]:08x} # xchg rbx, rbx; nop
             .long 0x{self.MAGIC_WORDS[1]:08x} # xchg rdx, rdx; nop

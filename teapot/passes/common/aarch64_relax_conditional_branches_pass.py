@@ -44,8 +44,10 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
     ADR_SAFETY_MARGIN = 32768
     LITERAL_LOAD_SAFETY_MARGIN = 32768
 
-    def __init__(self, decoder: GtirbInstructionDecoder):
+    def __init__(self, decoder: GtirbInstructionDecoder, direct_pads=None):
         self.decoder = decoder
+        # Label after a normal-text pad -> the pad's symbol (TextIndirectBranchTransformPass).
+        self.direct_pads = direct_pads or {}
         self.relaxed_instructions = 0
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
@@ -134,6 +136,11 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         mnemonic = instruction.mnemonic.lower()
         if mnemonic not in ("b", "bl"):
             return False
+        pad = self.direct_pads.get(target.symbol)
+        if pad is not None and target.addend == 0:
+            # BR/BLR is an indirect branch: it must land on the pad, the only
+            # landing there (a BTI marker in the guarded modes), not after it.
+            target = _BranchTarget(pad, 0, pad.referent.address)
         if mnemonic == "b" and not self._is_function_entry_target(target):
             # IP0 is reserved for veneers at inter-procedure boundaries, but a
             # local intra-procedure branch may legitimately keep x16 live.

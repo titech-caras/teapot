@@ -38,6 +38,14 @@ class IndirectTargetPolicyTests(unittest.TestCase):
         bouncer = arch.indirect_branch_target_patch(
             gtirb.Symbol(name="transient_bounced"), use_scratch_registers=arch.name != "x64")(
                 SimpleNamespace(scratch_registers=scratch))
+        # x64 also has a pad for places where the flags are dead.
+        flagless = ""
+        if arch.name == "x64":
+            flagless = "\n".join((".global flagless_bouncer", ".p2align 4", "flagless_bouncer:",
+                                  arch.indirect_branch_target_patch(
+                                      gtirb.Symbol(name="transient_bounced"), flags_live=False)(
+                                          SimpleNamespace(scratch_registers=scratch)),
+                                  f"{result} 0", "ret"))
         directive = ".long" if arch.name == "x64" else ".word"
         marker = "\n".join(f"{directive} 0x{word:08x}" for word in arch.MAGIC_WORDS)
         landing = {"x64": 0xfa1e0ff3, "aarch64": 0xd50324df, "riscv64": 0x00000013}[arch.name]
@@ -90,6 +98,7 @@ normal_bouncer:
 {bouncer}
 {result} 0
 ret
+{flagless}
 .zero 16
 marker_crossing_end:
 {directive} 0x{arch.MAGIC_WORDS[0]:08x}
@@ -122,7 +131,8 @@ indirect_branch_flags_scratch:
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-extern int check_target(uintptr_t), normal_bouncer(void);
+extern int check_target(uintptr_t), normal_bouncer(void), flagless_bouncer(void);
+#pragma weak flagless_bouncer
 extern uint64_t checkpoint_cnt;
 extern unsigned char text_start[], text_end[], transient_start[], transient_end[];
 extern unsigned char complete_marker[], wrong_second[], bare_landing[], prefixed_marker[];
@@ -186,6 +196,13 @@ int main(void) {
     assert(normal_bouncer() == 1);
     checkpoint_cnt = 2;
     assert(normal_bouncer() == 1);
+#ifdef FLAGLESS_BOUNCER
+    assert(check_target((uintptr_t)flagless_bouncer) == 1);
+    for (uint64_t count = 0; count < 3; count++) {
+        checkpoint_cnt = count;
+        assert(flagless_bouncer() == (count != 0));
+    }
+#endif
     printf("%u actual-emitted predicate addresses; normal/nested bouncers passed\n", count);
     return 0;
 }
@@ -198,6 +215,7 @@ int main(void) {
                        f"-DMAGIC0=0x{arch.MAGIC_WORDS[0]:08x}U",
                        f"-DMAGIC1=0x{arch.MAGIC_WORDS[1]:08x}U",
                        *(["-DWINDOW_PREDICATE"] if window else []),
+                       *(["-DFLAGLESS_BOUNCER"] if flagless else []),
                        str(root / "policy.c"), str(root / "policy.S"), "-o", str(root / "policy")]
             built = subprocess.run(command, capture_output=True, text=True, timeout=30)
             self.assertEqual(built.returncode, 0, built.stderr)
