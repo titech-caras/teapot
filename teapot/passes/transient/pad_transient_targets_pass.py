@@ -3,7 +3,9 @@
 Only the targets an indirect branch inside the copy can arrive at are padded:
 address-taking references remapped by ``copy_section`` (relocations, data
 pointers, function pointers) and resolved indirect branch targets. The operand
-of a direct branch or call is not an indirect target and gets no pad.
+of a direct branch or call is not an indirect target and gets no pad (on
+RISC-V, also the operands of a proven direct AUIPC+JALR pair), and neither is
+the AUIPC label that a RISC-V ``%pcrel_lo`` operand names.
 
 Return sites are padded in software mode, where a return checks the marker
 pair like any other transfer: the block at the address after every call,
@@ -24,6 +26,11 @@ import bisect
 
 import gtirb
 from gtirb_rewriting import Pass, Patch, RewritingContext, patch_constraints
+
+from teapot.passes.text.indirect_targets import _direct_pair_offsets
+
+_PCREL = gtirb.SymbolicExpression.Attribute.PCREL
+_LO = gtirb.SymbolicExpression.Attribute.LO
 
 
 class PadTransientTargetsPass(Pass):
@@ -86,7 +93,13 @@ class PadTransientTargetsPass(Pass):
         return block if address < block.address + block.size else None
 
     def _is_direct_reference(self, interval, position):
-        """True when the expression is the operand of a direct branch or call."""
+        """True when the expression is the operand of a direct branch or call.
+
+        That includes the operands of a RISC-V AUIPC+JALR pair that the
+        architecture proves direct: the target's symbol sits on the AUIPC, which
+        is not a transfer instruction by itself. Normal text skips them the same
+        way (indirect_targets._address_taken).
+        """
         if self.arch is None or interval.address is None:
             return False
         address = interval.address + position
@@ -95,8 +108,11 @@ class PadTransientTargetsPass(Pass):
             return False
         for instruction in self._instructions(block):
             if instruction.address <= address < instruction.address + instruction.size:
-                return self.arch.is_direct_transfer_instruction(instruction)
-        return False
+                if self.arch.is_direct_transfer_instruction(instruction):
+                    return True
+                break
+        return position in _direct_pair_offsets(block, self.decoder, self.arch,
+                                                self._instructions_by_block)
 
     def target_blocks(self):
         """Blocks in the copy that an indirect branch inside it can reach and that need a pad."""
@@ -115,6 +131,11 @@ class PadTransientTargetsPass(Pass):
         targets = set()
         for interval in self.section.byte_intervals:
             for position, expression in interval.symbolic_expressions.items():
+                # A RISC-V %pcrel_lo operand names its own AUIPC's label, not a
+                # target; the AUIPC's %pcrel_hi operand names the target. Normal
+                # text skips it the same way (indirect_targets._address_taken).
+                if {_PCREL, _LO} <= set(expression.attributes):
+                    continue
                 if self._is_direct_reference(interval, position):
                     continue
                 for symbol in expression.symbols:

@@ -98,6 +98,69 @@ class PadTransientTargetsTests(unittest.TestCase):
         del interval.symbolic_expressions[8]
         self.assertEqual(pad.target_blocks(), set())
 
+    def test_pcrel_lo_anchors_are_not_targets(self):
+        # auipc a0, %pcrel_hi(target); addi a0, a0, %pcrel_lo(anchor): the LO
+        # operand names the AUIPC's own label, so only the target is padded.
+        module = gtirb.Module(name="pad", isa=gtirb.Module.ISA.ARM64)
+        gtirb.IR(modules=[module])
+        section = gtirb.Section(name=".teapot_transient", module=module)
+        interval = gtirb.ByteInterval(section=section, contents=bytes(16), size=16)
+        auipc = gtirb.CodeBlock(offset=0, size=8, byte_interval=interval)
+        target = gtirb.CodeBlock(offset=8, size=8, byte_interval=interval)
+        attributes = gtirb.SymbolicExpression.Attribute
+        interval.symbolic_expressions[0] = gtirb.SymAddrConst(
+            0, gtirb.Symbol(name="target", payload=target, module=module),
+            {attributes.PCREL, attributes.HI})
+        interval.symbolic_expressions[4] = gtirb.SymAddrConst(
+            0, gtirb.Symbol(name="anchor", payload=auipc, module=module),
+            {attributes.PCREL, attributes.LO})
+        pad = PadTransientTargetsPass(section, None, (0x11400013, 0x51400013))
+        self.assertEqual(pad.target_blocks(), {target})
+
+    @staticmethod
+    def riscv_copy():
+        """A RISC-V copy: a direct tail pair (PCREL HI/LO), a direct call pair (PLT),
+        a register jump, a return, and the pairs' target."""
+        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+
+        module = gtirb.Module(name="rv", isa=gtirb.Module.ISA.ValidButUnsupported,
+                              file_format=gtirb.Module.FileFormat.ELF,
+                              byte_order=gtirb.Module.ByteOrder.Little)
+        gtirb.IR(modules=[module])
+        module.aux_data["archInfo"] = gtirb.AuxData({"ISA": "RISCV64"}, "mapping<string,string>")
+        section = gtirb.Section(name=".teapot_transient", module=module)
+        interval = gtirb.ByteInterval(section=section, address=0x1000, contents=bytes.fromhex(
+            "17030000" "67000300" "97000000" "e7800000" "67808700" "67800000" "67800000"))
+        blocks = {name: gtirb.CodeBlock(offset=offset, size=size, byte_interval=interval)
+                  for name, offset, size in (("tail", 0, 8), ("call", 8, 8), ("jump", 16, 4),
+                                             ("ret", 20, 4), ("target", 24, 4))}
+        attrs = gtirb.SymbolicExpression.Attribute
+        target = gtirb.Symbol(name="target", payload=blocks["target"], module=module)
+        interval.symbolic_expressions[0] = gtirb.SymAddrConst(0, target, {attrs.PCREL, attrs.HI})
+        interval.symbolic_expressions[4] = gtirb.SymAddrConst(
+            0, gtirb.Symbol(name=".Lpcrel_hi", payload=blocks["tail"], module=module),
+            {attrs.PCREL, attrs.LO})
+        interval.symbolic_expressions[8] = gtirb.SymAddrConst(0, target, {attrs.PLT})
+        return module, section, blocks, CachedGtirbInstructionDecoder(module.isa)
+
+    def test_direct_pair_targets_get_no_pad(self):
+        # Direct calls and jumps do not need a landing pad, and a proven RISC-V
+        # pair is direct although its symbol sits on the AUIPC.
+        _, section, blocks, decoder = self.riscv_copy()
+        pad = PadTransientTargetsPass(section, decoder, RISCV64Architecture.MAGIC_WORDS,
+                                      arch=RISCV64Architecture())
+        self.assertEqual(pad.target_blocks(), set())
+
+    def test_an_anchor_that_is_also_a_target_keeps_its_pad(self):
+        # The %pcrel_lo operand alone does not make the AUIPC block a target, but
+        # an indirect branch to it does.
+        module, section, blocks, decoder = self.riscv_copy()
+        module.ir.cfg.add(gtirb.Edge(blocks["jump"], blocks["tail"],
+                                     gtirb.Edge.Label(gtirb.Edge.Type.Branch, direct=False)))
+        pad = PadTransientTargetsPass(section, decoder, RISCV64Architecture.MAGIC_WORDS,
+                                      arch=RISCV64Architecture())
+        self.assertEqual(pad.target_blocks(), {blocks["tail"]})
+
     def test_direct_transfer_classification(self):
         def instruction(mnemonic):
             return types.SimpleNamespace(mnemonic=mnemonic)
