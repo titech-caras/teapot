@@ -24,7 +24,7 @@ class X64GadgetPatchesMixin:
     def report_gadget_snippet(gadget_type: str, *,
                               addr_reg: Optional[Register] = None,
                               tag_reg: Optional[Register] = None):
-        if tag_reg.name != "rsi":
+        if tag_reg is None or tag_reg.name != "rsi":
             load_rsi_rdx_snippet = f"""
                 mov rsi, {addr_reg if addr_reg else "0"}
                 mov rdx, {tag_reg if tag_reg else "0"}
