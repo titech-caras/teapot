@@ -12,6 +12,11 @@ TARGETS = {
 
 # Instrumentation modes. Each keeps the ISA contract above and names the DIFT
 # layout, ASan tag storage and ASan runtime that the final link must use.
+# The ASan soname stands for the ASan generation a layout was built for: the
+# x64-la48-asan-new ranges follow GCC 14's ASan allocator (libcheckpoint's
+# cmake/DiftLayoutData.cmake), and another generation can place its regions
+# inside them (TROUBLESHOOTING.md). A new generation therefore gets its own
+# mode, not a looser soname check.
 # "default" keeps each ISA's historical component mode.
 MODES = {
     'x64': dict(isa='X64', layout='x64-la48-asan-new', tag_storage='shadow', asan='libasan.so.8'),

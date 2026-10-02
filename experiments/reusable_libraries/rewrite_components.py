@@ -16,9 +16,16 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from uuid import UUID
+
+# The repository root holds the teapot, experiments and tools packages imported below. Put it
+# first on the path, so the script imports its own checkout and runs by its file path from any
+# directory.
+_ROOT = str(Path(__file__).resolve().parents[2])
+sys.path[:] = [_ROOT] + [entry for entry in sys.path if entry != _ROOT]
 
 import gtirb
 import gtirb_rewriting
@@ -37,6 +44,12 @@ from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.utils.serialization import compact_for_pprinter
 from experiments.reusable_libraries.targets import (
     for_machine, mode_for, mode_metadata, target_for, MODES, TARGET_IDENTIFICATIONS)
+
+
+def require(condition, *message):
+    """A fail-closed check that, unlike assert, survives python -O."""
+    if not condition:
+        raise ValueError(*message)
 
 
 def sha(path):
@@ -69,8 +82,79 @@ def imported_package_hash(package, declared_root):
         origin.relative_to(root)
     except ValueError:
         raise RuntimeError(f'{package.__name__} imported from {origin}, '
-                           f'outside declared source {root}; correct PYTHONPATH or the source option')
+                           f'outside declared source {root}; the driver imports teapot from its own '
+                           'checkout, and the other packages through PYTHONPATH')
     return tree_hash(origin.parent)
+
+
+# Python packages that shape the instrumented output, by distribution and import name.
+OUTPUT_PACKAGES = (("llvmlite", "llvmlite"), ("mcasm", "mcasm"), ("capstone", "capstone"),
+                   ("gtirb-capstone", "gtirb_capstone"), ("gtirb-functions", "gtirb_functions"),
+                   ("gtirb-layout", "gtirb_layout"), ("leb128", "leb128"))
+
+
+def dependency_versions():
+    """What the installed Python packages contribute to the output.
+
+    The packages that shape it are hashed file by file: llvmlite and mcasm carry
+    LLVM, and capstone its decoder, as shared libraries inside the package. A
+    package without distribution metadata, such as a checkout on PYTHONPATH, is
+    hashed all the same. Their own dependencies, such as networkx and
+    intervaltree under gtirb and gtirb-layout, enter by version, as every
+    installed distribution does.
+    """
+    from importlib import metadata
+    import importlib
+    import llvmlite.binding as llvm
+    packages = {}
+    for distribution, name in OUTPUT_PACKAGES:
+        try:
+            directory = Path(importlib.import_module(name).__file__).resolve().parent
+        except ImportError:
+            packages[distribution] = None
+            continue
+        try:
+            version = metadata.version(distribution)
+        except metadata.PackageNotFoundError:
+            version = None
+        files = {str(path.relative_to(directory)): sha(path) for path in sorted(directory.rglob("*"))
+                 if path.is_file() and "__pycache__" not in path.parts}
+        packages[distribution] = {"version": version, "files": hashlib.sha256(
+            json.dumps(files, sort_keys=True).encode()).hexdigest()}
+    packages["llvm"] = ".".join(map(str, llvm.llvm_version_info))
+    packages["installed"] = sorted({(item.metadata["Name"], item.version)
+                                    for item in metadata.distributions() if item.metadata["Name"]})
+    return packages
+
+
+def toolchain_identity(converter, cc):
+    """The compiler driver and the assembler and preprocessor it actually runs.
+
+    A program the driver does not run as a separate file has no identity: clang
+    prints a bare ``cc1`` because its compiler is built in.
+    """
+    identity = {"driver": converter.native_tool_identity(cc)}
+    for program in ("as", "cc1"):
+        path = subprocess.run([cc, "-print-prog-name=" + program], stdout=subprocess.PIPE,
+                              text=True, check=True).stdout.strip()
+        if "/" not in path and shutil.which(path) is None:
+            identity[program] = None
+        else:
+            identity[program] = converter.native_tool_identity(path)
+    return identity
+
+
+def portable_identity(identity):
+    """A native tool's identity without its paths, as cache key material.
+
+    The same bytes at another mount (a host build, or a frontend under another
+    prefix) then share components; ``tools.json`` keeps the paths.
+    """
+    if identity is None:
+        return None
+    return {"sha256": identity["sha256"],
+            "libraries": sorted((Path(path).name, digest)
+                                for path, digest in identity["libraries"].items())}
 
 
 def configuration_identity():
@@ -138,27 +222,29 @@ def validate_object(path, component_id, expected_exports, expected_fdes,
     target = target_for(isa, target_identification)
     with path.open("rb") as stream:
         elf = ELFFile(stream)
-        assert elf["e_type"] == "ET_REL" and elf["e_machine"] == machine
-        assert elf.elfclass == 64 and elf.little_endian
+        require(elf["e_type"] == "ET_REL" and elf["e_machine"] == machine,
+                'check failed: elf["e_type"] == "ET_REL" and elf["e_machine"] == machine')
+        require(elf.elfclass == 64 and elf.little_endian,
+                'check failed: elf.elfclass == 64 and elf.little_endian')
         if isa == 'RISCV64':
-            assert elf['e_flags'] & 6 == 4 and not elf['e_flags'] & ~5, 'RV64 LP64D required'
+            require(elf['e_flags'] & 6 == 4 and not elf['e_flags'] & ~5, 'RV64 LP64D required')
         table = elf.get_section_by_name(".symtab")
         symbols = {s.name: s for s in table.iter_symbols() if s.name}
         for name in expected_exports:
             symbol = symbols[name]
-            assert isinstance(symbol["st_shndx"], int), name
+            require(isinstance(symbol["st_shndx"], int), name)
             section = elf.get_section(symbol["st_shndx"])
             offset = symbol["st_value"]
-            assert section.name == target['text_section'], (name, section.name)
-            assert section.data()[offset:offset + len(target['marker'])] == target['marker'], (
-                "export is missing its full normal-to-transient marker", name)
+            require(section.name == target['text_section'], (name, section.name))
+            require(section.data()[offset:offset + len(target['marker'])] == target['marker'], (
+                "export is missing its full normal-to-transient marker", name))
         for name, flags in ((target['text_section'], 6), (".teapot_transient", 6),
                             (".teapot_component_guards." + component_id, 3)):
             section = elf.get_section_by_name(name)
-            assert section is not None and section["sh_flags"] & 7 == flags, (name, section)
+            require(section is not None and section["sh_flags"] & 7 == flags, (name, section))
         entries = cfi_reader(elf, path) if cfi_reader else elf.get_dwarf_info().EH_CFI_entries()
         fdes = [entry for entry in entries if isinstance(entry, FDE)]
-        assert len(fdes) >= expected_fdes, "original unwind ranges were not reconstructed"
+        require(len(fdes) >= expected_fdes, "original unwind ranges were not reconstructed")
 
 
 def build_component(args, converter, item, key_data, component_id, selected_symbols, priority, directory):
@@ -166,19 +252,20 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     lifted = directory / "lift.gtirb"
     run(directory, "lift", [args.ddisasm, item["path"], "--ir", lifted, "-j", str(args.jobs)])
     ir = gtirb.IR.load_protobuf(lifted)
-    assert len(ir.modules) == 1
+    require(len(ir.modules) == 1, 'check failed: len(ir.modules) == 1')
     module = ir.modules[0]
     isa, target = for_machine(item['machine'])
-    assert module_isa_name(module) == isa
+    require(module_isa_name(module) == isa, 'check failed: module_isa_name(module) == isa')
     dump(directory / "proven-data-decoder-warnings.json", converter.validate_frontend_diagnostics(
         module, item, (directory / "lift/stderr").read_text()))
-    assert "liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data
+    require("liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data,
+            'check failed: "liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data')
     cfi = module.aux_data.get("cfiDirectives")
     cfi_starts = {offset.element_id.address + offset.displacement
                   for offset, directives in (cfi.data.items() if cfi else ())
                   if any(directive[0] == ".cfi_startproc" for directive in directives)}
     for fde in item["application_fdes"]:
-        assert fde["start"] in cfi_starts, ("unrecovered original unwind range", fde)
+        require(fde["start"] in cfi_starts, ("unrecovered original unwind range", fde))
     for symbol in module.symbols:
         if SYMBOL_SUFFIX in symbol.name or symbol.name.startswith((
                 "__teapot_linked_", "__teapot_component_", "__teapot_bti_")):
@@ -189,7 +276,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         from tools.sharedlib.aarch64_return_abi import produce
         from teapot.utils.return_abi import POINTER_RETURNS, SCHEMA, function_fingerprint
         evidence = produce(item['path'], lifted)
-        assert POINTER_RETURNS not in module.aux_data
+        require(POINTER_RETURNS not in module.aux_data,
+                'check failed: POINTER_RETURNS not in module.aux_data')
         module.aux_data[POINTER_RETURNS] = gtirb.AuxData({
             UUID(row['function_uuid']): (function_fingerprint(module, UUID(row['function_uuid'])), row['id'])
             for row in evidence['records']}, SCHEMA)
@@ -221,7 +309,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     guard_count = sum(interval.size for interval in pipeline.guard_section.byte_intervals) // 4
     for label in ("__guard_start" + SYMBOL_SUFFIX, "__guard_end" + SYMBOL_SUFFIX):
         matches = list(module.symbols_named(label))
-        assert len(matches) == 1
+        require(len(matches) == 1, 'check failed: len(matches) == 1')
         matches[0].name = label + "_" + component_id
     if item["role"] == "selected" and not args.preserve_selected_lifecycle:
         for section in module.sections:
@@ -245,15 +333,13 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     if item["role"] == "selected" and not args.preserve_selected_lifecycle:
         printer += ["--skip-section", ".init", ".fini"]
     run(directory, "print", printer)
-    fixed = run(directory, "section-flags", ["sed", "-f", args.teapot / "scripts/fix_asm.sed",
-                                            directory / "raw.S"])
-    shutil.copyfile(fixed / "stdout", directory / "fixed.S")
-    run(directory, "assemble", [args.cc, "-c", directory / "fixed.S", "-o", directory / "component.o",
+    # The printer emits Teapot's section flags and global guard bounds itself.
+    run(directory, "assemble", [args.cc, "-c", directory / "raw.S", "-o", directory / "component.o",
                                 *(['-mno-relax', '-Wa,-mno-relax'] if isa == 'RISCV64' else []),
                                 *(['-march=armv8.5-a+memtag'] if args.mode_tag_storage == 'mte' else [])])
     validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]),
                     item['machine'], converter.eh_cfi_entries, args.target_identification)
-    recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "fixed.S", "component.o",
+    recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "component.o",
                 "proven-data-decoder-warnings.json", "selected-version-bindings.json", "compaction.json"]
     if args.preserve_selected_lifecycle:
         recorded.append("lifecycle.json")
@@ -299,10 +385,10 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
                 temporary.rename(entry)
                 return {**result, "cache_hit": False, "cache_path": str(entry), "input_path": item["path"]}
             fcntl.flock(lock, fcntl.LOCK_SH)
-        assert json.loads((entry / "key.json").read_text()) == key_data, "cache key mismatch"
+        require(json.loads((entry / "key.json").read_text()) == key_data, "cache key mismatch")
         result = json.loads((entry / "component.json").read_text())
         for name, expected in result["files"].items():
-            assert sha(entry / name) == expected, "cached artifact hash mismatch: " + name
+            require(sha(entry / name) == expected, "cached artifact hash mismatch: " + name)
         validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]),
                         item['machine'], converter.eh_cfi_entries,
                         context.get('target_identification', 'software'))
@@ -334,17 +420,34 @@ def main():
     parser.add_argument("--preserve-nonlocal-jumps", action="store_true")
     parser.add_argument("--preserve-weak-imports", action="store_true")
     args = parser.parse_args()
-    assert 1 <= args.jobs <= 8
+    if not 1 <= args.jobs <= 8:
+        parser.error("--jobs must be 1..8")
+    for option in ("ddisasm", "pprinter", "cc"):
+        if shutil.which(getattr(args, option)) is None:
+            parser.error(f"--{option}: {getattr(args, option)} is not an executable")
     source_hashes = {
         'teapot': imported_package_hash(teapot, args.teapot / 'teapot'),
         'rewriting': imported_package_hash(gtirb_rewriting, args.rewriting),
         'lra': imported_package_hash(gtirb_live_register_analysis, args.lra),
     }
-    args.out.mkdir(parents=True, exist_ok=False)
-    args.cache.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("selected_converter", args.converter)
     converter = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(converter)
+    # Identify every tool and library that shapes the output, with its shared
+    # libraries, before creating --out: an LLVM, assembler or frontend upgrade
+    # must not reuse old components, and a failure here leaves nothing behind.
+    tools = {"frontend": {"ddisasm": converter.native_tool_identity(args.ddisasm),
+                          "pprinter": converter.native_tool_identity(args.pprinter)},
+             "assembler": toolchain_identity(converter, args.cc)}
+    tool_key = {"frontend": {name: portable_identity(identity)
+                             for name, identity in tools["frontend"].items()},
+                "assembler": {name: portable_identity(identity)
+                              for name, identity in tools["assembler"].items()},
+                "python": converter.python_identity(),
+                "dependency_versions": dependency_versions()}
+    args.out.mkdir(parents=True, exist_ok=False)
+    args.cache.mkdir(parents=True, exist_ok=True)
+    dump(args.out / "tools.json", tools)
     conversion_options = {name: getattr(args, name) for name in (
         "resolve_selected_versions", "preserve_selected_lifecycle",
         "preserve_nonlocal_jumps", "preserve_weak_imports")}
@@ -365,12 +468,10 @@ def main():
     if any(is_blacklisted_function_name(name) for name in selected_symbols):
         raise RuntimeError("selected exports include an uninstrumented/trusted startup entry")
     context = {"converter_sha256": sha(args.converter), "driver_sha256": sha(__file__),
-               "assembly_fix_sha256": sha(args.teapot / "scripts/fix_asm.sed"),
                **source_hashes, "bindings": sorted(bindings),
                "selected_libraries": sorted((item["soname"], item["sha256"]) for item in selected),
                "external_libraries": sorted((item["soname"], item["sha256"]) for item in external),
-               "frontend": {"ddisasm": sha(args.ddisasm), "pprinter": sha(args.pprinter)},
-               "assembler": sha(shutil.which(args.cc)),
+               **tool_key,
                "runtime_contract": json.loads(args.runtime_contract.read_text()),
                "options": asdict(args.instrumentation_options), "ROB_LEN": ROB_LEN,
                "configuration": configuration_identity(),
@@ -459,7 +560,7 @@ def component_layout(components, target_identification='software'):
                    " = ABSOLUTE((__guard_start__teapot___" + key + " - __guard_start__teapot__) / 4);",
                    "    KEEP(*(.teapot_component_guards." + key + "))"]
         total_guards += component["guard_count"]
-    assert total_guards < 0x80000000, "coverage index relocation would overflow"
+    require(total_guards < 0x80000000, "coverage index relocation would overflow")
     layout += ["    __guard_end__teapot__ = .; }", "} INSERT AFTER .data;"]
     return "\n".join(layout) + "\n"
 

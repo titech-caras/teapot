@@ -1,3 +1,8 @@
+import os
+from pathlib import Path
+import subprocess
+import sys
+import textwrap
 from types import SimpleNamespace
 import unittest
 import gtirb
@@ -61,8 +66,34 @@ class ComponentArchitecturesTests(unittest.TestCase):
                 if valid:
                     validate_dynamic_symbol_names(elf)
                 else:
-                    with self.assertRaisesRegex(AssertionError, 'dynamic symbol name'):
+                    with self.assertRaisesRegex(ValueError, 'dynamic symbol name'):
                         validate_dynamic_symbol_names(elf)
+
+    def test_checks_survive_python_optimize(self):
+        # The validator's checks raise ValueError, so `python -O` keeps them.
+        script = textwrap.dedent("""
+            import sys
+            from unittest.mock import Mock
+            print('optimize=%d' % sys.flags.optimize)
+            from experiments.reusable_libraries.validate_link import validate_dynamic_symbol_names
+            elf = Mock()
+            elf.get_section_by_name.return_value = table = Mock()
+            table.__getitem__ = Mock(return_value=2)
+            table.iter_symbols.return_value = [{'st_name': 5}]
+            elf.get_section.return_value.data.return_value = b'\\0api\\0'
+            try:
+                validate_dynamic_symbol_names(elf)
+            except ValueError as error:
+                print('rejected:', error)
+        """)
+        root = Path(__file__).resolve().parents[1]
+        environment = dict(os.environ, PYTHONPATH=os.pathsep.join(
+            filter(None, (str(root), os.environ.get('PYTHONPATH')))))
+        result = subprocess.run([sys.executable, '-O', '-c', script], cwd=root, env=environment,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertRegex(result.stdout, r'optimize=[12]')
+        self.assertIn('rejected: ', result.stdout)
+        self.assertIn('dynamic symbol name', result.stdout)
 
     def test_riscv_uses_the_frontends_archinfo_contract(self):
         module = gtirb.Module(name='rv64', isa=gtirb.Module.ISA.ValidButUnsupported)

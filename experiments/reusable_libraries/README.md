@@ -44,7 +44,8 @@ python3 experiments/reusable_libraries/rewrite_components.py \
 
 `--teapot`, `--rewriting` and `--lra` name the source trees whose Python files enter the cache key. The driver checks
 that the imported packages really come from those paths and hashes the imported package directories. The dependency
-paths may be checkout roots or their installed `site-packages` package directories; set `PYTHONPATH` consistently.
+paths may be checkout roots or their installed `site-packages` package directories. The driver imports Teapot
+from its own checkout, so `--teapot` must name it; the other two come through `PYTHONPATH`.
 The runtime
 contract is a JSON description of the runtime the objects will be linked with, for example the hashes of its
 archives; it is stored in the key as given. The four opt-in flags are the converter's.
@@ -79,7 +80,7 @@ For each component the driver:
 3. Runs every default Teapot pass with ROB 250 and nesting off, in the mode's layout. Exported entries receive the
    complete indirect-branch marker before normal-path stack poisoning. Direct transfers to a validated provider may
    continue into its instrumented code; unknown or external transfers keep their rollback and checks.
-4. Prints and assembles a real `ET_REL` object. The only assembly postprocessing is `scripts/fix_asm.sed`.
+4. Prints and assembles a real `ET_REL` object. The printed assembly is assembled as it is.
 
 `OUT` then holds `component-000.o` (the executable), one object per selected library, any lifecycle support objects,
 the linker script `layout.ld`, and the `components.json` and `inputs.json` manifests.
@@ -110,14 +111,18 @@ is separately checked at startup on the final mapping.
 
 ## Cache
 
-Each cache entry is immutable and content-addressed. It holds the original and instrumented IR, the raw and fixed
+Each cache entry is immutable and content-addressed. It holds the original and instrumented IR, the printed
 assembly, the object, the command logs and SHA-256 manifests, and every file is re-hashed on a hit. The key covers
 the input ELF bytes, its role and initializer priority, the selected and external libraries' bytes and binding
-names, the Teapot, gtirb-rewriting and live-register-analysis sources, the converter, the driver, `fix_asm.sed`,
-DDisasm, gtirb-pprinter and the assembler, the runtime contract, the pass options, the ROB length, the mode and its
-layout. A library's key leaves out the executable's bytes but not its binding contract, so another program with the
-same contract reuses the same instrumented library. This cache is separate from the converter's cache of ordinary
-IR and objects.
+names, the Teapot, gtirb-rewriting and live-register-analysis sources, the converter, the driver, the runtime
+contract, the pass options, the ROB length, the mode and its layout. It also covers the bytes of every tool that
+shapes the output, with its shared libraries: DDisasm, gtirb-pprinter, the compiler driver and the `as` and `cc1` it
+runs (clang has no separate `cc1`). The Python side enters as the interpreter; the `.py` and `.so` files of gtirb,
+pyelftools and protobuf; every file of llvmlite and its LLVM, mcasm, capstone, gtirb-capstone, gtirb-functions,
+gtirb-layout and leb128; and the version of every installed distribution. Tool paths are not key material; each
+run records them in `tools.json`. A library's key leaves out the executable's bytes but not its binding contract,
+so another program with the same contract reuses the same instrumented library. This cache is separate from the
+converter's cache of ordinary IR and objects.
 
 ## Limitations
 

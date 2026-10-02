@@ -73,5 +73,5 @@ __teapot_bti_component_preinit: .quad libcheckpoint_prepare_aarch64_bti_pac_comp
                                   ('__teapot_bti_component_preinit', lo),
                                   ('libcheckpoint_prepare_aarch64_bti_pac_components', lo)):
                     broken = dict(symbols, **{name: bad})
-                    with self.subTest(symbol=name), self.assertRaises(AssertionError):
+                    with self.subTest(symbol=name), self.assertRaises(ValueError):
                         validate_bti_layout(elf, broken.__getitem__, ranges)
