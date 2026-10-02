@@ -32,11 +32,12 @@ def create_guards(guard_section: gtirb.Section, count: int) -> Tuple[gtirb.Symbo
         module=guard_section.module
     )
 
-    elf_symbol_info = guard_section.module.aux_data.get("elfSymbolInfo")
-    if elf_symbol_info is not None:
-        elf_symbol_info.data[guard_start_symbol] = (
-            guard_size * count, "OBJECT", "GLOBAL", "DEFAULT", 0)
-        elf_symbol_info.data[guard_end_symbol] = (
-            0, "OBJECT", "GLOBAL", "DEFAULT", 0)
+    # The runtime links against both bounds, so they must print as .globl.
+    elf_symbol_info = guard_section.module.aux_data.setdefault("elfSymbolInfo", gtirb.AuxData(
+        {}, "mapping<UUID,tuple<uint64_t,string,string,string,uint64_t>>"))
+    elf_symbol_info.data[guard_start_symbol] = (
+        guard_size * count, "OBJECT", "GLOBAL", "DEFAULT", 0)
+    elf_symbol_info.data[guard_end_symbol] = (
+        0, "OBJECT", "GLOBAL", "DEFAULT", 0)
 
     return guard_start_symbol, guard_end_symbol
