@@ -54,17 +54,22 @@ If `ddisasm --asm` or `gtirb-pprinter` fails with missing RISC-V support, check
 that the local pprinter build is the one being used. Some GNU assembler builds
 reject `%got_pcrel_hi(...)` forms that LLVM accepts; use the LLVM assembler path
 or a known-good cross toolchain for RV64 ASan links.
-Signal recovery uses the native Linux `ucontext_t` layout. The image's QEMU
-4.2.1 fails the signal-return PC/mask regression; host QEMU 10.0.8 passes it.
-Use the current host emulator rather than guessing alternate signal-frame slots.
-The standalone RV64 landing-state fixture also faults with the image emulator
-but passes all six variants on host QEMU 10.0.8. For Python regression runs,
+Signal recovery uses the native Linux `ucontext_t` layout. QEMU 4.2.1 (the
+emulator of an earlier image) fails the signal-return PC/mask regression; host
+QEMU 10.0.8 passes it. The image now ships Ubuntu 24.04's QEMU 8.2.2 as
+`qemu-riscv64` and `qemu-aarch64`, and a Debian QEMU as
+`/usr/local/bin/qemu-aarch64-mte` (10.0.13 in the current image; it is not
+pinned). If a RISC-V signal test fails there, rerun it on a current host QEMU
+before suspecting the runtime, rather than guessing alternate signal-frame
+slots; for AArch64, use `qemu-aarch64-mte`. The standalone RV64 landing-state
+fixture also faulted with QEMU 4.2.1 and passes all six variants on host QEMU
+10.0.8. For Python regression runs,
 setting checkout `PYTHONPATH` alone is insufficient: select the local DDisasm
 in `PATH`, local `PPRINTER_PATH`/printer library, and verified QEMU executables.
-The current local frontend build is `var/ddisasm-lra-rebuild/bin/ddisasm`;
-`var/ddisasm-local-riscv-env-build2` predates later symbolization fixes.
-For the old image's CTest, set the build directory as the working directory;
-`--test-dir` is ignored there, and "No tests were found" is not a passing suite.
+Use a DDisasm at least as new as the Dockerfile's pinned `lin-toto/ddisasm`
+commit; older local builds predate the symbolization fixes. With CMake older
+than 3.20, `ctest --test-dir` is ignored, so run CTest from the build directory;
+"No tests were found" is not a passing suite.
 
 RV64 GP references require fresh symbolic metadata from the local frontend.
 Teapot expands them before copying code and reports destination-reuse, spare and
@@ -86,7 +91,7 @@ For shadow-tag qemu user-mode smoke tests, `aarch64-vma39` with `qemu-aarch64 -R
 For AArch64 MTE tag-storage smoke tests, use `aarch64-vma42` with `qemu-aarch64-mte -cpu max -R 0x40000000000 -s 33554432 -L /opt/aarch64-mte-sysroot ...`; under qemu, `aarch64-vma39` can place DIFT shadow memory where the dynamic loader or stack lives.
 If shadow-tag mode reports `Map address 0x2000000000 ... File exists` at startup,
 also select `aarch64-vma42` on both sides and reserve `-R 0x40000000000`.
-The provided Docker image keeps the old Focal cross sysroot in `/usr/aarch64-linux-gnu`, and adds a newer MTE-capable arm64 glibc sysroot in `/opt/aarch64-mte-sysroot`.
+The provided Docker image keeps Ubuntu 24.04's (Noble) cross sysroot in `/usr/aarch64-linux-gnu`, and adds an MTE-capable arm64 glibc sysroot in `/opt/aarch64-mte-sysroot`.
 `GLIBC_TUNABLES=glibc.mem.tagging=1` enables glibc malloc MTE tagging in that sysroot; Teapot's MTE software check accepts matching logical/allocation tags and reports mismatches as poisoned.
 MTE report counts can vary across repetitions of the same binary. Record the
 binary, sysroot, tagging environment and QEMU `-seed` when comparing counts;

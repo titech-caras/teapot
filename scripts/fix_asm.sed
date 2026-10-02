@@ -1,3 +1,7 @@
+# No longer part of Teapot's pipeline: the pinned gtirb-pprinter prints these section
+# flags and the guard bounds' .globl itself, so this script changes nothing but a
+# duplicate .globl. It stays only for external harnesses that still run it; delete it
+# together with them.
 /^\.section \.teapot_transient\([[:space:],]\|$\)/{
 /"ax"/! s/^\.section \.teapot_transient/&, "ax"/
 }

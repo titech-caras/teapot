@@ -54,7 +54,16 @@ Dockerfile then supplies the version a full clone of the pinned commit derives,
 `GTIRB_REWRITING_VERSION`. Update it together with that pin.
 Local overrides are deliberately the caller's responsibility and do not
 implicitly select the Dockerfile's commit. Keep them at the pinned commits
-for reproducible version labels.
+for reproducible version labels. The build refuses a gtirb-rewriting or
+live-register-analysis stage whose Git HEAD is a commit other than its
+requirements.txt pin, and a `GTIRB_REWRITING_VERSION` that names another
+commit. To build another commit, either update its pin in requirements.txt
+(and `GTIRB_REWRITING_VERSION`, for a tagless gtirb-rewriting stage) or pass
+`--build-arg ALLOW_UNPINNED_FORKS=1`. Only the HEAD commit is compared, not the
+working tree. A stage without usable Git metadata, such as the `git archive`
+snapshot above or a worktree whose `.git` file names a host path, is not
+compared; the build log says so (use `--progress=plain` to see it). A stage
+with a `.git` directory that git cannot read fails the build.
 
 The other override names are `capstone-src`, `gtirb-src`, `libehp-src`,
 `souffle-src`, `lief-src`, and `rewriting-src`. In particular, GTIRB and
@@ -73,6 +82,6 @@ stages; the evaluation image gets the installed tools and development files.
 Teapot and its runtime are still mounted/built as described in the main README.
 The Python environment is installed in `/opt/venv`, and the frontend in
 `/opt/teapot-frontend`; both are on the image's default search paths.
-requirements.txt pins llvmlite 0.43.0 (LLVM 14, Python 3.12 compatible): Teapot's text
-DIFT still uses LLVM's legacy initialization/pass-manager APIs, which newer
-llvmlite releases remove. The image build checks those APIs explicitly.
+requirements.txt pins llvmlite 0.49.0 (LLVM 22; Python 3.10 or newer): Teapot's text
+DIFT uses opaque pointers and LLVM's new pass manager. The image build checks those
+APIs and the LLVM major version explicitly.

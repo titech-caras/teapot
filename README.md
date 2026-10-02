@@ -49,7 +49,7 @@ not disable gadget reports or their DIFT instrumentation.
 
 ## Requirements
 
-Teapot static rewriter requires Python 3.8 or newer.
+Teapot static rewriter requires Python 3.10 or newer (llvmlite 0.49, which provides LLVM 22).
 It also requires the following packages for interfacing with GTIRB format:
 
 - `gtirb`
@@ -130,8 +130,8 @@ optional wrapper libraries, and architecture-specific qemu notes.
 
 Using the provided Dockerfile is an easy way to quickly test Teapot,
 which contains all the necessary dependencies.
-The image builds the pinned frontend from source and applies the two small
-GTIRB/libehp patches kept in this repository. See [docker/README.md](docker/README.md)
+The image builds the pinned frontend from source and applies the three small
+GTIRB, libehp and LIEF patches kept in `docker/dependency-patches/`. See [docker/README.md](docker/README.md)
 for build options and local source contexts for unpublished commits.
 It also includes an isolated Ubuntu arm64 sysroot with MTE-capable glibc at
 `/opt/aarch64-mte-sysroot` and a newer static qemu runner at
@@ -229,13 +229,10 @@ Nested speculation is disabled by default.  Use
 and link the instrumented binary with the nested-capable `checkpoint_nested`
 runtime target rather than the default `checkpoint` target.
 
-3. Dump the assembly of the instrumented GTIRB file. 
-Then, apply a sedscript to the assembly file due to limitations of `gtirb-pprinter`.
-The script is `scripts/fix_asm.sed` in this checkout; the image does not contain it, so mount the checkout
-(the image expects it at `/workspace/teapot`).
+3. Dump the assembly of the instrumented GTIRB file. The pinned `gtirb-pprinter` prints the flags of
+Teapot's sections and its global symbols itself, so the output assembles as it is.
 ```shell
 gtirb-pprinter --ir a.inst.gtirb --asm a.inst.S
-sed -i -f scripts/fix_asm.sed a.inst.S 
 ```
 For RV64, use a RISC-V-capable `gtirb-pprinter` build and assembler path; see
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the current smoke-test notes.
@@ -244,8 +241,17 @@ For RV64, use a RISC-V-capable `gtirb-pprinter` build and assembler path; see
 copy's indirect-target check tests only the marker pair at the target, for branches, calls and returns
 alike, so an ordinary link works.
 ```shell
-gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint -lhfuzz -lasan
+gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint -lasan
 ```
+For a fuzzing build, configure the runtime with `TEAPOT_ENABLE_COVERAGE=ON` (see above). Its
+coverage callbacks are weak no-ops, so an archive listed after it, such as `-lhfuzz`, is never
+pulled in. Force honggfuzz's members instead, as `hfuzz-cc` does:
+```shell
+gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint -lasan \
+    -Wl,-u,LIBHFUZZ_module_instrument -Wl,-u,LIBHFUZZ_module_memorycmp \
+    honggfuzz/libhfuzz/libhfuzz.a honggfuzz/libhfcommon/libhfcommon.a -ldl -pthread -lrt -lm
+```
+`make -C honggfuzz` in this checkout's `honggfuzz` submodule builds both archives.
 For AArch64 MTE tag storage, compile with an MTE-capable target and omit
 `-lasan`:
 ```shell
@@ -289,7 +295,6 @@ ddisasm --ir app.gtirb app
 teapot --debug-source app app.gtirb app.inst.gtirb
 gtirb-pprinter --ir app.inst.gtirb --asm app.raw.S
 python -m teapot.debug_lines app.inst.gtirb app.raw.S app.inst.S
-sed -i -f scripts/fix_asm.sed app.inst.S
 ```
 
 Then assemble/link `app.inst.S` with the matching target compiler and Teapot

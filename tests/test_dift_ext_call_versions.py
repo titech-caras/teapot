@@ -1,6 +1,4 @@
-import subprocess
 import unittest
-from pathlib import Path
 
 import gtirb
 from gtirb_rewriting.decoder import GtirbInstructionDecoder
@@ -121,13 +119,6 @@ class DiftExtCallVersionTests(unittest.TestCase):
                      "inflateResetKeep", "inflateEnd", "inflateCopy", "inflateSetDictionary",
                      "inflatePrime", "inflateSync")
         self.assertEqual([name for name in lifecycle if DiftExtCallPass.should_ignore_dift_wrapper(name)], [])
-
-    def test_assembly_fixup_keeps_symbol_versions(self):
-        script = Path(__file__).resolve().parents[1] / "scripts/fix_asm.sed"
-        source = ".symver dependency,dependency@DEPENDENCY_1.0\n"
-        result = subprocess.run(["sed", "-f", str(script)], input=source,
-                                text=True, capture_output=True, check=True)
-        self.assertEqual(result.stdout, source)
 
     def test_only_wrapped_symbols_lose_their_versions(self):
         for wrap in (False, True):

@@ -212,8 +212,34 @@ COPY --from=lra-src / /tmp/gtirb-live-register-analysis/
 # setuptools-scm cannot derive gtirb-rewriting's version. Without tags, use the
 # version a full clone of the pinned commit derives (v0.4.1-11-ge47b9e4).
 ARG GTIRB_REWRITING_VERSION=0.4.2.dev11+ge47b9e40b
+# The fork stages, the requirements.txt pins and the version above must agree, or
+# the image installs other forks than `pip install -r requirements.txt` would.
+# Only a stage's Git HEAD is compared, not its working tree. A stage without
+# usable Git metadata (a `git archive` snapshot, or a worktree whose `.git` file
+# names a host path) cannot be compared, and the build says so; a stage with a
+# `.git` directory that git cannot read fails. To build another commit, either
+# update its requirements.txt pin (and the version above, for a tagless
+# gtirb-rewriting stage) or pass ALLOW_UNPINNED_FORKS=1.
+ARG ALLOW_UNPINNED_FORKS=0
+RUN for name in gtirb-rewriting gtirb-live-register-analysis; do \
+        if ! commit=$(git -c safe.directory='*' -C "/tmp/$name" rev-parse HEAD 2>/tmp/fork-git.err); then \
+            if [ -d "/tmp/$name/.git" ]; then \
+                echo "the $name stage is a Git clone that git cannot read:" >&2; cat /tmp/fork-git.err >&2; exit 1; fi; \
+            echo "note: the $name stage has no usable Git metadata ($(head -n 1 /tmp/fork-git.err)); its commit is not compared"; \
+            continue; fi; \
+        if [ "$ALLOW_UNPINNED_FORKS" != 1 ] \
+            && ! grep -Eq "^$name @ [^#]*@$commit" /tmp/teapot-requirements.txt; then \
+            echo "the $name stage is at $commit, not the requirements.txt pin" >&2; exit 1; fi; \
+    done \
+    && if commit=$(git -c safe.directory='*' -C /tmp/gtirb-rewriting rev-parse HEAD 2>/dev/null) \
+        && [ "$ALLOW_UNPINNED_FORKS" != 1 ] \
+        && ! git -c safe.directory='*' -C /tmp/gtirb-rewriting describe --tags > /dev/null 2>&1; then \
+        node=${GTIRB_REWRITING_VERSION##*+g}; \
+        case "$commit" in "$node"*) [ ${#node} -ge 7 ] ;; *) false ;; esac \
+            || { echo "GTIRB_REWRITING_VERSION does not name gtirb-rewriting $commit" >&2; exit 1; }; fi \
+    && rm -f /tmp/fork-git.err
 RUN python3 -m venv /opt/venv \
-    && if ! git -C /tmp/gtirb-rewriting describe --tags > /dev/null 2>&1; then \
+    && if ! git -c safe.directory='*' -C /tmp/gtirb-rewriting describe --tags > /dev/null 2>&1; then \
         export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GTIRB_REWRITING="$GTIRB_REWRITING_VERSION"; fi \
     && sed -E '/^gtirb-(rewriting|live-register-analysis) @ /d' \
         /tmp/teapot-requirements.txt > /tmp/teapot-pypi-requirements.txt \

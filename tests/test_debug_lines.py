@@ -130,8 +130,6 @@ class SourceLineTests(unittest.TestCase):
             else:
                 self._run([sys.executable, "-B", "-m", "teapot.debug_lines",
                            "instrumented.gtirb", "raw.S", "lines.S"], root)
-            self._run(["sed", "-i", "-f", str(Path(__file__).resolve().parents[1] / "scripts/fix_asm.sed"),
-                       "lines.S"], root)
             self._run([compiler, "-nostdlib", "-no-pie", "-Wa,-L", "-Wl,-e,main",
                        "-Wl,--discard-none,--unresolved-symbols=ignore-all", "lines.S", "-o", "rewritten"], root)
             with (root / "rewritten").open("rb") as stream:
