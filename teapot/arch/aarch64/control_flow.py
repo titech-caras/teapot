@@ -168,7 +168,8 @@ class AArch64ControlFlowPatchesMixin:
         from teapot.passes.transient.pad_transient_targets_pass import AnchorTransientPadsPass
 
         return [AnchorTransientPadsPass(transient_section, self.transient_pad_words(),
-                                        padded=getattr(self, "transient_padded_blocks", ()))]
+                                        padded=getattr(self, "transient_padded_blocks", ()),
+                                        originals=getattr(self, "transient_copy_blocks", ()))]
 
     def indirect_branch_operand(self, edge_type, last_inst, block: gtirb.CodeBlock = None) -> Optional[str]:
         if edge_type == gtirb.cfg.Edge.Type.Return:

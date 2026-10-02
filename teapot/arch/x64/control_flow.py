@@ -120,7 +120,8 @@ class X64ControlFlowPatchesMixin:
 
         return [AnchorTransientPadsPass(transient_section, self.transient_pad_words(),
                                         directive=".long",
-                                        padded=getattr(self, "transient_padded_blocks", ()))]
+                                        padded=getattr(self, "transient_padded_blocks", ()),
+                                        originals=getattr(self, "transient_copy_blocks", ()))]
 
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,

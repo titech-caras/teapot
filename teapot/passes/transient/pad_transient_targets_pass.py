@@ -41,6 +41,7 @@ class PadTransientTargetsPass(Pass):
         self._blocks_by_interval = {}
         self._addresses_by_interval = {}
         self._instructions_by_block = {}
+        self._real_blocks = None
 
     def marker_text(self):
         return "".join(f"{self.directive} 0x{word:08x}\n" for word in self.marker_words)
@@ -54,11 +55,12 @@ class PadTransientTargetsPass(Pass):
         """
         if block.size:
             return block
-        for candidate in block.section.code_blocks:
-            if (candidate.size and candidate.offset == block.offset and
-                    candidate.byte_interval is block.byte_interval):
-                return candidate
-        return None
+        if self._real_blocks is None:
+            self._real_blocks = {}
+            for candidate in self.section.code_blocks:
+                if candidate.size:
+                    self._real_blocks.setdefault((candidate.byte_interval, candidate.offset), candidate)
+        return self._real_blocks.get((block.byte_interval, block.offset))
 
     def _instructions(self, block):
         instructions = self._instructions_by_block.get(block)
@@ -97,7 +99,19 @@ class PadTransientTargetsPass(Pass):
         return False
 
     def target_blocks(self):
-        """Blocks in the copy that an indirect branch inside it can reach."""
+        """Blocks in the copy that an indirect branch inside it can reach and that need a pad."""
+        return {entry for entry in self.reachable_entries() if not self._already_marked(entry)}
+
+    def reachable_entries(self):
+        """Every real block in the copy that an indirect branch inside it can reach.
+
+        This includes blocks that already start with the marker and so get no pad;
+        later insertions can displace their marker just the same.
+        """
+        return set(self._resolved_targets().values())
+
+    def _resolved_targets(self):
+        """Map each reachable target to the real block that carries its marker."""
         targets = set()
         for interval in self.section.byte_intervals:
             for position, expression in interval.symbolic_expressions.items():
@@ -110,17 +124,18 @@ class PadTransientTargetsPass(Pass):
         for block in self.section.code_blocks:
             for edge in block.outgoing_edges:
                 target = edge.target
-                if (not edge.label.direct and edge.label.type == gtirb.Edge.Type.Branch and
+                if (edge.label is not None and not edge.label.direct and
+                        edge.label.type == gtirb.Edge.Type.Branch and
                         isinstance(target, gtirb.CodeBlock) and target.section is self.section):
                     targets.add(target)
         if self.pad_return_sites:
             targets |= self.return_sites()
-        entries = set()
+        resolved = {}
         for block in targets:
             entry = self._paddable_entry(block)
-            if entry is not None and not self._already_marked(entry):
-                entries.add(entry)
-        return entries
+            if entry is not None:
+                resolved[block] = entry
+        return resolved
 
     def return_sites(self):
         """The blocks that start where a block ending in a call ends.
@@ -150,10 +165,34 @@ class PadTransientTargetsPass(Pass):
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
         text_out = self.marker_text()
-        targets = self.target_blocks()
+        resolved = self._resolved_targets()
+        entries = set(resolved.values())
+        targets = {entry for entry in entries if not self._already_marked(entry)}
+        # gtirb-rewriting can place code inserted at a block's start in front
+        # of other blocks at that offset, zero-sized labels included, so a
+        # target label that shares a real block's address could end up behind
+        # the marker. Its symbols name the real block instead, and the real
+        # block joins the label's function rows.
+        aliases = {label: entry for label, entry in resolved.items() if label is not entry}
+        if aliases:
+            for symbol in module.symbols:
+                entry = aliases.get(symbol.referent)
+                if entry is not None:
+                    symbol.referent = entry
+                    symbol.at_end = False
+            for name in ("functionEntries", "functionBlocks"):
+                table = module.aux_data.get(name)
+                for blocks in (table.data.values() if table is not None else ()):
+                    blocks.update(aliases[label] for label in aliases.keys() & blocks)
         if self.arch is not None:
-            # AnchorTransientPadsPass needs to know which blocks must start with a pad.
-            self.arch.transient_padded_blocks = frozenset(block.uuid for block in targets)
+            # Every reachable target must start with the marker, padded here or
+            # marked already: the anchor pass keeps it at the block's start and
+            # the pipeline checks it at the end. The anchor's search for a
+            # block's marker stops at the next of the copy's current blocks,
+            # which the block's later pieces never pass.
+            self.arch.transient_padded_blocks = frozenset(block.uuid for block in entries)
+            self.arch.transient_copy_blocks = frozenset(
+                block.uuid for block in self.section.code_blocks if block.size)
         for block in sorted(targets, key=lambda b: b.address or 0):
             @patch_constraints()
             def patch(_ctx, text_out=text_out):
@@ -161,7 +200,8 @@ class PadTransientTargetsPass(Pass):
 
             rewriting_ctx.insert_at(block, 0, Patch.from_function(patch))
             self.padded += 1
-        print(f"[teapot] padded {self.padded} speculative-copy targets", flush=True)
+        print(f"[teapot] padded {self.padded} speculative-copy targets "
+              f"({len(aliases)} zero-size label aliases)", flush=True)
 
 
 class AnchorTransientPadsPass(Pass):
@@ -175,15 +215,22 @@ class AnchorTransientPadsPass(Pass):
 
     Inserted code with labels, such as RISC-V's restore landings, splits the
     block: the padded block keeps the start and the pad moves to the start of a
-    later piece. ``padded`` names the blocks the pad pass padded, so such a pad
-    is moved back to its own block's start too.
+    later piece. ``padded`` names the blocks that must start with the marker
+    (padded by the pad pass, or marked already); only their markers are moved.
+    ``originals`` names the copy's blocks when the pad pass ran. Each block
+    searches only up to the next of them (without the set, the next padded
+    block), which its own later pieces never pass, so it never takes bytes of
+    another block. A marker that cannot be found is left to the pipeline's
+    end-state check (``TeapotPipeline._verify_target_markers``), which fails the
+    build.
     """
 
-    def __init__(self, section, marker_words, directive=".word", padded=()):
+    def __init__(self, section, marker_words, directive=".word", padded=(), originals=()):
         self.section = section
         self.marker_words = tuple(marker_words)
         self.directive = directive
         self.padded = frozenset(padded)
+        self.originals = frozenset(originals) | self.padded
         self.anchored = 0
 
     def marker_text(self):
@@ -192,24 +239,43 @@ class AnchorTransientPadsPass(Pass):
     def marker_bytes(self):
         return b"".join(word.to_bytes(4, "little") for word in self.marker_words)
 
-    def _move_split_pads(self, marker, rewriting_ctx):
-        """Pads a split pushed into a later block of the same interval; returns those blocks."""
-        holders = set()
-        for block in self.section.code_blocks:
-            if block.uuid not in self.padded or not block.size:
-                continue
-            interval = block.byte_interval
-            contents = bytes(interval.contents)
+    def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
+        marker = self.marker_bytes()
+        # One copy of each byte interval and one offset index per interval.
+        layouts = {}
+
+        def layout(interval):
+            # Sized code blocks do not overlap, so an offset names one holder.
+            entry = layouts.get(interval)
+            if entry is None:
+                blocks = sorted((b for b in interval.blocks
+                                 if isinstance(b, gtirb.CodeBlock) and b.size),
+                                key=lambda b: b.offset)
+                bounds = sorted({b.offset for b in blocks if b.uuid in self.originals})
+                entry = layouts[interval] = (bytes(interval.contents), blocks,
+                                             [b.offset for b in blocks], bounds)
+            return entry
+
+        owners = sorted((block for block in self.section.code_blocks
+                         if block.uuid in self.padded and block.size),
+                        key=lambda b: b.address or 0)
+        for block in owners:
+            contents, blocks, offsets, bounds = layout(block.byte_interval)
             if contents[block.offset:block.offset + len(marker)] == marker:
                 continue
-            position = contents.find(marker, block.offset)
+            # The block's own marker is the first one after its start and before
+            # the next original block: inside the block, or in a later piece.
+            following = bisect.bisect_right(bounds, block.offset)
+            limit = bounds[following] if following < len(bounds) else len(contents)
+            position = contents.find(marker, block.offset, limit)
             if position < 0:
                 continue
-            holder = next((b for b in interval.blocks if isinstance(b, gtirb.CodeBlock) and
-                           b.size and b.offset <= position < b.offset + b.size), None)
-            # The first marker after the block is its own pad, never another padded block's.
-            if (holder is None or holder is block or holder.uuid in self.padded or
-                    position + len(marker) > holder.offset + holder.size):
+            index = bisect.bisect_right(offsets, position) - 1
+            holder = blocks[index] if index >= 0 else None
+            if (holder is None or position + len(marker) > holder.offset + holder.size or
+                    holder is not block and holder.uuid in self.originals):
+                # Not a marker this block owns: none at all, one that crosses a
+                # block boundary, or (defensively) another original block's.
                 continue
 
             @patch_constraints()
@@ -217,28 +283,6 @@ class AnchorTransientPadsPass(Pass):
                 return self.marker_text()
 
             rewriting_ctx.delete_at(holder, position - holder.offset, len(marker))
-            rewriting_ctx.insert_at(block, 0, Patch.from_function(patch))
-            holders.add(holder)
-            self.anchored += 1
-        return holders
-
-    def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
-        marker = self.marker_bytes()
-        holders = self._move_split_pads(marker, rewriting_ctx)
-        for block in sorted(self.section.code_blocks, key=lambda b: b.address or 0):
-            if block in holders:
-                continue
-            if block.size <= len(marker):
-                continue
-            start = bytes(block.contents).find(marker)
-            if start <= 0 or start + len(marker) > block.size:
-                continue
-
-            @patch_constraints()
-            def patch(_ctx):
-                return self.marker_text()
-
-            rewriting_ctx.delete_at(block, start, len(marker))
             rewriting_ctx.insert_at(block, 0, Patch.from_function(patch))
             self.anchored += 1
         print(f"[teapot] anchored {self.anchored} speculative-copy pads", flush=True)

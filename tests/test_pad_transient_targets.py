@@ -36,6 +36,13 @@ def copy_module():
 
 
 class PadTransientTargetsTests(unittest.TestCase):
+    def test_unlabeled_edges_are_ignored(self):
+        # GTIRB allows an edge without a label; it names no indirect target.
+        module, section, blocks = copy_module()
+        module.ir.cfg.add(gtirb.Edge(blocks[3], blocks[0]))
+        pad = PadTransientTargetsPass(section, None, (0xd50324df, 0xd280a29f))
+        self.assertIn(blocks[1], pad.target_blocks())
+
     def test_only_reachable_unmarked_targets(self):
         _, section, blocks = copy_module()
         pad = PadTransientTargetsPass(section, None, (0xd50324df, 0xd280a29f))
@@ -130,13 +137,207 @@ class PadTransientTargetsTests(unittest.TestCase):
 
     def test_displaced_pad_moves_to_the_block_start(self):
         module, section, marker = self.marker_module(marker_at_start=False)
-        pad = AnchorTransientPadsPass(section, (0xd50324df, 0xd280a29f))
+        block = min(section.code_blocks, key=lambda candidate: candidate.offset)
+        pad = AnchorTransientPadsPass(section, (0xd50324df, 0xd280a29f), padded={block.uuid})
         context = RewritingContext(module, [])
-        pad.begin_module(module, [], context)
-        context.apply()
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
         self.assertEqual(pad.anchored, 1)
         block = min(section.code_blocks, key=lambda candidate: candidate.offset)
         self.assertEqual(bytes(block.contents)[:8], marker)
+
+    def test_only_padded_blocks_are_anchored(self):
+        # Pad ownership (Codex review): a marker-like sequence in a block the
+        # pad pass did not pad is not a pad, and is left where it is.
+        module, section, marker = self.marker_module(marker_at_start=False)
+        pad = AnchorTransientPadsPass(section, (0xd50324df, 0xd280a29f))
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
+        self.assertEqual(pad.anchored, 0)
+        block = min(section.code_blocks, key=lambda candidate: candidate.offset)
+        self.assertEqual(bytes(block.contents)[8:16], marker)
+
+    def test_each_padded_block_takes_only_its_own_pad(self):
+        # Three padded blocks in one interval: the first lost its pad, the
+        # second and third have theirs behind inserted entry code. The first
+        # must not take the second's pad, and both displaced pads move back.
+        from test_live_register_preservation import make_module as make_raw_module
+
+        marker = (0xd50324df).to_bytes(4, "little") + (0xd280a29f).to_bytes(4, "little")
+        nop = b"\x1f\x20\x03\xd5"
+        entry = (0xd503203f).to_bytes(4, "little")  # inserted code (yield)
+        _, module, first, _, _ = make_raw_module(
+            AArch64Architecture(), gtirb.Module.ISA.ARM64, b"\0" * 4)
+        interval = first.byte_interval
+        parts = [nop * 2, entry + marker + nop, entry * 2 + marker + nop]
+        interval.contents = b"".join(parts)
+        interval.size = len(interval.contents)
+        first.offset, first.size = 0, len(parts[0])
+        second = gtirb.CodeBlock(offset=len(parts[0]), size=len(parts[1]), byte_interval=interval)
+        third = gtirb.CodeBlock(offset=len(parts[0]) + len(parts[1]), size=len(parts[2]),
+                                byte_interval=interval)
+        pad = AnchorTransientPadsPass(first.section, (0xd50324df, 0xd280a29f),
+                                      padded={first.uuid, second.uuid, third.uuid})
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
+        self.assertEqual(pad.anchored, 2)
+        self.assertNotEqual(bytes(first.contents)[:8], marker)
+        self.assertEqual(bytes(second.contents)[:8], marker)
+        self.assertEqual(bytes(third.contents)[:8], marker)
+
+    def test_a_block_without_its_pad_leaves_the_next_blocks_pad_alone(self):
+        # The first padded block lost its pad. The second has entry code with a
+        # label in front of its pad, so the pad sits in an unpadded piece. The
+        # first must not claim that pad: both would delete the same bytes.
+        from test_live_register_preservation import make_module as make_raw_module
+
+        marker = (0xd50324df).to_bytes(4, "little") + (0xd280a29f).to_bytes(4, "little")
+        nop = b"\x1f\x20\x03\xd5"
+        landing = (0xd503203f).to_bytes(4, "little") * 2   # inserted entry code
+        _, module, first, _, _ = make_raw_module(
+            AArch64Architecture(), gtirb.Module.ISA.ARM64, b"\0" * 4)
+        interval = first.byte_interval
+        interval.contents = nop * 2 + landing + marker + nop
+        interval.size = len(interval.contents)
+        first.offset, first.size = 0, 8
+        second = gtirb.CodeBlock(offset=8, size=8, byte_interval=interval)
+        piece = gtirb.CodeBlock(offset=16, size=12, byte_interval=interval)
+        pad = AnchorTransientPadsPass(first.section, (0xd50324df, 0xd280a29f),
+                                      padded={first.uuid, second.uuid})
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
+        self.assertEqual(pad.anchored, 1)
+        self.assertEqual(bytes(interval.contents), nop * 2 + marker + landing + nop)
+        self.assertNotEqual(bytes(first.contents)[:8], marker)
+        self.assertEqual(bytes(second.contents)[:8], marker)
+        self.assertNotEqual(bytes(piece.contents)[:8], marker)
+
+    def test_a_block_without_its_pad_stops_at_the_next_original_block(self):
+        # The first padded block lost its pad, and an unpadded block of the
+        # copy holds marker-like bytes before the next padded block. Those
+        # bytes are that block's code, not a pad: the search stops at it.
+        from test_live_register_preservation import make_module as make_raw_module
+
+        marker = (0xd50324df).to_bytes(4, "little") + (0xd280a29f).to_bytes(4, "little")
+        nop = b"\x1f\x20\x03\xd5"
+        _, module, first, _, _ = make_raw_module(
+            AArch64Architecture(), gtirb.Module.ISA.ARM64, b"\0" * 4)
+        interval = first.byte_interval
+        interval.contents = nop * 2 + marker + nop + marker + nop
+        interval.size = len(interval.contents)
+        first.offset, first.size = 0, 8
+        other = gtirb.CodeBlock(offset=8, size=12, byte_interval=interval)
+        second = gtirb.CodeBlock(offset=20, size=12, byte_interval=interval)
+        pad = AnchorTransientPadsPass(first.section, (0xd50324df, 0xd280a29f),
+                                      padded={first.uuid, second.uuid},
+                                      originals={first.uuid, other.uuid, second.uuid})
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
+        self.assertEqual(pad.anchored, 0)
+        self.assertEqual(bytes(interval.contents), nop * 2 + marker + nop + marker + nop)
+
+    def test_each_interval_bounds_its_own_search(self):
+        # The next original block in another byte interval does not bound the
+        # search, even at a lower offset.
+        from test_live_register_preservation import make_module as make_raw_module
+
+        marker = (0xd50324df).to_bytes(4, "little") + (0xd280a29f).to_bytes(4, "little")
+        nop = b"\x1f\x20\x03\xd5"
+        entry = (0xd503203f).to_bytes(4, "little") * 2
+        _, module, first, _, _ = make_raw_module(
+            AArch64Architecture(), gtirb.Module.ISA.ARM64, b"\0" * 4)
+        interval = first.byte_interval
+        interval.contents = entry + marker + nop
+        interval.size = len(interval.contents)
+        first.offset, first.size = 0, len(interval.contents)
+        other_interval = gtirb.ByteInterval(section=first.section, address=0x8000,
+                                            contents=nop + marker + nop)
+        gtirb.CodeBlock(offset=0, size=4, byte_interval=other_interval)
+        second = gtirb.CodeBlock(offset=4, size=12, byte_interval=other_interval)
+        pad = AnchorTransientPadsPass(first.section, (0xd50324df, 0xd280a29f),
+                                      padded={first.uuid, second.uuid})
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
+        self.assertEqual(pad.anchored, 1)
+        self.assertEqual(bytes(first.contents)[:8], marker)
+        self.assertEqual(bytes(second.contents)[:8], marker)
+
+    def test_an_already_marked_target_keeps_its_marker_first(self):
+        # A copy target that already starts with the BTI mode's pair gets no
+        # pad. Entry code inserted in front of it later must not stay in front.
+        from test_live_register_preservation import make_module as make_raw_module
+        from gtirb_rewriting import Patch, patch_constraints
+
+        marker = (0xd50324df).to_bytes(4, "little") + (0xd280a29f).to_bytes(4, "little")
+        nop = b"\x1f\x20\x03\xd5"
+        _, module, first, _, _ = make_raw_module(
+            AArch64Architecture(), gtirb.Module.ISA.ARM64, b"\0" * 4)
+        interval = first.byte_interval
+        interval.contents = nop * 2 + marker + nop
+        interval.size = len(interval.contents)
+        first.offset, first.size = 0, 8
+        target = gtirb.CodeBlock(offset=8, size=12, byte_interval=interval)
+        module.ir.cfg.add(gtirb.Edge(first, target,
+                                     gtirb.Edge.Label(gtirb.Edge.Type.Branch, direct=False)))
+        arch = AArch64BTIArchitecture()
+        pad = arch.transient_pad_passes(first.section, None)[0]
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
+        self.assertEqual(pad.padded, 0)
+        self.assertIn(target.uuid, arch.transient_padded_blocks)
+
+        @patch_constraints()
+        def entry_code(_ctx):
+            return "nop\nnop\n"
+
+        context = RewritingContext(module, [])
+        context.insert_at(target, 0, Patch.from_function(entry_code))
+        context.apply()
+        self.assertNotEqual(bytes(target.contents)[:8], marker)
+        anchor = arch.transient_anchor_passes(first.section)[0]
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            anchor.begin_module(module, [], context)
+            context.apply()
+        self.assertEqual(anchor.anchored, 1)
+        self.assertEqual(bytes(interval.contents)[target.offset:], marker + nop * 3)
+
+    def test_pad_inside_a_later_piece_moves_back(self):
+        # A RISC-V restore landing ends with a labelled nop, so the pad sits one
+        # word into the piece that the label starts.
+        from test_live_register_preservation import make_module as make_raw_module
+
+        marker = (0x11400013).to_bytes(4, "little") + (0x51400013).to_bytes(4, "little")
+        landing = (0x00100093).to_bytes(4, "little") * 2
+        nop = (0x00000013).to_bytes(4, "little")
+        body = (0x00200093).to_bytes(4, "little")
+        _, module, first, _, _ = make_raw_module(
+            AArch64Architecture(), gtirb.Module.ISA.ARM64, b"\0" * 4)
+        interval = first.byte_interval
+        interval.contents = landing + nop + marker + body
+        interval.size = len(interval.contents)
+        first.offset, first.size = 0, len(landing)
+        gtirb.CodeBlock(offset=len(landing), size=len(nop + marker + body), byte_interval=interval)
+        pad = AnchorTransientPadsPass(first.section, (0x11400013, 0x51400013), padded={first.uuid})
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
+        self.assertEqual(pad.anchored, 1)
+        self.assertEqual(bytes(interval.contents), marker + landing + nop + body)
 
     def test_pad_pushed_into_a_split_block_moves_back(self):
         # RISC-V restore landings contain labels: inserting one at a padded
@@ -168,34 +369,60 @@ class PadTransientTargetsTests(unittest.TestCase):
         self.assertEqual(AnchorTransientPadsPass(first.section, words).padded, frozenset())
 
     def test_pad_pass_tells_the_anchor_which_blocks_it_padded(self):
+        for arch in (AArch64Architecture(), X64Architecture(), RISCV64Architecture()):
+            with self.subTest(isa=arch.name):
+                module, section, blocks = copy_module()
+                pad = arch.transient_pad_passes(section, None)[0]
+                expected = {block.uuid for block in pad.reachable_entries()}
+                self.assertTrue(expected)
+                with redirect_stdout(io.StringIO()):
+                    pad.begin_module(module, [], types.SimpleNamespace(insert_at=lambda *args: None))
+                self.assertEqual(arch.transient_padded_blocks, expected)
+                anchor = arch.transient_anchor_passes(section)[0]
+                self.assertEqual(anchor.padded, expected)
+                self.assertEqual(anchor.originals,
+                                 {block.uuid for block in section.code_blocks if block.size})
+                self.assertEqual(anchor.marker_text(), pad.marker_text())
+
+    def test_already_marked_targets_are_owned_but_not_padded(self):
+        # The copy's block at offset 16 already starts with the BTI mode's pair:
+        # it gets no pad, but the anchor pass and the end-state check still
+        # cover it, since later entry code can displace its marker too.
         module, section, blocks = copy_module()
-        arch = AArch64Architecture()
+        arch = AArch64BTIArchitecture()
         pad = arch.transient_pad_passes(section, None)[0]
-        expected = {block.uuid for block in pad.target_blocks()}
-        self.assertTrue(expected)
+        inserted = []
         with redirect_stdout(io.StringIO()):
-            pad.begin_module(module, [], types.SimpleNamespace(insert_at=lambda *args: None))
-        self.assertEqual(arch.transient_padded_blocks, expected)
-        self.assertEqual(arch.transient_anchor_passes(section)[0].padded, expected)
+            pad.begin_module(module, [], types.SimpleNamespace(
+                insert_at=lambda block, *args: inserted.append(block)))
+        self.assertEqual(set(inserted), {blocks[0], blocks[1]})
+        self.assertEqual(arch.transient_padded_blocks,
+                         {blocks[0].uuid, blocks[1].uuid, blocks[4].uuid})
+        self.assertEqual(arch.transient_anchor_passes(section)[0].padded,
+                         arch.transient_padded_blocks)
 
     def test_pad_at_the_block_start_is_left_alone(self):
         module, section, _ = self.marker_module(marker_at_start=True)
-        pad = AnchorTransientPadsPass(section, (0xd50324df, 0xd280a29f))
+        block = min(section.code_blocks, key=lambda candidate: candidate.offset)
+        pad = AnchorTransientPadsPass(section, (0xd50324df, 0xd280a29f), padded={block.uuid})
         context = RewritingContext(module, [])
-        pad.begin_module(module, [], context)
-        context.apply()
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
         self.assertEqual(pad.anchored, 0)
 
     def test_zero_sized_label_targets_insert_at_the_real_block(self):
-        module = gtirb.Module(name="pad", isa=gtirb.Module.ISA.ARM64)
+        module = gtirb.Module(name="pad", isa=gtirb.Module.ISA.ARM64,
+                              file_format=gtirb.Module.FileFormat.ELF,
+                              byte_order=gtirb.Module.ByteOrder.Little)
         ir = gtirb.IR(modules=[module])
         section = gtirb.Section(name=".teapot_transient", module=module)
         interval = gtirb.ByteInterval(section=section, contents=bytes(16), size=16)
         real = gtirb.CodeBlock(offset=0, size=8, byte_interval=interval)
         label = gtirb.CodeBlock(offset=0, size=0, byte_interval=interval)
         end_label = gtirb.CodeBlock(offset=16, size=0, byte_interval=interval)
-        interval.symbolic_expressions[0] = gtirb.SymAddrConst(
-            0, gtirb.Symbol(name="alias", payload=label, module=module))
+        alias = gtirb.Symbol(name="alias", payload=label, module=module)
+        interval.symbolic_expressions[0] = gtirb.SymAddrConst(0, alias)
         interval.symbolic_expressions[8] = gtirb.SymAddrConst(
             0, gtirb.Symbol(name="end", payload=end_label, module=module))
         pad = PadTransientTargetsPass(section, None, (0xd280229f, 0xd280a29f))
@@ -203,6 +430,51 @@ class PadTransientTargetsTests(unittest.TestCase):
         # trailing label has no instruction to pad and is skipped.
         self.assertEqual(pad.target_blocks(), {real})
         self.assertEqual(ir, section.ir)
+
+        # An insertion at the real block's start can go in front of the label,
+        # so the label's symbol must name the real block to keep naming the pad.
+        context = RewritingContext(module, [])
+        with redirect_stdout(io.StringIO()):
+            pad.begin_module(module, [], context)
+            context.apply()
+        marker = (0xd280229f).to_bytes(4, "little") + (0xd280a29f).to_bytes(4, "little")
+        self.assertIs(alias.referent, real)
+        self.assertEqual(bytes(real.contents)[:8], marker)
+
+    def test_alias_labels_hand_over_symbols_and_function_rows(self):
+        module = gtirb.Module(name="pad", isa=gtirb.Module.ISA.ARM64,
+                              file_format=gtirb.Module.FileFormat.ELF,
+                              byte_order=gtirb.Module.ByteOrder.Little)
+        gtirb.IR(modules=[module])
+        section = gtirb.Section(name=".teapot_transient", module=module)
+        interval = gtirb.ByteInterval(section=section, contents=bytes(24), size=24)
+        real = gtirb.CodeBlock(offset=0, size=8, byte_interval=interval)
+        label = gtirb.CodeBlock(offset=0, size=0, byte_interval=interval)
+        other_real = gtirb.CodeBlock(offset=8, size=16, byte_interval=interval)
+        bystander = gtirb.CodeBlock(offset=8, size=0, byte_interval=interval)
+        names = [gtirb.Symbol(name=name, payload=label, module=module) for name in ("a", "b")]
+        tail = gtirb.Symbol(name="tail", payload=label, at_end=True, module=module)
+        untouched = gtirb.Symbol(name="untouched", payload=bystander, module=module)
+        interval.symbolic_expressions[16] = gtirb.SymAddrConst(0, names[0])
+        function = gtirb.Symbol(name="function", payload=label, module=module).uuid
+        for table in ("functionEntries", "functionBlocks"):
+            module.aux_data[table] = gtirb.AuxData({function: {label}}, "mapping<UUID,set<UUID>>")
+        pad = PadTransientTargetsPass(section, None, (0xd280229f, 0xd280a29f))
+        context = RewritingContext(module, [])
+        output = io.StringIO()
+        with redirect_stdout(output):
+            pad.begin_module(module, [], context)
+            context.apply()
+        self.assertIn("(1 zero-size label aliases)", output.getvalue())
+        for symbol in names + [tail]:
+            self.assertIs(symbol.referent, real)
+            self.assertFalse(symbol.at_end)
+        # A label at another block's offset that no branch can reach keeps its symbol.
+        self.assertIs(untouched.referent, bystander)
+        self.assertNotEqual(bytes(other_real.contents)[:8],
+                            (0xd280229f).to_bytes(4, "little") + (0xd280a29f).to_bytes(4, "little"))
+        for table in ("functionEntries", "functionBlocks"):
+            self.assertEqual(module.aux_data[table].data[function], {label, real})
 
     def test_software_mode_pads_every_return_site(self):
         # Blocks: a call with a fallthrough, a call the lift thinks never
