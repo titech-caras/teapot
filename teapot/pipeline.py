@@ -270,9 +270,29 @@ class TeapotPipeline:
         # the marker pair, so the linker may place the copy anywhere.
         if self.options.target_identification == "aarch64-bti-pac":
             self.arch.finalize_bti_layout(self)
+        self._pin_section_bounds()
         self._verify_target_markers()
         if source_lines is not None:
             source_lines.finish(GtirbInstructionDecoder(self.module.isa))
+
+    def _pin_section_bounds(self):
+        """Put the section bounds back at their intervals' ends.
+
+        They are zero-size labels. gtirb-rewriting can place code inserted at a
+        section's first block in front of or behind such a label, depending on
+        set order, so the start bound could exclude that code in one run and
+        not in the next. Component bounds are external symbols and stay as
+        they are; the local ones, unused there, are pinned as well.
+        """
+        current = tuple(getattr(self, name, None) for name in (
+            "text_section_start_symbol", "text_section_end_symbol",
+            "transient_section_start_symbol", "transient_section_end_symbol"))
+        for symbols in (current, getattr(self, "local_section_bounds", ())):
+            for symbol, at_end in zip(symbols, (False, True, False, True)):
+                block = symbol.referent if symbol is not None else None
+                if (isinstance(block, gtirb.CodeBlock) and not block.size and
+                        block.byte_interval is not None):
+                    block.offset = block.byte_interval.size if at_end else 0
 
     def _verify_target_markers(self):
         """Fail closed unless every padded target still starts with its marker.
@@ -390,6 +410,11 @@ class TeapotPipeline:
             self.text_transient_mapping = copy_section(self.text_section, ".teapot_transient", self.decoder)
         self.text_section_start_symbol, self.text_section_end_symbol = create_section_bounds(
             self.text_section, "text")
+        # The local bounds stay in the IR in component mode too, where the
+        # pipeline uses the external ones instead; both are pinned at the end.
+        self.local_section_bounds = (
+            self.text_section_start_symbol, self.text_section_end_symbol,
+            self.transient_section_start_symbol, self.transient_section_end_symbol)
         self.component_guard_base = None
         if self.linked_component is not None:
             (self.text_section_start_symbol, self.text_section_end_symbol,

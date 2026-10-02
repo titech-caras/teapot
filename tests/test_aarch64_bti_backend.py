@@ -148,3 +148,7 @@ class AArch64BTIBackendTests(unittest.TestCase):
                 for name in ('normal_start', 'normal_end', 'transient_start', 'transient_end'):
                     self.assertIsInstance(next(module.symbols_named('__teapot_linked_' + name)).referent,
                                           gtirb.ProxyBlock)
+                # The unused local bounds are pinned too, so the object is the same in every run.
+                for local, at_end in zip(pipeline.local_section_bounds, (False, True, False, True)):
+                    bound = local.referent
+                    self.assertEqual(bound.offset, bound.byte_interval.size if at_end else 0, local.name)

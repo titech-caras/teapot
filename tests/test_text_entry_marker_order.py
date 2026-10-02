@@ -3,7 +3,7 @@ import io
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import gtirb
 from capstone import CS_OP_IMM, CS_OP_MEM
@@ -96,6 +96,19 @@ class TextEntryMarkerOrderTests(unittest.TestCase):
                 calls = symbol_references(pipeline.text_section).get('libcheckpoint_enable')
                 self.assertTrue(calls, 'no call to libcheckpoint_enable was inserted')
                 self.assertGreaterEqual(min(calls), entry.address + 8)  # after the two marker words
+
+    def test_section_bounds_end_at_their_intervals_ends(self):
+        # Entry code goes in front of main, the first block of both sections;
+        # the zero-size bounds must still name the sections' ends.
+        for arch in (X64Architecture(), AArch64Architecture(), RISCV64Architecture()):
+            with self.subTest(arch=arch.name), \
+                    patch.object(TeapotPipeline, '_pin_section_bounds', autospec=True,
+                                 side_effect=TeapotPipeline._pin_section_bounds) as pin:
+                pipeline = self.rewrite('main', arch)
+                pin.assert_called_once()
+                for symbol, at_end in zip(pipeline.local_section_bounds, (False, True, False, True)):
+                    block = symbol.referent
+                    self.assertEqual(block.offset, block.byte_interval.size if at_end else 0, symbol.name)
 
     def test_software_mode_needs_no_layout(self):
         # The software check tests only the marker pair, so normal text keeps

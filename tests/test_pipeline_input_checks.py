@@ -9,6 +9,24 @@ from test_live_register_preservation import make_module
 
 
 class PipelineEndStateTests(unittest.TestCase):
+    def test_section_bounds_return_to_their_intervals_ends(self):
+        module = gtirb.Module(name="bounds", isa=gtirb.Module.ISA.X64)
+        gtirb.IR(modules=[module])
+        section = gtirb.Section(name=".text", module=module)
+        interval = gtirb.ByteInterval(section=section, contents=bytes(32), size=32)
+        gtirb.CodeBlock(offset=0, size=32, byte_interval=interval)
+        start = gtirb.Symbol(name="start", payload=gtirb.CodeBlock(offset=8, size=0, byte_interval=interval),
+                             module=module)
+        end = gtirb.Symbol(name="end", payload=gtirb.CodeBlock(offset=24, size=0, byte_interval=interval),
+                           module=module)
+        external = gtirb.Symbol(name="external", payload=gtirb.ProxyBlock(module=module), module=module)
+        pipeline = TeapotPipeline.__new__(TeapotPipeline)
+        pipeline.text_section_start_symbol, pipeline.text_section_end_symbol = start, end
+        pipeline.transient_section_start_symbol = pipeline.transient_section_end_symbol = external
+        pipeline._pin_section_bounds()
+        self.assertEqual((start.referent.offset, end.referent.offset), (0, 32))
+        self.assertIsInstance(external.referent, gtirb.ProxyBlock)
+
     def test_an_owned_copy_block_without_its_marker_fails_the_build(self):
         from teapot.arch.aarch64.bti import AArch64BTIArchitecture
 
