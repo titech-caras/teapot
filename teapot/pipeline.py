@@ -141,6 +141,12 @@ class TeapotPipeline:
     def run(self):
         if self.options.debug_source is not None and len(self.ir.modules) != 1:
             raise ValueError("source-line preservation requires one ELF module")
+        # GTIRB allows an edge without a label, but the passes read every edge's
+        # type and directness.
+        unlabeled = sum(1 for edge in self.ir.cfg if edge.label is None)
+        if unlabeled:
+            raise ValueError(f"{unlabeled} CFG edge(s) without a label; Teapot needs each "
+                             "edge's type and directness")
         self.module = self.ir.modules[0]
         self.arch = get_arch(self.module)
         if self.options.target_identification != "software":
