@@ -1,4 +1,6 @@
 capstone==6.0.0a11
+# teapot/utils/dependencies.py: the deterministic layout and the ordered GTIRB writer use private parts
+# of gtirb 2.3.2, gtirb-layout 1.0.0 and the gtirb-rewriting commit below, and refuse other versions.
 gtirb>=2.0.0
 gtirb-rewriting @ git+https://github.com/lin-toto/gtirb-rewriting.git@e47b9e40b2ac2475a52193dcd4cb9def80154caf
 gtirb-functions>=1.0.9

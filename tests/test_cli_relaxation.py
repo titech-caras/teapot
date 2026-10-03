@@ -18,7 +18,7 @@ class RelaxationOptionTests(unittest.TestCase):
         with patch('sys.argv', ['teapot', 'input', 'output', '--disable-aarch64-relax',
                                 '--runtime-contract', str(fixture_contract_path('x64'))]), \
                 patch.object(gtirb.IR, 'load_protobuf', return_value=ir), \
-                patch.object(gtirb.IR, 'save_protobuf'), \
+                patch.object(cmdline, 'save_protobuf_ordered'), \
                 patch.object(cmdline, 'TeapotPipeline') as pipeline:
             cmdline.main()
             return pipeline.call_args.args[2]

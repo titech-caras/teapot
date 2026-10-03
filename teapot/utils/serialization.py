@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass
-from typing import Iterable
+import os
+from typing import Iterable, Union
 
 import gtirb
+from gtirb.ir import GTIRB_MAGIC_CHARS
+from gtirb.version import PROTOBUF_VERSION
+
+from teapot.utils.dependencies import require_inspected
 
 
 @dataclass(frozen=True)
@@ -118,3 +123,35 @@ def compact_for_pprinter(ir: gtirb.IR) -> CompactStats:
         symbolic_sizes_after=symbolic_sizes_after,
         code_only_sizes_removed=code_only_sizes_removed,
     )
+
+
+def _symbol_order(symbol: gtirb.Symbol):
+    referent = symbol.referent
+    if isinstance(referent, gtirb.ByteBlock):
+        address = referent.address
+        if address is not None and symbol.at_end:
+            address += referent.size
+    else:
+        address = symbol.value
+    return (symbol.name, address is None, address or 0, symbol.at_end, type(referent).__name__,
+            symbol.uuid.bytes)
+
+
+def save_protobuf_ordered(ir: gtirb.IR, path: Union[str, "os.PathLike[str]"]) -> None:
+    """IR.save_protobuf, with each module's symbols in a fixed order.
+
+    gtirb writes a module's symbols in the order of a set hashed by identity,
+    which changes from process to process. The printer prints the labels of
+    one block in that order (C1/C2 constructors, .localalias), so it changed
+    the assembly. Order by name, then position; only the order differs from
+    IR.save_protobuf, whose private message builder and header this repeats
+    (checked: teapot/utils/dependencies.py).
+    """
+    require_inspected("gtirb")
+    message = ir._to_protobuf()
+    keys = {symbol.uuid.bytes: _symbol_order(symbol) for module in ir.modules for symbol in module.symbols}
+    for module in message.modules:
+        module.symbols.sort(key=lambda symbol: keys[symbol.uuid])
+    with open(path, "wb") as stream:
+        stream.write(GTIRB_MAGIC_CHARS + b"\0\0" + PROTOBUF_VERSION.to_bytes(1, byteorder="little"))
+        stream.write(message.SerializeToString())

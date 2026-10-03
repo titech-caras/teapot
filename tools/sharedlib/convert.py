@@ -86,6 +86,31 @@ def dump(path, value):
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
 
 
+GTIRB_HEADER_SIZE = 8  # "GTIRB", two reserved bytes and the protobuf version (GTIRB's file format)
+
+
+def save_protobuf_ordered(ir, path):
+    """ir.save_protobuf, with each module's symbols in name order.
+
+    gtirb writes a module's symbols in the order of a set hashed by identity,
+    which changes from process to process, and the printer prints one block's
+    labels in file order. This script runs alone, so it cannot use Teapot's
+    teapot.utils.serialization.save_protobuf_ordered; it reorders the written
+    file with public gtirb only. Nothing but the order changes.
+    """
+    from gtirb.proto import IR_pb2
+
+    ir.save_protobuf(path)
+    data = Path(path).read_bytes()
+    message = IR_pb2.IR()
+    message.ParseFromString(data[GTIRB_HEADER_SIZE:])
+    for module in message.modules:
+        module.symbols.sort(key=lambda symbol: (
+            symbol.name, symbol.at_end, symbol.WhichOneof('optional_payload') or '',
+            symbol.value, symbol.referent_uuid, symbol.uuid))
+    Path(path).write_bytes(data[:GTIRB_HEADER_SIZE] + message.SerializeToString())
+
+
 def content_key(recipe):
     return hashlib.sha256(json.dumps(recipe, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
@@ -1431,7 +1456,7 @@ def reconstruct(item, args, out, index=0, priority=None):
         module.aux_data.pop('elfDynamicFini', None)
     if item['role'] == 'selected' or version_bindings or args.preserve_selected_lifecycle or data_metadata:
         print_ir = directory / 'relocatable.gtirb'
-        ir.save_protobuf(print_ir)
+        save_protobuf_ordered(ir, print_ir)
     assembly = directory / 'reconstructed.S'
     print_command = [args.pprinter, '--ir', print_ir, '--asm', assembly,
                      '--policy', 'complete', '--shared', 'no']

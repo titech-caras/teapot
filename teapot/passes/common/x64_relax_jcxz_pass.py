@@ -1,10 +1,12 @@
 import gtirb
 from gtirb_rewriting import Pass, Patch
 
+from teapot.configs.runtime import SYMBOL_SUFFIX
+from teapot.passes.mixins.visitor_pass_mixin import block_order
 from teapot.utils.misc import (
     distinguish_edges,
-    generate_distinct_label_name,
     get_or_insert_symbol,
+    new_label_name,
 )
 
 
@@ -20,14 +22,16 @@ class X64RelaxJcxzPass(Pass):
 
     def begin_module(self, module, functions, rewriting_ctx):
         self.relaxed = 0
-        for section in module.sections:
+        # In a fixed order (both are sets hashed by identity): new label names
+        # depend on which target gets one first.
+        for section in sorted(module.sections, key=lambda s: (s.address is None, s.address or 0, s.name)):
             # Teapot creates executable code outside .text and
             # .teapot_transient (notably .teapot_trampolines).  Selecting by
             # the ELF/GTIRB property keeps rel8-only branches valid in every
             # executable section without encoding a section-name inventory.
             if gtirb.Section.Flag.Executable not in section.flags:
                 continue
-            for block in list(section.code_blocks):
+            for block in sorted(section.code_blocks, key=block_order):
                 if block.size == 0 or block.address is None:
                     continue
                 instructions = list(self.decoder.get_instructions(block))
@@ -54,15 +58,14 @@ class X64RelaxJcxzPass(Pass):
                         f"cannot relax {instruction.mnemonic} at "
                         f"{instruction.address:#x}: target is not code")
                 target_symbol = get_or_insert_symbol(
-                    generate_distinct_label_name(
-                        ".L__x64_jcxz_target", target.uuid),
+                    new_label_name(module, ".L__x64_jcxz_target", target),
                     target,
                     module,
                 )
-                taken_label = generate_distinct_label_name(
-                    ".L__x64_jcxz_taken", block.uuid)
-                done_label = generate_distinct_label_name(
-                    ".L__x64_jcxz_done", block.uuid)
+                # Named after the instruction's address: by this last round its
+                # block is often one the rewriter split off, with a random UUID.
+                taken_label = f".L__x64_jcxz_taken_{instruction.address:x}{SYMBOL_SUFFIX}"
+                done_label = f".L__x64_jcxz_done_{instruction.address:x}{SYMBOL_SUFFIX}"
 
                 @self.arch.constraints()
                 def relaxed_branch(

@@ -36,13 +36,29 @@ def copy_elf_section_properties(source: gtirb.Section, target: gtirb.Section):
         set_elf_section_properties(target, *source_properties)
 
 
+def _derived_uuid(module: gtirb.Module, original: uuid.UUID, name: str, role: str = "") -> uuid.UUID:
+    """The UUID of a node Teapot derives from another: a function of the original's UUID and a name.
+
+    These nodes used to get random UUIDs. Labels are named after them (a copy's
+    trampoline and branch-counter labels) and the printer breaks address ties
+    by UUID, so the output changed from run to run. A second derivation under
+    the same name, whose UUIDs are taken, gets random ones as before.
+    """
+    derived = uuid.uuid5(original, f"teapot-copy:{name}:{role}")
+    ir = module.ir if module is not None else None
+    if ir is not None and ir.get_by_uuid(derived) is not None:
+        return uuid.uuid4()
+    return derived
+
+
 def create_section_bounds(section: gtirb.Section, name: str) -> Tuple[gtirb.Symbol, gtirb.Symbol]:
     byte_interval = next(iter(section.byte_intervals))
+    module = section.module
     start_symbol = gtirb.Symbol(
         name=f".__{name}_start" + SYMBOL_SUFFIX,
-        uuid=None,
+        uuid=_derived_uuid(module, section.uuid, f"bounds {name}", "start symbol"),
         payload=gtirb.CodeBlock(
-            size=0, offset=0, uuid=None,
+            size=0, offset=0, uuid=_derived_uuid(module, section.uuid, f"bounds {name}", "start block"),
             byte_interval=byte_interval
         ),
         at_end=False,
@@ -50,9 +66,9 @@ def create_section_bounds(section: gtirb.Section, name: str) -> Tuple[gtirb.Symb
     )
     end_symbol = gtirb.Symbol(
         name=f".__{name}_end" + SYMBOL_SUFFIX,
-        uuid=None,
+        uuid=_derived_uuid(module, section.uuid, f"bounds {name}", "end symbol"),
         payload=gtirb.CodeBlock(
-            size=0, offset=byte_interval.size, uuid=None,
+            size=0, offset=byte_interval.size, uuid=_derived_uuid(module, section.uuid, f"bounds {name}", "end block"),
             byte_interval=byte_interval
         ),
         at_end=False,
@@ -110,11 +126,12 @@ def _direct_control_flow_expression_offsets(section: gtirb.Section, decoder):
 def copy_section(section: gtirb.Section, name: str,
                  decoder: Optional[GtirbInstructionDecoder] = None) \
         -> Tuple[gtirb.Section, gtirb.Symbol, gtirb.Symbol, CopiedSectionMapping]:
+    module = section.module
     section_copy = gtirb.Section(
         name=name,
         byte_intervals=(),
         flags=section.flags,
-        uuid=None,
+        uuid=_derived_uuid(module, section.uuid, name),
         module=section.module
     )
     copy_elf_section_properties(section, section_copy)
@@ -128,7 +145,7 @@ def copy_section(section: gtirb.Section, name: str,
         contents=byte_interval.contents,
         blocks=(),
         symbolic_expressions={},
-        uuid=None,
+        uuid=_derived_uuid(module, byte_interval.uuid, name),
         section=section_copy
     )
 
@@ -139,7 +156,7 @@ def copy_section(section: gtirb.Section, name: str,
         code_block_copy = gtirb.CodeBlock(
             size=block.size,
             offset=block.offset,
-            uuid=None,
+            uuid=_derived_uuid(module, block.uuid, name),
             byte_interval=byte_interval_copy
         )
         code_block_copy_mapping[block.uuid] = code_block_copy
@@ -154,7 +171,7 @@ def copy_section(section: gtirb.Section, name: str,
     for symbol in symbol_list:
         symbol_copy = gtirb.Symbol(
             name=symbol.name + SYMBOL_SUFFIX,
-            uuid=None,
+            uuid=_derived_uuid(module, symbol.uuid, name),
             payload=code_block_copy_mapping[symbol.referent.uuid],
             at_end=False,
             module=section.module
@@ -163,9 +180,9 @@ def copy_section(section: gtirb.Section, name: str,
 
     section_start_symbol = gtirb.Symbol(
         name=".__transient_start" + SYMBOL_SUFFIX,
-        uuid=None,
+        uuid=_derived_uuid(module, section.uuid, name, "start symbol"),
         payload=gtirb.CodeBlock(
-            size=0, offset=0, uuid=None,
+            size=0, offset=0, uuid=_derived_uuid(module, section.uuid, name, "start block"),
             byte_interval=byte_interval_copy
         ),
         at_end=False,
@@ -174,9 +191,9 @@ def copy_section(section: gtirb.Section, name: str,
 
     section_end_symbol = gtirb.Symbol(
         name=".__transient_end" + SYMBOL_SUFFIX,
-        uuid=None,
+        uuid=_derived_uuid(module, section.uuid, name, "end symbol"),
         payload=gtirb.CodeBlock(
-            size=0, offset=byte_interval_copy.size, uuid=None,
+            size=0, offset=byte_interval_copy.size, uuid=_derived_uuid(module, section.uuid, name, "end block"),
             byte_interval=byte_interval_copy
         ),
         at_end=False,
@@ -271,7 +288,7 @@ def copy_section(section: gtirb.Section, name: str,
 
     functions_uuid_mapping = {}
     for old_fn_uuid, new_entry_blocks, new_blocks, new_name in new_functions:
-        fn_uuid = uuid.uuid4()
+        fn_uuid = _derived_uuid(module, old_fn_uuid, name)
         functions_uuid_mapping[old_fn_uuid] = fn_uuid
         section.module.aux_data['functionEntries'].data[fn_uuid] = new_entry_blocks
         section.module.aux_data["functionBlocks"].data[fn_uuid] = new_blocks

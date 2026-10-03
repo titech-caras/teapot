@@ -25,10 +25,36 @@ def generate_distinct_label_name(prefix: str, uuid: UUID):
 
 
 def get_or_insert_symbol(insert_name: str, payload: gtirb.CfgNode, module: gtirb.Module) -> gtirb.Symbol:
-    try:
-        return next(payload.references)
-    except StopIteration:
-        return gtirb.Symbol(name=insert_name, payload=payload, module=module)
+    """A symbol naming the start of payload: an existing one, else a new one called insert_name.
+
+    Never an at_end symbol, which names the address after a nonempty block.
+    The block's symbols are a set hashed by identity: take the same one in
+    every run.
+    """
+    starts = [symbol for symbol in payload.references if not symbol.at_end]
+    if starts:
+        return min(starts, key=lambda symbol: (symbol.name, symbol.uuid.bytes))
+    return gtirb.Symbol(name=insert_name, payload=payload, module=module)
+
+
+def new_label_name(module: gtirb.Module, prefix: str, block: gtirb.ByteBlock,
+                   address: Optional[int] = None) -> str:
+    """The name of a new label at block (or at address): from the address, not the block's UUID.
+
+    Blocks the rewriter splits off get random UUIDs; addresses follow the
+    deterministic layout (teapot/utils/layout.py). A name in use gets a
+    numbered suffix.
+    """
+    if address is None:
+        address = block.address
+    if address is None:
+        return generate_distinct_label_name(prefix, block.uuid)
+    base = f"{prefix}_{address:x}"
+    name, serial = base + SYMBOL_SUFFIX, 1
+    while next(module.symbols_named(name), None) is not None:
+        serial += 1
+        name = f"{base}_{serial}{SYMBOL_SUFFIX}"
+    return name
 
 
 def symbol_address(symbol: gtirb.Symbol) -> Optional[int]:

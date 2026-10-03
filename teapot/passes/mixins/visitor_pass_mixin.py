@@ -12,12 +12,23 @@ from .reg_inst_aware_pass_mixin import RegInstAwarePassMixin
 from teapot.utils.progress import print_progress_bar
 
 
+def block_order(block: gtirb.ByteBlock):
+    """Visit order: by address, which teapot/utils/layout.py keeps deterministic.
+
+    A function's blocks and a section's blocks are sets hashed by identity, so
+    iterating them directly changes from process to process. The order decides
+    indices and placement (coverage guard numbers, trampolines, branch counters).
+    """
+    address = block.address
+    return (address is None, address or 0, block.size, block.uuid.int)
+
+
 class VisitorPassMixin(Pass):
     module: gtirb.Module
     rewriting_ctx: RewritingContext
 
     def visit_function(self, function: Function):
-        for block in function.get_all_blocks():
+        for block in sorted(function.get_all_blocks(), key=block_order):
             section = getattr(self, "_visit_section", None)
             if section is not None and (
                     block.section is None or block.section.name != section.name):
@@ -97,9 +108,10 @@ class VisitorPassMixin(Pass):
         print('')
 
     def visit_code_blocks(self, section: gtirb.Section):
-        code_blocks_count = len(list(section.code_blocks))
+        code_blocks = sorted(section.code_blocks, key=block_order)
+        code_blocks_count = len(code_blocks)
 
-        for idx, block in enumerate(section.code_blocks):
+        for idx, block in enumerate(code_blocks):
             print_progress_bar(self.__class__.__name__, idx+1, code_blocks_count)
             self.visit_code_block(block)
 

@@ -40,7 +40,7 @@ from teapot.datacls.linked_component import LinkedComponent
 from teapot.arch import get_arch, module_isa_name
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.runtime_contract import RuntimeContractError, load_runtime_contract
-from teapot.utils.serialization import compact_for_pprinter
+from teapot.utils.serialization import compact_for_pprinter, save_protobuf_ordered
 from experiments.reusable_libraries.targets import (
     for_machine, mode_for, mode_metadata, target_for, MODES, TARGET_IDENTIFICATIONS)
 
@@ -319,7 +319,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     compact_stats = compact_for_pprinter(ir)
     dump(directory / "compaction.json", asdict(compact_stats))
     print("[teapot] compact component output " + json.dumps(asdict(compact_stats)), flush=True)
-    ir.save_protobuf(instrumented)
+    save_protobuf_ordered(ir, instrumented)
     # --layout: rewritten intervals keep their original addresses while growing, so they can
     # overlap; the pprinter finds function aliases by address and would otherwise print a
     # normal function's .size inside a transient function that shares its address.

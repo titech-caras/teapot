@@ -62,7 +62,58 @@ def build_layout_growth_case():
     return module, interval, blocks
 
 
+def build_skip_case():
+    """b.eq target with no fallthrough edge, so relaxing it creates a skip label."""
+    module = gtirb.Module(
+        name="aarch64-skip-label",
+        isa=gtirb.Module.ISA.ARM64,
+        file_format=gtirb.Module.FileFormat.ELF,
+        byte_order=gtirb.Module.ByteOrder.Little,
+    )
+    section = gtirb.Section(
+        name=".text",
+        flags={gtirb.Section.Flag.Executable, gtirb.Section.Flag.Readable},
+        module=module,
+    )
+    # b.eq +64; 15 nops; target: ret
+    words = [0x54000200] + [0xD503201F] * 15 + [0xD65F03C0]
+    interval = gtirb.ByteInterval(
+        address=0x400000,
+        contents=b"".join(word.to_bytes(4, "little") for word in words),
+        section=section,
+    )
+    branch = gtirb.CodeBlock(size=4, offset=0, byte_interval=interval)
+    gtirb.CodeBlock(size=60, offset=4, byte_interval=interval)
+    target = gtirb.CodeBlock(size=4, offset=64, byte_interval=interval)
+    symbol = gtirb.Symbol(name="target", payload=target, module=module)
+    interval.symbolic_expressions[0] = gtirb.SymAddrConst(0, symbol, set())
+    module.aux_data["symbolicExpressionSizes"] = gtirb.AuxData(
+        type_name="mapping<Offset,uint64_t>",
+        data={gtirb.Offset(interval, 0): 4},
+    )
+    module.aux_data["functionEntries"] = gtirb.AuxData(
+        type_name="mapping<UUID,set<UUID>>",
+        data={uuid.uuid4(): {branch}},
+    )
+    return module
+
+
 class AArch64RelaxFixedPointTests(unittest.TestCase):
+    def test_skip_labels_are_named_by_address_not_at_random(self):
+        names = []
+        for _ in range(2):
+            module = build_skip_case()
+            with mock.patch.object(
+                AArch64RelaxConditionalBranchesPass,
+                "CONDITIONAL_BRANCH_SAFETY_MARGIN",
+                1048576 - 32,
+            ):
+                AArch64Architecture().relax_conditional_branches(module, direct_pads={})
+            names.append(sorted(symbol.name for symbol in module.symbols
+                                if symbol.name.startswith(".L__aarch64_long_branch_skip")))
+        self.assertEqual(names[0], [".L__aarch64_long_branch_skip_400008__teapot__"])
+        self.assertEqual(names[0], names[1])
+
     def test_auxdata_remapping_does_not_depend_on_insertion_order(self):
         module, interval, _ = build_layout_growth_case()
         other = gtirb.ByteInterval(contents=b'1234')

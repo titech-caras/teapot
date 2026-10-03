@@ -40,6 +40,8 @@ from teapot.preprocess.create_guards import create_guards
 from teapot.liveness import LivenessMetadataError, LiveRegisterManager
 from teapot.modes import validate_options
 from teapot.rewrite_state import RewriteState
+from teapot.utils.layout import (
+    TEAPOT_SECTION_ALIGNMENT, DeterministicLayoutPass, remember_input_order, set_interval_alignment)
 
 ARCH_INFO_AUX_TYPE = "mapping<string,string>"
 AARCH64_MTE_ARCH_FEATURE = "mte"
@@ -159,6 +161,8 @@ class TeapotPipeline:
             raise ValueError(f"{unlabeled} CFG edge(s) without a label; Teapot needs each "
                              "edge's type and directness")
         self.module = self.ir.modules[0]
+        # Before anything changes: later layouts keep the input's section order.
+        remember_input_order(self.module)
         self.arch = get_arch(self.module)
         if self.linked_component is not None and len(self.ir.modules) != 1:
             raise ValueError("separate component rewriting requires one ELF module")
@@ -448,6 +452,9 @@ class TeapotPipeline:
     def _run_pass_manager(self, pass_manager: PassManager, label: str):
         print(f"[teapot] begin {label}", flush=True)
         integral_tls_symbols = _integral_tls_symbol_values(self.module)
+        # Last, so its begin_module follows every registration: the round's
+        # layouts do not depend on set order (teapot/utils/layout.py).
+        pass_manager.add(DeterministicLayoutPass())
         try:
             pass_manager.run(self.ir)
         finally:
@@ -516,6 +523,14 @@ class TeapotPipeline:
             name=".teapot_branch_counters", flags=writable_section_flags, module=self.module)
         set_elf_section_properties(self.branch_counter_section, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE)
         gtirb.ByteInterval(section=self.branch_counter_section)
+
+        # The input's sections keep the alignment their addresses imply
+        # (teapot/utils/layout.py); these have no input address, so they get
+        # an explicit one instead of whatever a layout leaves them.
+        for section in (self.transient_section, self.trampoline_section, self.guard_section,
+                        self.branch_counter_section):
+            for interval in section.byte_intervals:
+                set_interval_alignment(interval, TEAPOT_SECTION_ALIGNMENT)
 
         self.landing_pad_targets = set()
         self.checkpoint_spare_registers = {}

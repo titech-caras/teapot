@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from bisect import bisect_left, bisect_right
 from typing import Dict, List, Optional, Tuple
-from uuid import uuid4
 
 import gtirb
 from gtirb_rewriting import _auxdata_offsetmap
@@ -12,8 +11,14 @@ from capstone import CS_OP_IMM, CS_OP_REG
 from teapot.arch.aarch64.architecture import AArch64Architecture
 from teapot.arch.aarch64.operands import aarch64_register_number
 from teapot.passes.mixins import VisitorPassMixin
+from teapot.passes.mixins.visitor_pass_mixin import block_order
 from teapot.utils.misc import (
-    conditional_branch_edge, distinguish_edges, generate_distinct_label_name, get_or_insert_symbol)
+    conditional_branch_edge, distinguish_edges, get_or_insert_symbol, new_label_name)
+
+
+def _section_order(section: gtirb.Section):
+    # module.sections is a set hashed by identity; the walk decides label names.
+    return (section.address is None, section.address or 0, section.name, section.uuid.int)
 
 
 @dataclass
@@ -59,13 +64,14 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         self.replacements_by_interval: Dict[gtirb.ByteInterval, List[_Replacement]] = {}
         forwarding = module.aux_data.get("symbolForwarding")
         self.symbol_forwarding = forwarding.data if forwarding is not None else {}
+        sections = sorted(module.sections, key=_section_order)
         self.code_block_by_address = {
             block.address: block
-            for section in module.sections
-            for block in section.code_blocks
+            for section in sections
+            for block in sorted(section.code_blocks, key=block_order)
             if block.address is not None
         }
-        for section in module.sections:
+        for section in sections:
             if section.name == ".teapot_trampolines":
                 continue
             if gtirb.Section.Flag.Executable in section.flags:
@@ -305,7 +311,7 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
             edge_target = self._terminator_branch_target(block)
             if edge_target is not None:
                 symbol = get_or_insert_symbol(
-                    generate_distinct_label_name(".L__aarch64_long_branch_target_", edge_target.uuid),
+                    new_label_name(self.module, ".L__aarch64_long_branch_target", edge_target),
                     edge_target,
                     self.module,
                 )
@@ -318,7 +324,7 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
         if target_block is None:
             return None
         symbol = get_or_insert_symbol(
-            generate_distinct_label_name(".L__aarch64_long_branch_target_", target_block.uuid),
+            new_label_name(self.module, ".L__aarch64_long_branch_target", target_block),
             target_block,
             self.module,
         )
@@ -448,7 +454,7 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
 
         fallthrough_target = fallthrough_edges[0].target
         symbol = get_or_insert_symbol(
-            generate_distinct_label_name(".L__aarch64_long_branch_fallthrough_", fallthrough_target.uuid),
+            new_label_name(self.module, ".L__aarch64_long_branch_fallthrough", fallthrough_target),
             fallthrough_target,
             self.module,
         )
@@ -616,7 +622,7 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
                     byte_interval=interval,
                 )
                 skip_symbol = gtirb.Symbol(
-                    name=f".L__aarch64_long_branch_skip_{uuid4().hex}__teapot__",
+                    name=new_label_name(self.module, ".L__aarch64_long_branch_skip", skip_block),
                     payload=skip_block,
                     module=self.module,
                 )

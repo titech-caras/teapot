@@ -18,6 +18,7 @@ from elftools.dwarf.descriptions import describe_form_class
 from elftools.elf.elffile import ELFFile
 
 from teapot.utils.return_abi import POINTER_RETURNS, SCHEMA, function_fingerprint
+from teapot.utils.serialization import save_protobuf_ordered
 
 
 SECTION = '.teapot_function_abi'
@@ -361,7 +362,7 @@ def main():
         ir = gtirb.IR.load_protobuf(args.input_ir)
         result = bind(args.binary, manifest, ir)
         args.output_ir.parent.mkdir(parents=True, exist_ok=True)
-        ir.save_protobuf(args.output_ir)
+        save_protobuf_ordered(ir, args.output_ir)
         args.audit.write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result))
 

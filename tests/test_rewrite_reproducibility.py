@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,7 +21,7 @@ from teapot.passes.text.dift.riscv64 import RISCV64TextDiftPropagationLLVMPass
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from teapot.pipeline import TeapotPipeline
 from test_live_register_preservation import make_module
-from runtime_contract_support import fixture_contract, fixture_layout
+from runtime_contract_support import fixture_contract, fixture_contract_path, fixture_layout
 
 
 VARIANTS = (
@@ -120,6 +121,82 @@ class RewriteReproducibilityTests(unittest.TestCase):
                             outputs.append(json.loads(output.read_text()))
                         self.assertEqual(outputs[0], outputs[1])
                         self.assertEqual(outputs[0], outputs[2])
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ("gcc", "ddisasm", "gtirb-pprinter")),
+                         "gcc, ddisasm and gtirb-pprinter are required")
+    def test_lifted_rewrite_prints_the_same_assembly_across_heap_layouts(self):
+        # Sets of GTIRB nodes hash by identity and iterate in heap-address
+        # order, which ASLR moves between processes even under one hash seed.
+        # Allocating nodes before the rewrite moves them deterministically.
+        # The printed assembly must not change: section order and alignment
+        # (layout), coverage indices and trampoline order (block visits),
+        # copies' label names (their UUIDs), alias label order (symbols) and
+        # the labels of relaxed jrcxz branches.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "probe.c").write_text(LIFTED_PROBE)
+            for command in (["gcc", "-O1", "-fno-pie", "-no-pie", "-nostdlib", "-fno-stack-protector",
+                             "-Wl,-e,main", "probe.c", "-o", "probe"],
+                            ["ddisasm", "probe", "--ir", "lift.gtirb", "-j", "1"]):
+                result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=300)
+                self.assertEqual(result.returncode, 0, f"{command}\n{result.stdout}\n{result.stderr}")
+            printed = []
+            for index, (nodes, seed) in enumerate(((0, 0), (997, 0), (3001, 42))):
+                commands = (
+                    [sys.executable, "-B", "-c", HEAP_SHIFTED_REWRITE, str(nodes), "lift.gtirb",
+                     f"out{index}.gtirb", "--runtime-contract", str(fixture_contract_path("x64")),
+                     "--compact-output"],
+                    ["gtirb-pprinter", "--ir", f"out{index}.gtirb", "--asm", f"out{index}.S",
+                     "--policy", "complete", "--shared", "no"])
+                for command in commands:
+                    result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=300,
+                                            env={**os.environ, "PYTHONHASHSEED": str(seed)})
+                    self.assertEqual(result.returncode, 0, f"{command}\n{result.stdout}\n{result.stderr}")
+                printed.append((root / f"out{index}.S").read_text())
+            self.assertIn("step_alias", printed[0])
+            self.assertIn(".teapot_trampolines", printed[0])
+            self.assertIn(".L__x64_jcxz_taken", printed[0])
+            self.assertEqual(printed[0], printed[1])
+            self.assertEqual(printed[0], printed[2])
+
+
+LIFTED_PROBE = r"""
+int counter;
+
+__attribute__((noinline)) int step(int value) {
+    if (value & 1)
+        counter += value;
+    else
+        counter -= value;
+    for (int i = 0; i < value; i++)
+        if (i % 3 == 0)
+            counter ^= i;
+    return counter;
+}
+
+int step_alias(int) __attribute__((alias("step")));
+
+/* Teapot's last round relaxes this rel8-only branch. */
+__attribute__((noinline)) long count_zero(long count) {
+    long result = 1;
+    __asm__ volatile("mov %1, %%rcx\n\tjrcxz 1f\n\tinc %0\n1:" : "+r"(result) : "r"(count) : "rcx");
+    return result;
+}
+
+int main(void) {
+    return step(7) + step_alias(4) + (int)count_zero(3);
+}
+"""
+
+HEAP_SHIFTED_REWRITE = """
+import sys
+import gtirb
+nodes = [(gtirb.Section(name=""), gtirb.ByteInterval(), gtirb.CodeBlock(), gtirb.Symbol(name=""))
+         for _ in range(int(sys.argv[1]))]
+sys.argv = ["teapot", *sys.argv[2:]]
+from teapot.cmdline import main
+main()
+"""
 
 
 if __name__ == "__main__":

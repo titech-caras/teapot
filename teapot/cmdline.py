@@ -9,7 +9,7 @@ import gtirb
 from teapot.configs.runtime import ASAN_TAG_STORAGES, ASAN_TAG_STORAGE_SHADOW
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.runtime_contract import RuntimeContractError, load_runtime_contract
-from teapot.utils.serialization import compact_for_pprinter
+from teapot.utils.serialization import compact_for_pprinter, save_protobuf_ordered
 
 
 def main():
@@ -200,7 +200,7 @@ def main():
     print("[teapot] end serialization cleanup", flush=True)
 
     print("[teapot] begin serialization", flush=True)
-    ir.save_protobuf(args.output)
+    save_protobuf_ordered(ir, args.output)
     print("[teapot] end serialization", flush=True)
 
 

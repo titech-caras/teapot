@@ -45,9 +45,12 @@ class X64Architecture(
         from teapot.passes.common.x64_relax_jcxz_pass import X64RelaxJcxzPass
 
         print("[teapot] begin x64-relax", flush=True)
+        from teapot.utils.layout import DeterministicLayoutPass
+
         pass_manager = PassManager()
         pass_manager.add(X64RelaxJcxzPass(
             GtirbInstructionDecoder(module.isa), self))
+        pass_manager.add(DeterministicLayoutPass())
         pass_manager.run(module.ir)
         CachedGtirbInstructionDecoder.cache.clear()
         print("[teapot] end x64-relax", flush=True)
