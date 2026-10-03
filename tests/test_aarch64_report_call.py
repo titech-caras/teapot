@@ -29,7 +29,7 @@ class AArch64ReportCallTests(unittest.TestCase):
         context = RewritingContext(module, list(Function.build_functions(module)))
         context.insert_at(block, 0, Patch.from_function(report))
         context.apply()
-        arch.relax_conditional_branches(module)
+        arch.relax_conditional_branches(module, direct_pads={})
         labels = [symbol for symbol in module.symbols if "__report_gadget_call_" in symbol.name]
         self.assertEqual(len(labels), 1)
         label = labels[0]

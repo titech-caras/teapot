@@ -62,7 +62,7 @@ class AArch64Architecture(
         # rewriter transformation because instrumentation can grow the table.
         return [WidenAArch64ByteJumpTablesPass()]
 
-    def relax_conditional_branches(self, module) -> None:
+    def relax_conditional_branches(self, module, *, direct_pads) -> None:
         from gtirb_capstone.instructions import GtirbInstructionDecoder
         from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 
@@ -75,7 +75,7 @@ class AArch64Architecture(
         for iteration in range(1, self.MAX_BRANCH_RELAXATION_ITERATIONS + 1):
             relax = AArch64RelaxConditionalBranchesPass(
                 GtirbInstructionDecoder(module.isa),
-                direct_pads=getattr(self, "direct_entry_pads", None),
+                direct_pads=direct_pads,
             )
             relax.begin_module(module, [], None)
             adjusted_by_iteration.append(relax.relaxed_instructions)

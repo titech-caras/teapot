@@ -40,8 +40,11 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                  decoder: GtirbInstructionDecoder, arch: Architecture,
                  reg_manager: LiveRegisterManager = None, landing_pad_targets=None,
                  required_target_symbols=(), potential_targets=frozenset(),
-                 flags_dead_blocks=frozenset()):
+                 flags_dead_blocks=frozenset(), state=None):
         self.text_section = text_section
+        # The rewrite's state (teapot/rewrite_state.py), which receives the
+        # marked targets and the direct-entry pads.
+        self.state = state
         self.text_transient_mapping = text_transient_mapping
         self.arch = arch
         self.reg_manager = reg_manager
@@ -73,7 +76,10 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
         print(f"[teapot] normal-text pads: {counts}", flush=True)
 
     def end_module(self, module: gtirb.Module, functions) -> None:
-        self._retarget_direct_transfers(module)
+        direct_entry_pads = self._retarget_direct_transfers(module)
+        if self.state is not None:
+            self.state.text_targets.set(tuple(self.marked_symbols))
+            self.state.direct_entry_pads.set(direct_entry_pads)
         super().end_module(module, functions)
 
     def _direct_operand(self, source: gtirb.CodeBlock):
@@ -118,12 +124,12 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
         natively, where the pad's checkpoint test falls through. Runs after the
         rewrite: the rewriter keeps expression objects when it moves them.
 
-        Records label -> the pad's own symbol in ``arch.direct_entry_pads``: a
-        branch relaxed into an indirect one must land on the pad again.
+        Returns label -> the pad's own symbol, the rewrite state's direct-entry
+        pads: a branch relaxed into an indirect one must land on the pad again.
         """
-        self.arch.direct_entry_pads = {}
+        direct_entry_pads = {}
         if not self.direct_entries:
-            return
+            return direct_entry_pads
         labels = {}
         for symbol in module.symbols:
             if symbol.name.startswith(DIRECT_ENTRY_PREFIX):
@@ -148,7 +154,7 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                 label = target[1]
                 interval.symbolic_expressions[position] = gtirb.SymAddrConst(
                     0, label, expression.attributes)
-                self.arch.direct_entry_pads.setdefault(label, expression.symbol)
+                direct_entry_pads.setdefault(label, expression.symbol)
                 moved += 1
                 # Move the CFG edge from the pad's start as well.
                 index = bisect.bisect_right(offsets, position) - 1
@@ -162,6 +168,7 @@ class TextIndirectBranchTransformPass(VisitorPassMixin):
                         cfg.add(gtirb.Edge(edge.source, label.referent, edge.label))
         print(f"[teapot] direct transfers past pads: {moved} into {len(self.direct_entries)} blocks",
               flush=True)
+        return direct_entry_pads
 
     def _no_return_callers(self):
         """Block -> the preceding block, when that ends in a call without a fallthrough edge.

@@ -135,6 +135,9 @@ class TextEntryMarkerOrderTests(unittest.TestCase):
                     pipeline.landing_pad_targets = set()
                     pipeline.checkpoint_block_uuids = set()
                     pipeline.checkpoint_spare_registers = {}
+                    # What the potential-target search hands the transform.
+                    pipeline.state.potential_targets.set(frozenset())
+                    pipeline.state.flags_dead_blocks.set(frozenset())
                     pipeline._run_pass_manager = Mock()
                     pipeline._run_text_passes()
                     manager, label = pipeline._run_pass_manager.call_args.args

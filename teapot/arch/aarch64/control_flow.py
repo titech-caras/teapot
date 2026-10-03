@@ -152,24 +152,25 @@ class AArch64ControlFlowPatchesMixin:
     def transient_pad_words(self):
         """The marker pair this mode places at the copy's reachable targets."""
         return ((0xd50324df, self.MAGIC_WORDS[1])
-                if getattr(self, "uses_bti_landing_checks", False) else tuple(self.MAGIC_WORDS))
+                if self.uses_bti_landing_checks else tuple(self.MAGIC_WORDS))
 
-    def transient_pad_passes(self, transient_section, decoder):
+    def transient_pad_passes(self, transient_section, decoder, state):
         """Design step 5: marker pads at the copy's reachable indirect targets."""
         from teapot.passes.transient.pad_transient_targets_pass import PadTransientTargetsPass
 
         # The combined mode keeps the copy's return range clause.
         return [PadTransientTargetsPass(
             transient_section, decoder, self.transient_pad_words(), arch=self,
-            pad_return_sites=not getattr(self, "uses_bti_landing_checks", False))]
+            pad_return_sites=not self.uses_bti_landing_checks, state=state)]
 
-    def transient_anchor_passes(self, transient_section):
+    def transient_anchor_passes(self, transient_section, state):
         """Design step 5: pads displaced by later passes move back to block starts."""
         from teapot.passes.transient.pad_transient_targets_pass import AnchorTransientPadsPass
 
+        pads = state.pads.require("the transient anchor pass")
+
         return [AnchorTransientPadsPass(transient_section, self.transient_pad_words(),
-                                        padded=getattr(self, "transient_padded_blocks", ()),
-                                        originals=getattr(self, "transient_copy_blocks", ()))]
+                                        padded=pads.padded_blocks, originals=pads.copy_blocks)]
 
     def indirect_branch_operand(self, edge_type, last_inst, block: gtirb.CodeBlock = None) -> Optional[str]:
         if edge_type == gtirb.cfg.Edge.Type.Return:
@@ -182,7 +183,7 @@ class AArch64ControlFlowPatchesMixin:
         # Software mode checks the marker pair alone. The combined mode keeps
         # the window, since BTI enforces landings only on guarded pages, and
         # returns keep the copy sub-range clause there.
-        if getattr(self, "uses_bti_landing_checks", False):
+        if self.uses_bti_landing_checks:
             options["window"] = True
             if instruction.mnemonic in ("ret", "retaa", "retab"):
                 options["ret_clause"] = True

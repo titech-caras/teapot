@@ -1,5 +1,4 @@
 import re
-from itertools import count
 from typing import Optional, Set
 
 import gtirb
@@ -18,7 +17,6 @@ _RISCV64_ATOMIC_MEMORY_MNEMONIC_RE = re.compile(
     r"^(amo(?:add|and|maxu?|minu?|or|swap|xor)|lr|sc)\.([wd])"
     r"(?:\.(?:aqrl|aq|rl))?$"
 )
-_PCREL_ADDRESS_LABEL_COUNTER = count()
 
 
 def riscv64_atomic_memory_access(mnemonic: str):
@@ -149,8 +147,7 @@ class RISCV64OperandMixin:
             return f"{symbol}{symexpr.offset}"
         return symbol
 
-    @classmethod
-    def _pcrel_address_snippet(cls, addr_reg, symexpr: gtirb.SymAddrConst) -> str:
+    def _pcrel_address_snippet(self, addr_reg, symexpr: gtirb.SymAddrConst) -> str:
         if gtirb.SymbolicExpression.Attribute.GOT in symexpr.attributes:
             modifier = "got_pcrel_hi"
         elif gtirb.SymbolicExpression.Attribute.TLSGD in symexpr.attributes:
@@ -162,8 +159,8 @@ class RISCV64OperandMixin:
         else:
             raise ValueError("Unsupported RISC-V PC-relative address expression")
 
-        label = f".L__riscv64_mem_addr_{next(_PCREL_ADDRESS_LABEL_COUNTER)}{SYMBOL_SUFFIX}"
-        target = cls._symbolic_reference(symexpr)
+        label = f".L__riscv64_mem_addr_{self.next_label_number('pcrel')}{SYMBOL_SUFFIX}"
+        target = self._symbolic_reference(symexpr)
         return f"""
             {label}:
             auipc {addr_reg}, %{modifier}({target})

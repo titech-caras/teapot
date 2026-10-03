@@ -41,6 +41,7 @@ from teapot.preprocess.copy_section import (
 )
 from teapot.preprocess.contract_record import add_contract_record
 from teapot.preprocess.create_guards import create_guards
+from teapot.rewrite_state import RewriteState
 
 ARCH_INFO_AUX_TYPE = "mapping<string,string>"
 AARCH64_MTE_ARCH_FEATURE = "mte"
@@ -121,14 +122,6 @@ class InstrumentationOptions:
 
 
 class TeapotPipeline:
-    linked_component = None
-    component_guard_base = None
-    checkpoint_df_blocks = frozenset()
-    checkpoint_vector_cases = None
-    potential_target_blocks = frozenset()
-    pad_flags_dead_blocks = frozenset()
-    vector_state = None
-
     def __init__(self, ir: gtirb.IR, dift_layout_name=None,
                  options: InstrumentationOptions = InstrumentationOptions(), *,
                  linked_component=None, runtime_contract=None):
@@ -140,8 +133,26 @@ class TeapotPipeline:
         # teapot.runtime_contract.load_runtime_contract read it.
         self.runtime_contract = runtime_contract
         self.reg_manager = None
+        self.component_guard_base = None
+        self.checkpoint_df_blocks = set()
+        self.checkpoint_vector_cases = None
+        self.vector_state = None
+        self.transient_section = None
+        self.text_section_start_symbol = self.text_section_end_symbol = None
+        self.transient_section_start_symbol = self.transient_section_end_symbol = None
+        self.local_section_bounds = ()
+        # The results passes hand to later passes; a fresh one per run.
+        self.state = RewriteState()
 
     def run(self):
+        self.state = RewriteState()
+        # Decoded instructions are cached by block UUID, which survives loading
+        # the same IR again: start each rewrite without another one's entries.
+        CachedGtirbInstructionDecoder.cache.clear()
+        if not self.options.enable_indirect_transform:
+            for product in (self.state.text_targets, self.state.direct_entry_pads,
+                            self.state.potential_targets, self.state.flags_dead_blocks):
+                product.disable("--disable-indirect-transform")
         if self.options.debug_source is not None and len(self.ir.modules) != 1:
             raise ValueError("source-line preservation requires one ELF module")
         # GTIRB allows an edge without a label, but the passes read every edge's
@@ -267,7 +278,9 @@ class TeapotPipeline:
         if self.options.enable_conditional_branch_relax and self.arch.needs_conditional_branch_relax():
             integral_tls_symbols = _integral_tls_symbol_values(self.module)
             try:
-                self.arch.relax_conditional_branches(self.module)
+                self.arch.relax_conditional_branches(
+                    self.module, direct_pads=self.state.direct_entry_pads.get(
+                        "the conditional-branch relaxer", disabled={}))
             finally:
                 _restore_integral_symbol_values(integral_tls_symbols)
                 self._refresh_register_analysis()
@@ -296,10 +309,9 @@ class TeapotPipeline:
         not in the next. Component bounds are external symbols and stay as
         they are; the local ones, unused there, are pinned as well.
         """
-        current = tuple(getattr(self, name, None) for name in (
-            "text_section_start_symbol", "text_section_end_symbol",
-            "transient_section_start_symbol", "transient_section_end_symbol"))
-        for symbols in (current, getattr(self, "local_section_bounds", ())):
+        current = (self.text_section_start_symbol, self.text_section_end_symbol,
+                   self.transient_section_start_symbol, self.transient_section_end_symbol)
+        for symbols in (current, self.local_section_bounds):
             for symbol, at_end in zip(symbols, (False, True, False, True)):
                 block = symbol.referent if symbol is not None else None
                 if (isinstance(block, gtirb.CodeBlock) and not block.size and
@@ -326,17 +338,16 @@ class TeapotPipeline:
             return bytes(interval.contents[offset:offset + width]) in markers
 
         missing = []
-        transform = getattr(self, "text_target_transform", None)
-        symbols = transform.marked_symbols if transform is not None else ()
+        symbols = self.state.text_targets.get("the target-marker check", disabled=())
         for symbol in symbols:
             block = symbol.referent
             if (isinstance(block, gtirb.CodeBlock) and block.byte_interval is not None and
                     not starts_with_marker(block, symbol.at_end)):
                 missing.append(f"{symbol.name} at {block.address:#x}" if block.address is not None
                                else symbol.name)
-        padded = getattr(self.arch, "transient_padded_blocks", frozenset())
+        padded = self.state.pads.require("the target-marker check").padded_blocks
         copied = 0
-        transient_section = getattr(self, "transient_section", None)
+        transient_section = self.transient_section
         if transient_section is not None:
             for block in transient_section.code_blocks:
                 if block.uuid in padded and block.size:
@@ -361,17 +372,20 @@ class TeapotPipeline:
 
         # Lifts always name their functions; without them there is nothing to add.
         if "functionEntries" not in self.module.aux_data:
+            self.state.potential_targets.set(frozenset())
+            self.state.flags_dead_blocks.set(frozenset())
             return
         functions = Function.build_functions(self.module)
         rules = potential_indirect_targets(self.module, self.text_section, functions,
                                            self.decoder, self.arch)
         # Few on the evaluation corpus (0-2 per binary beyond the other rules).
         rules["unsymbolized-data-word"] = unsymbolized_data_targets(self.module, self.text_section)
-        self.potential_target_blocks = frozenset().union(*rules.values())
+        self.state.potential_targets.set(frozenset().union(*rules.values()))
         counts = ", ".join(f"{name} {len(blocks)}" for name, blocks in sorted(rules.items()))
         print(f"[teapot] potential indirect targets: {counts}", flush=True)
         flag = self.abi.flag_register()
         if self.arch.name != "x64" or flag is None:
+            self.state.flags_dead_blocks.set(frozenset())
             return
         dead = set()
         for function in functions:
@@ -380,7 +394,7 @@ class TeapotPipeline:
                 if (isinstance(block, gtirb.CodeBlock) and block.section is self.text_section and
                         flag not in self.reg_manager.live_registers(function, block, 0)):
                     dead.add(block.uuid)
-        self.pad_flags_dead_blocks = frozenset(dead)
+        self.state.flags_dead_blocks.set(frozenset(dead))
 
     def _run_pass_manager(self, pass_manager: PassManager, label: str):
         print(f"[teapot] begin {label}", flush=True)
@@ -463,21 +477,15 @@ class TeapotPipeline:
 
     def _run_pad_passes(self):
         """Arch pad passes for the freshly made speculative copy (design step 5)."""
-        make_passes = getattr(self.arch, "transient_pad_passes", None)
-        if make_passes is None:
-            return
         pass_manager = PassManager()
-        for arch_pass in make_passes(self.transient_section, self.decoder):
+        for arch_pass in self.arch.transient_pad_passes(self.transient_section, self.decoder, self.state):
             pass_manager.add(arch_pass)
         self._run_pass_manager(pass_manager, "transient-pads")
 
     def _run_anchor_passes(self):
         """Move pads that later copy-writing passes displaced off block starts."""
-        make_passes = getattr(self.arch, "transient_anchor_passes", None)
-        if make_passes is None:
-            return
         pass_manager = PassManager()
-        for arch_pass in make_passes(self.transient_section):
+        for arch_pass in self.arch.transient_anchor_passes(self.transient_section, self.state):
             pass_manager.add(arch_pass)
         self._run_pass_manager(pass_manager, "transient-anchor")
 
@@ -514,7 +522,7 @@ class TeapotPipeline:
             print(f'[teapot] x64 checkpoint sites: integer={counts[0]} '
                   f'xmm0-7={counts[1]} full={counts[2]}', flush=True)
             if self.options.x64_vector_state == 'auto':
-                reasons = getattr(self.reg_manager, 'checkpoint_vector_reasons', {})
+                reasons = self.reg_manager.checkpoint_vector_reasons
                 full_reasons = Counter(reasons.get(u, 'new-or-missing-mask')
                                        for u in self.checkpoint_block_uuids
                                        if self.checkpoint_vector_cases.get(u, 2) == 2)
@@ -540,9 +548,9 @@ class TeapotPipeline:
                 self.landing_pad_targets,
                 required_target_symbols=(self.linked_component.exported_function_symbols
                                          if self.linked_component else ()),
-                potential_targets=self.potential_target_blocks,
-                flags_dead_blocks=self.pad_flags_dead_blocks)
-        self.text_target_transform = target_transform
+                potential_targets=self.state.potential_targets.require("the text indirect-branch transform"),
+                flags_dead_blocks=self.state.flags_dead_blocks.require("the text indirect-branch transform"),
+                state=self.state)
         if target_transform is not None:
             # Every legal normal target address must start with the full
             # marker, not just a separately rewritten component's exports.

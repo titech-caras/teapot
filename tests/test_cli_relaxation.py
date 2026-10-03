@@ -71,7 +71,7 @@ class RelaxationOptionTests(unittest.TestCase):
         options = self.options_for(ir)
         self.assertTrue(options.enable_conditional_branch_relax)
         if options.enable_conditional_branch_relax:
-            X64Architecture().relax_conditional_branches(module)
+            X64Architecture().relax_conditional_branches(module, direct_pads={})
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             ir.save_protobuf(root / 'output.gtirb')

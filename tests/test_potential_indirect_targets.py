@@ -16,6 +16,7 @@ from teapot.arch import X64Architecture
 from teapot.passes.text.indirect_targets import potential_indirect_targets, unsymbolized_data_targets
 from teapot.passes.text.text_indirect_branch_transform_pass import (
     DIRECT_ENTRY_PREFIX, TextIndirectBranchTransformPass)
+from teapot.rewrite_state import RewriteState, TransientPads
 
 CODE = bytes.fromhex(
     "c3"              # 0x1000 f:      ret                         (called directly only)
@@ -343,19 +344,21 @@ class PotentialIndirectTargetTests(unittest.TestCase):
         copy = gtirb.Section(name=".teapot_transient", module=module)
         copy_block = gtirb.CodeBlock(offset=0, size=9, byte_interval=gtirb.ByteInterval(
             section=copy, address=0x2000, contents=arch.nop_bytes + b"\xc3"))
-        arch.transient_padded_blocks = frozenset({copy_block.uuid})
         good = gtirb.Symbol(name="good", payload=padded, module=module)
         bad = gtirb.Symbol(name="bad", payload=displaced, module=module)
-        pipeline = SimpleNamespace(arch=arch, transient_section=copy,
-                                   text_target_transform=SimpleNamespace(marked_symbols=[good]))
+        marked = [good]
+        state = RewriteState()
+        state.pads.set(TransientPads(frozenset({copy_block.uuid}), frozenset({copy_block.uuid})))
+        state.text_targets.set(marked)
+        pipeline = SimpleNamespace(arch=arch, transient_section=copy, state=state)
         with redirect_stdout(io.StringIO()) as output:
             TeapotPipeline._verify_target_markers(pipeline)
         self.assertIn("1 normal-text symbols, 1 copy blocks", output.getvalue())
-        pipeline.text_target_transform.marked_symbols.append(bad)
+        marked.append(bad)
         with self.assertRaisesRegex(ValueError, "1 padded targets do not start with the marker, e.g. bad"):
             TeapotPipeline._verify_target_markers(pipeline)
         # A copy pad lost behind entry code fails too.
-        pipeline.text_target_transform.marked_symbols.pop()
+        marked.pop()
         copy_block.byte_interval.contents = b"\x90" + arch.nop_bytes
         with self.assertRaisesRegex(ValueError, "copy block at 0x2000"):
             TeapotPipeline._verify_target_markers(pipeline)

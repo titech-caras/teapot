@@ -107,21 +107,22 @@ class X64ControlFlowPatchesMixin:
         """The marker pair this mode places at the copy's reachable targets."""
         return tuple(self.MAGIC_WORDS)
 
-    def transient_pad_passes(self, transient_section, decoder):
+    def transient_pad_passes(self, transient_section, decoder, state):
         """Design step 5: marker pads at the copy's reachable indirect targets."""
         from teapot.passes.transient.pad_transient_targets_pass import PadTransientTargetsPass
 
         return [PadTransientTargetsPass(transient_section, decoder, self.transient_pad_words(),
-                                        directive=".long", arch=self, pad_return_sites=True)]
+                                        directive=".long", arch=self, pad_return_sites=True, state=state)]
 
-    def transient_anchor_passes(self, transient_section):
+    def transient_anchor_passes(self, transient_section, state):
         """Design step 5: pads displaced by later passes move back to block starts."""
         from teapot.passes.transient.pad_transient_targets_pass import AnchorTransientPadsPass
 
+        pads = state.pads.require("the transient anchor pass")
+
         return [AnchorTransientPadsPass(transient_section, self.transient_pad_words(),
                                         directive=".long",
-                                        padded=getattr(self, "transient_padded_blocks", ()),
-                                        originals=getattr(self, "transient_copy_blocks", ()))]
+                                        padded=pads.padded_blocks, originals=pads.copy_blocks)]
 
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,

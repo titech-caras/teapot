@@ -70,7 +70,7 @@ class AArch64RelaxFixedPointTests(unittest.TestCase):
                     (gtirb.Offset(other, 4), 2), (gtirb.Offset(interval, 8), 8),
                     (gtirb.Offset(interval, 12), 4)]
         replacements = [_Replacement(0, b'0' * 8), _Replacement(12, b'0' * 12)]
-        visitor = AArch64RelaxConditionalBranchesPass(None)
+        visitor = AArch64RelaxConditionalBranchesPass(None, direct_pads={})
         visitor.module = module
         expected = {gtirb.Offset(interval, 32): 8, gtirb.Offset(interval, 12): 8,
                     gtirb.Offset(other, 4): 2, gtirb.Offset(interval, 0): 4,
@@ -88,7 +88,7 @@ class AArch64RelaxFixedPointTests(unittest.TestCase):
             "DIRECT_BRANCH_SAFETY_MARGIN",
             test_margin,
         ):
-            AArch64Architecture().relax_conditional_branches(module)
+            AArch64Architecture().relax_conditional_branches(module, direct_pads={})
 
         self.assertEqual(blocks[-1].offset, 48)
         self.assertEqual(
@@ -133,13 +133,12 @@ class AArch64RelaxFixedPointTests(unittest.TestCase):
             data={uuid.uuid4(): {blocks[2]}},
         )
         arch = AArch64Architecture()
-        arch.direct_entry_pads = {label: pad}
         with mock.patch.object(
             AArch64RelaxConditionalBranchesPass,
             "DIRECT_BRANCH_SAFETY_MARGIN",
             134217728 - 4,
         ):
-            arch.relax_conditional_branches(module)
+            arch.relax_conditional_branches(module, direct_pads={label: pad})
 
         # Both became ADRP/ADD/BR(L) through IP0, to the pad.
         self.assertEqual(len(interval.symbolic_expressions), 4)

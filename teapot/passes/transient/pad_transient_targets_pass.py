@@ -28,6 +28,7 @@ import gtirb
 from gtirb_rewriting import Pass, Patch, RewritingContext, patch_constraints
 
 from teapot.passes.text.indirect_targets import _direct_pair_offsets
+from teapot.rewrite_state import TransientPads
 
 _PCREL = gtirb.SymbolicExpression.Attribute.PCREL
 _LO = gtirb.SymbolicExpression.Attribute.LO
@@ -35,8 +36,10 @@ _LO = gtirb.SymbolicExpression.Attribute.LO
 
 class PadTransientTargetsPass(Pass):
     def __init__(self, section, decoder, marker_words, directive=".word", arch=None,
-                 pad_return_sites=False):
+                 pad_return_sites=False, state=None):
         self.section = section
+        # The rewrite's state (teapot/rewrite_state.py), which receives the pads.
+        self.state = state
         self.pad_return_sites = pad_return_sites
         self.decoder = decoder
         self.marker_words = tuple(marker_words)
@@ -205,15 +208,15 @@ class PadTransientTargetsPass(Pass):
                 table = module.aux_data.get(name)
                 for blocks in (table.data.values() if table is not None else ()):
                     blocks.update(aliases[label] for label in aliases.keys() & blocks)
-        if self.arch is not None:
+        if self.state is not None:
             # Every reachable target must start with the marker, padded here or
             # marked already: the anchor pass keeps it at the block's start and
             # the pipeline checks it at the end. The anchor's search for a
             # block's marker stops at the next of the copy's current blocks,
             # which the block's later pieces never pass.
-            self.arch.transient_padded_blocks = frozenset(block.uuid for block in entries)
-            self.arch.transient_copy_blocks = frozenset(
-                block.uuid for block in self.section.code_blocks if block.size)
+            self.state.pads.set(TransientPads(
+                padded_blocks=frozenset(block.uuid for block in entries),
+                copy_blocks=frozenset(block.uuid for block in self.section.code_blocks if block.size)))
         for block in sorted(targets, key=lambda b: b.address or 0):
             @patch_constraints()
             def patch(_ctx, text_out=text_out):

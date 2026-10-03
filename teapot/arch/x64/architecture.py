@@ -38,7 +38,7 @@ class X64Architecture(
     def return_address_is_stack_resident(self) -> bool:
         return True
 
-    def relax_conditional_branches(self, module) -> None:
+    def relax_conditional_branches(self, module, *, direct_pads) -> None:
         from gtirb_capstone.instructions import GtirbInstructionDecoder
         from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 

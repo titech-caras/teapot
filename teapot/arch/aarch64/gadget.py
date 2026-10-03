@@ -1,4 +1,3 @@
-from itertools import count
 
 from teapot.configs.runtime import (
     AARCH64_REPORT_ACCESS_ADDR,
@@ -8,7 +7,6 @@ from teapot.configs.runtime import (
     GUARD_ENTRY_WIDTH,
     SYMBOL_SUFFIX,
 )
-_REPORT_LABEL_COUNTER = count()
 
 
 class AArch64GadgetPatchesMixin:
@@ -39,7 +37,7 @@ class AArch64GadgetPatchesMixin:
         return patch
 
     def report_gadget_snippet(self, gadget_type: str, addr_reg, tag_reg, stack_reg, temp_reg) -> str:
-        report_call_label = f".L__report_gadget_call_{next(_REPORT_LABEL_COUNTER)}{SYMBOL_SUFFIX}"
+        report_call_label = f".L__report_gadget_call_{self.next_label_number('report')}{SYMBOL_SUFFIX}"
         args_symbol = f"scratchpad+{AARCH64_REPORT_STATE_OFFSET}"
 
         # Reporting replaces the labeled instruction with one NOP. Materialize

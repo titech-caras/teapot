@@ -62,7 +62,7 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
 
         checker = self.arch.indirect_branch_check_patch
         options = self.arch.indirect_branch_check_options(last_inst)
-        if (getattr(self.arch, "uses_bti_landing_checks", False) and
+        if (self.arch.uses_bti_landing_checks and
                 last_inst.mnemonic.lower() in ("br", "blr") and
                 edge.label.type != gtirb.cfg.Edge.Type.Return):
             checker = self.arch.indirect_branch_hardware_check_patch

@@ -33,6 +33,20 @@ class Architecture(
     name: str
     nop_bytes: bytes
     abi: Any
+    # The aarch64-bti-pac mode's Architecture checks speculative targets by
+    # BTI landings (teapot/arch/aarch64/bti.py).
+    uses_bti_landing_checks = False
+
+    def __post_init__(self):
+        # Local label numbers, per instance: the pipeline builds one
+        # Architecture per rewrite, so one module's labels do not depend on
+        # what the process rewrote before it.
+        object.__setattr__(self, "_label_numbers", {})
+
+    def next_label_number(self, kind: str) -> int:
+        number = self._label_numbers.get(kind, 0)
+        self._label_numbers[kind] = number + 1
+        return number
 
     def return_address_is_stack_resident(self) -> bool:
         """Whether a call stores its return address in application memory."""
@@ -60,7 +74,8 @@ class Architecture(
         """Finish architecture-specific branch relaxation after late layout."""
         return ()
 
-    def relax_conditional_branches(self, module: gtirb.Module) -> None:
+    def relax_conditional_branches(self, module: gtirb.Module, *, direct_pads) -> None:
+        """Relax out-of-range branches; ``direct_pads`` maps each direct-entry label to its pad."""
         return None
 
     def create_text_dift_pass(self, reg_manager, section, decoder, dift_layout):

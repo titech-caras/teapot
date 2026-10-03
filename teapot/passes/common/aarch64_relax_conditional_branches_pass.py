@@ -44,10 +44,13 @@ class AArch64RelaxConditionalBranchesPass(VisitorPassMixin):
     ADR_SAFETY_MARGIN = 32768
     LITERAL_LOAD_SAFETY_MARGIN = 32768
 
-    def __init__(self, decoder: GtirbInstructionDecoder, direct_pads=None):
+    def __init__(self, decoder: GtirbInstructionDecoder, *, direct_pads):
         self.decoder = decoder
         # Label after a normal-text pad -> the pad's symbol (TextIndirectBranchTransformPass).
-        self.direct_pads = direct_pads or {}
+        # Direct-entry label -> its pad. A relaxed branch to such a label must
+        # not become an indirect branch that skips the pad, so the caller always
+        # says which labels there are (an empty mapping when there are none).
+        self.direct_pads = direct_pads
         self.relaxed_instructions = 0
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:

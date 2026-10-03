@@ -13,6 +13,7 @@ from teapot.arch.aarch64.bti import AArch64BTIArchitecture
 from teapot.passes.transient.pad_transient_targets_pass import (
     AnchorTransientPadsPass, PadTransientTargetsPass,
 )
+from teapot.rewrite_state import ProductNotReady, RewriteState
 
 
 def copy_module():
@@ -52,16 +53,16 @@ class PadTransientTargetsTests(unittest.TestCase):
 
     def test_wiring_uses_the_mode_marker(self):
         _, section, _ = copy_module()
-        bti = AArch64BTIArchitecture().transient_pad_passes(section, None)[0]
+        bti = AArch64BTIArchitecture().transient_pad_passes(section, None, RewriteState())[0]
         self.assertEqual(bti.marker_words, (0xd50324df, 0xd280a29f))
-        software = AArch64Architecture().transient_pad_passes(section, None)[0]
+        software = AArch64Architecture().transient_pad_passes(section, None, RewriteState())[0]
         self.assertEqual(software.marker_words, AArch64Architecture.MAGIC_WORDS)
 
     def test_every_isa_pads_the_copy_for_the_window_predicate(self):
         _, section, _ = copy_module()
         for arch in (AArch64Architecture(), X64Architecture(), RISCV64Architecture()):
             with self.subTest(isa=arch.name):
-                pad = arch.transient_pad_passes(section, None)[0]
+                pad = arch.transient_pad_passes(section, None, RewriteState())[0]
                 self.assertEqual(pad.marker_words, tuple(arch.MAGIC_WORDS))
                 directive = ".long" if arch.name == "x64" else ".word"
                 self.assertEqual(pad.marker_text(), "".join(
@@ -353,14 +354,14 @@ class PadTransientTargetsTests(unittest.TestCase):
         target = gtirb.CodeBlock(offset=8, size=12, byte_interval=interval)
         module.ir.cfg.add(gtirb.Edge(first, target,
                                      gtirb.Edge.Label(gtirb.Edge.Type.Branch, direct=False)))
-        arch = AArch64BTIArchitecture()
-        pad = arch.transient_pad_passes(first.section, None)[0]
+        arch, state = AArch64BTIArchitecture(), RewriteState()
+        pad = arch.transient_pad_passes(first.section, None, state)[0]
         context = RewritingContext(module, [])
         with redirect_stdout(io.StringIO()):
             pad.begin_module(module, [], context)
             context.apply()
         self.assertEqual(pad.padded, 0)
-        self.assertIn(target.uuid, arch.transient_padded_blocks)
+        self.assertIn(target.uuid, state.pads.require("test").padded_blocks)
 
         @patch_constraints()
         def entry_code(_ctx):
@@ -370,7 +371,7 @@ class PadTransientTargetsTests(unittest.TestCase):
         context.insert_at(target, 0, Patch.from_function(entry_code))
         context.apply()
         self.assertNotEqual(bytes(target.contents)[:8], marker)
-        anchor = arch.transient_anchor_passes(first.section)[0]
+        anchor = arch.transient_anchor_passes(first.section, state)[0]
         context = RewritingContext(module, [])
         with redirect_stdout(io.StringIO()):
             anchor.begin_module(module, [], context)
@@ -435,13 +436,16 @@ class PadTransientTargetsTests(unittest.TestCase):
         for arch in (AArch64Architecture(), X64Architecture(), RISCV64Architecture()):
             with self.subTest(isa=arch.name):
                 module, section, blocks = copy_module()
-                pad = arch.transient_pad_passes(section, None)[0]
+                state = RewriteState()
+                with self.assertRaisesRegex(ProductNotReady, "the transient pad pass, which has not run"):
+                    arch.transient_anchor_passes(section, state)
+                pad = arch.transient_pad_passes(section, None, state)[0]
                 expected = {block.uuid for block in pad.reachable_entries()}
                 self.assertTrue(expected)
                 with redirect_stdout(io.StringIO()):
                     pad.begin_module(module, [], types.SimpleNamespace(insert_at=lambda *args: None))
-                self.assertEqual(arch.transient_padded_blocks, expected)
-                anchor = arch.transient_anchor_passes(section)[0]
+                self.assertEqual(state.pads.require("test").padded_blocks, expected)
+                anchor = arch.transient_anchor_passes(section, state)[0]
                 self.assertEqual(anchor.padded, expected)
                 self.assertEqual(anchor.originals,
                                  {block.uuid for block in section.code_blocks if block.size})
@@ -452,17 +456,17 @@ class PadTransientTargetsTests(unittest.TestCase):
         # it gets no pad, but the anchor pass and the end-state check still
         # cover it, since later entry code can displace its marker too.
         module, section, blocks = copy_module()
-        arch = AArch64BTIArchitecture()
-        pad = arch.transient_pad_passes(section, None)[0]
+        arch, state = AArch64BTIArchitecture(), RewriteState()
+        pad = arch.transient_pad_passes(section, None, state)[0]
         inserted = []
         with redirect_stdout(io.StringIO()):
             pad.begin_module(module, [], types.SimpleNamespace(
                 insert_at=lambda block, *args: inserted.append(block)))
         self.assertEqual(set(inserted), {blocks[0], blocks[1]})
-        self.assertEqual(arch.transient_padded_blocks,
+        self.assertEqual(state.pads.require("test").padded_blocks,
                          {blocks[0].uuid, blocks[1].uuid, blocks[4].uuid})
-        self.assertEqual(arch.transient_anchor_passes(section)[0].padded,
-                         arch.transient_padded_blocks)
+        self.assertEqual(arch.transient_anchor_passes(section, state)[0].padded,
+                         state.pads.require("test").padded_blocks)
 
     def test_pad_at_the_block_start_is_left_alone(self):
         module, section, _ = self.marker_module(marker_at_start=True)
@@ -565,8 +569,8 @@ class PadTransientTargetsTests(unittest.TestCase):
         _, section, _ = copy_module()
         for arch in (AArch64Architecture(), X64Architecture(), RISCV64Architecture()):
             with self.subTest(isa=arch.name):
-                self.assertTrue(arch.transient_pad_passes(section, None)[0].pad_return_sites)
-        self.assertFalse(AArch64BTIArchitecture().transient_pad_passes(section, None)[0].pad_return_sites)
+                self.assertTrue(arch.transient_pad_passes(section, None, RewriteState())[0].pad_return_sites)
+        self.assertFalse(AArch64BTIArchitecture().transient_pad_passes(section, None, RewriteState())[0].pad_return_sites)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import gtirb
 from teapot.arch import X64Architecture
 from teapot.pipeline import TeapotPipeline
 from test_live_register_preservation import make_module
+from teapot.rewrite_state import ProductNotReady, TransientPads
 
 
 class PipelineEndStateTests(unittest.TestCase):
@@ -20,7 +21,7 @@ class PipelineEndStateTests(unittest.TestCase):
         end = gtirb.Symbol(name="end", payload=gtirb.CodeBlock(offset=24, size=0, byte_interval=interval),
                            module=module)
         external = gtirb.Symbol(name="external", payload=gtirb.ProxyBlock(module=module), module=module)
-        pipeline = TeapotPipeline.__new__(TeapotPipeline)
+        pipeline = TeapotPipeline(gtirb.IR())
         pipeline.text_section_start_symbol, pipeline.text_section_end_symbol = start, end
         pipeline.transient_section_start_symbol = pipeline.transient_section_end_symbol = external
         pipeline._pin_section_bounds()
@@ -35,10 +36,14 @@ class PipelineEndStateTests(unittest.TestCase):
         section = gtirb.Section(name=".teapot_transient", module=module)
         interval = gtirb.ByteInterval(section=section, contents=b"\x1f\x20\x03\xd5" * 4, size=16)
         block = gtirb.CodeBlock(offset=0, size=16, byte_interval=interval)
-        pipeline = TeapotPipeline.__new__(TeapotPipeline)
+        pipeline = TeapotPipeline(gtirb.IR())
         pipeline.arch = AArch64BTIArchitecture()
-        pipeline.arch.transient_padded_blocks = frozenset({block.uuid})
         pipeline.transient_section = section
+        pipeline.state.text_targets.disable("this test")
+        # Without the pad pass's result there is nothing it may skip: fail closed.
+        with self.assertRaisesRegex(ProductNotReady, "the transient pad pass, which has not run"):
+            pipeline._verify_target_markers()
+        pipeline.state.pads.set(TransientPads(frozenset({block.uuid}), frozenset({block.uuid})))
         with self.assertRaisesRegex(ValueError, "1 padded targets do not start with the marker"):
             pipeline._verify_target_markers()
 

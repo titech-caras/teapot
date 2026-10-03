@@ -258,7 +258,7 @@ class LiveRegisterPreservationTests(unittest.TestCase):
         interval = block.byte_interval
         module.aux_data["liveRegisterSets"].data = {
             gtirb.Offset(block, offset): offset + 1 for offset in range(0, 16, 4)}
-        relax = AArch64RelaxConditionalBranchesPass(CachedGtirbInstructionDecoder(module.isa))
+        relax = AArch64RelaxConditionalBranchesPass(CachedGtirbInstructionDecoder(module.isa), direct_pads={})
         relax.module = module
         relax.replacements_by_interval = {
             interval: [_Replacement(4, bytes.fromhex("1f2003d5" * 2), symbolic_expressions=())]}

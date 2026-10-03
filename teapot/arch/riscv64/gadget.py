@@ -1,9 +1,7 @@
-from itertools import count
 
 from teapot.configs.runtime import GUARD_ENTRY_WIDTH, SCRATCHPAD_SIZE, SYMBOL_SUFFIX
 
 
-_REPORT_LABEL_COUNTER = count()
 _REPORT_CALLER_SAVED_GPRS = (
     1,  # ra
     5, 6, 7,  # t0-t2
@@ -59,7 +57,7 @@ class RISCV64GadgetPatchesMixin:
                                        for slot, reg in enumerate(_REPORT_CALLER_SAVED_FPRS))
         frame_size = float_base + (len(_REPORT_CALLER_SAVED_FPRS) * 8 if save_float_state else 0)
         frame_symbol = f"scratchpad+{SCRATCHPAD_SIZE - frame_size}"
-        report_call_label = f".L__report_gadget_call_{next(_REPORT_LABEL_COUNTER)}{SYMBOL_SUFFIX}"
+        report_call_label = f".L__report_gadget_call_{self.next_label_number('report')}{SYMBOL_SUFFIX}"
         return f"""
             {'.attribute arch, "rv64imafd"' if save_float_state else ''}
             {self.load_address(stack_reg, frame_symbol)}
