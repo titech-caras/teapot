@@ -20,6 +20,7 @@ from teapot.passes.text.dift.riscv64 import RISCV64TextDiftPropagationLLVMPass
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from teapot.pipeline import TeapotPipeline
 from test_live_register_preservation import make_module
+from runtime_contract_support import fixture_contract, fixture_layout
 
 
 VARIANTS = (
@@ -45,10 +46,11 @@ def rewritten_code(path, variant, mode):
     section = next(s for s in module.sections if s.name == ".text")
     manager = LiveRegisterManager(module, abi)
     if mode == 2:
-        TeapotPipeline(ir).run()
+        TeapotPipeline(ir, runtime_contract=fixture_contract(arch.name)).run()
     else:
         passes = PassManager()
-        passes.add(VARIANTS[variant][3 + mode](manager, section, manager.analyzer.decoder, arch))
+        passes.add(VARIANTS[variant][3 + mode](manager, section, manager.analyzer.decoder, arch,
+                                               dift_layout=fixture_layout(arch.name)))
         passes.run(ir)
 
     intervals = sorted(module.byte_intervals, key=lambda bi: (bi.section.name, bi.address or 0))

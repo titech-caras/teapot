@@ -15,6 +15,7 @@ from teapot.arch import X64Architecture, AArch64Architecture, RISCV64Architectur
 from teapot.passes.transient.lazy_dift import transient_replay_pass
 from teapot.passes.transient.gadget_policy.mem_operand.x64 import X64TransientMemOperandPoliciesPass
 from test_live_register_preservation import make_module
+from runtime_contract_support import fixture_layout
 
 
 class LazyDiftTests(unittest.TestCase):
@@ -42,9 +43,10 @@ class LazyDiftTests(unittest.TestCase):
                     # Boundary 1 has spare GPRs; later boundaries force spills.
                     module.aux_data['liveRegisterSets'].data[gtirb.Offset(block, inst.address-block.address)] = \
                         0 if index == 1 else (1 << len(registers)) - 1
-                memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.analyzer.decoder, arch)
+                memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.analyzer.decoder, arch,
+                                                    dift_layout=fixture_layout('x64'))
                 replay = transient_replay_pass(arch, manager, block.section, manager.analyzer.decoder,
-                                              memory_policy=memory)
+                                              memory_policy=memory, dift_layout=fixture_layout('x64'))
                 passes = PassManager()
                 passes.add(replay)
                 with patch.object(replay, '_emit_replay', wraps=replay._emit_replay) as emit:
@@ -70,9 +72,10 @@ class LazyDiftTests(unittest.TestCase):
                      'report_gadget_KASPER_MDS'):
             gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
         manager = LiveRegisterManager(module, abi)
-        memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.analyzer.decoder, arch)
+        memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.analyzer.decoder, arch,
+                                                    dift_layout=fixture_layout('x64'))
         replay = transient_replay_pass(arch, manager, block.section, manager.analyzer.decoder,
-                                      memory_policy=memory)
+                                      memory_policy=memory, dift_layout=fixture_layout('x64'))
         observed = []
         original = replay._flush_dift
 

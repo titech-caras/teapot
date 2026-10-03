@@ -16,6 +16,7 @@ from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.datacls.linked_component import LinkedComponent
 from teapot.passes.transient.indirect_branch_check_pass import TransientIndirectBranchCheckDestPass
 from test_live_register_preservation import make_module, symbol_references
+from runtime_contract_support import fixture_contract
 
 
 class AArch64BTIBackendTests(unittest.TestCase):
@@ -90,7 +91,8 @@ class AArch64BTIBackendTests(unittest.TestCase):
         ir.cfg.add(gtirb.Edge(block, gtirb.ProxyBlock(module=module),
                               gtirb.Edge.Label(gtirb.Edge.Type.Return)))
         pipeline = TeapotPipeline(ir, 'aarch64-vma42',
-                                 InstrumentationOptions(target_identification='aarch64-bti-pac'))
+                                 InstrumentationOptions(target_identification='aarch64-bti-pac'),
+                                 runtime_contract=fixture_contract('aarch64', target_identification='aarch64-bti-pac'))
         with redirect_stdout(io.StringIO()):
             pipeline.run()
         self.assertEqual(pipeline.reg_manager.analysis_source, 'ddisasm')
@@ -135,7 +137,9 @@ class AArch64BTIBackendTests(unittest.TestCase):
             context = LinkedComponent('a' * 64, frozenset({exported}), frozenset({exported}))
             pipeline = TeapotPipeline(ir, 'aarch64-vma42',
                                      InstrumentationOptions(target_identification='aarch64-bti-pac'),
-                                     linked_component=context)
+                                     linked_component=context,
+                                     runtime_contract=fixture_contract('aarch64',
+                                                                       target_identification='aarch64-bti-pac'))
             with self.subTest(exported=exported), redirect_stdout(io.StringIO()):
                 pipeline.run()
                 self.assertEqual(pipeline.text_section.name, '.teapot_bti_normal')

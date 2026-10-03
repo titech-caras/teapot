@@ -11,6 +11,7 @@ from teapot.arch.riscv64.architecture import RISCV64Architecture
 from teapot.datacls.linked_component import LinkedComponent
 from teapot.passes.transient.transient_insert_restore_points_pass import TransientInsertRestorePointsPass
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
+from runtime_contract_support import fixture_contract
 
 
 class LinkedComponentTests(unittest.TestCase):
@@ -145,7 +146,7 @@ class LinkedComponentTests(unittest.TestCase):
         del masks[gtirb.Offset(block, 1)]  # A missing instruction stays missing.
         expected = dict(masks)
         pipeline = TeapotPipeline(gtirb.IR(modules=[module]), "x64-la48-asan-new",
-                                  linked_component=self.context())
+                                  linked_component=self.context(), runtime_contract=fixture_contract('x64'))
         class LivenessInitialized(Exception):
             pass
         with patch('teapot.pipeline.LiveRegisterManager',

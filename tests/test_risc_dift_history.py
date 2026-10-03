@@ -12,6 +12,7 @@ from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE, RISCV64_ORIGINAL_TP_
 from teapot.passes.transient.lazy_dift import transient_replay_pass
 from teapot.passes.text.dift.base import TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET, TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT
 from dift_replay_test_support import replay_asm
+from runtime_contract_support import fixture_layout
 
 
 class RISCDiftHistoryTests(unittest.TestCase):
@@ -20,7 +21,8 @@ class RISCDiftHistoryTests(unittest.TestCase):
         if not shutil.which(cc) or not shutil.which('qemu-riscv64'):
             self.skipTest('requires RV64 compiler and QEMU')
         arch = RISCV64Architecture()
-        replay = transient_replay_pass(arch, SimpleNamespace(abi=arch.abi), None, None)
+        replay = transient_replay_pass(arch, SimpleNamespace(abi=arch.abi), None, None,
+                                       dift_layout=fixture_layout('riscv64'))
         for body, dead, stack in (
                 ('li t3,11', True, False),
                 ('li t3,11', False, False),

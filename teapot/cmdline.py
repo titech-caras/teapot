@@ -2,12 +2,13 @@ import argparse
 import ctypes
 import gc
 import logging
+import sys
 
 import gtirb
 
 from teapot.configs.runtime import ASAN_TAG_STORAGES, ASAN_TAG_STORAGE_SHADOW
-from teapot.datacls.dift_layout import LAYOUTS, layout_names_for_arch
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
+from teapot.runtime_contract import RuntimeContractError, load_runtime_contract
 from teapot.utils.serialization import compact_for_pprinter
 
 
@@ -33,14 +34,14 @@ def main():
               "After printing, run python -m teapot.debug_lines IR RAW.S OUTPUT.S."),
     )
     parser.add_argument(
-        "--dift-layout",
-        choices=sorted(LAYOUTS),
-        help="Compile-time DIFT address-space layout profile. The runtime library must be built with the same profile.",
+        "--runtime-contract", metavar="JSON", required=True,
+        help=("The lib<archive>.contract.json beside the libcheckpoint archive this rewrite will be "
+              "linked with (libcheckpoint_nested.contract.json for --enable-nested-speculation). "
+              "Teapot refuses a runtime whose layout it does not emit and takes the DIFT layout from it."),
     )
     parser.add_argument(
-        "--list-dift-layouts",
-        action="store_true",
-        help="Print DIFT layout profiles and exit.",
+        "--dift-layout",
+        help="Optional: the DIFT layout profile the runtime must have been built with.",
     )
     parser.add_argument(
         "--disable-dift",
@@ -133,12 +134,12 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.list_dift_layouts:
-        for arch_name in ("x64", "aarch64", "riscv64"):
-            print(f"{arch_name}: {', '.join(sorted(layout_names_for_arch(arch_name)))}")
-        return
     if args.input is None or args.output is None:
         parser.error("input and output are required")
+    try:
+        runtime_contract = load_runtime_contract(args.runtime_contract)
+    except RuntimeContractError as error:
+        sys.exit(f"teapot: {error}")
     if args.rewrite_progress:
         logging.basicConfig(
             format="%(asctime)s [%(name)s] %(message)s",
@@ -170,8 +171,11 @@ def main():
         x64_vector_state=args.x64_vector_state,
         debug_vector_liveness=args.debug_vector_liveness,
     )
-    pipeline = TeapotPipeline(ir, args.dift_layout, options)
-    pipeline.run()
+    pipeline = TeapotPipeline(ir, args.dift_layout, options, runtime_contract=runtime_contract)
+    try:
+        pipeline.run()
+    except RuntimeContractError as error:
+        sys.exit(f"teapot: {error}")
     del pipeline
 
     # Protobuf serialization constructs a second representation of the IR.

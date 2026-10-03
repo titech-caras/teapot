@@ -37,7 +37,7 @@ class TransientDiftReplayMixin:
     REPLAY_SYMBOLS = TextDiftLLVMBase.REPLAY_SYMBOLS | {
         "memory_history_top", "dift_reg_queued_tags", "dift_reg_queue_pending"}
 
-    def __init__(self, reg_manager, section, decoder, arch, *, dift_layout=None,
+    def __init__(self, reg_manager, section, decoder, arch, *, dift_layout,
                  insert_memlog=True, memory_policy=None, port_policy=None,
                  immediate=False):
         # The x64 text class deliberately disables history. Here the shared

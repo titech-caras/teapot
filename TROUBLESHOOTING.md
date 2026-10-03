@@ -36,7 +36,7 @@ the matching source headers and build directory at CMake's recorded paths.
 **Execution of instrumented binary fails with `Map address 0x400000000000 failed: Address already in use`**
 
 Check AddressSanitizer (ASan) version in the system; it may be too new for Teapot to function (see the DIFT layout profiles in [libcheckpoint/README.md](libcheckpoint/README.md)).
-On x86-64, use the newer-ASan DIFT profile instead: instrument with `teapot --dift-layout x64-la48-asan-new ...` and build `libcheckpoint` with `-DTEAPOT_DIFT_LAYOUT=x64-la48-asan-new`.
+On x86-64, use the newer-ASan DIFT profile instead: build `libcheckpoint` with `-DTEAPOT_DIFT_LAYOUT=x64-la48-asan-new` and instrument with that build's `--runtime-contract`, which carries the layout.
 Alternatively, download an old version of `libasan.so` and `LD_PRELOAD` it into the instrumented binary.
 
 For the newer-ASan profile, shared objects and the stack must stay in its

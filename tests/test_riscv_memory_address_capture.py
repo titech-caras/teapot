@@ -14,6 +14,7 @@ from gtirb_rewriting.prepare import prepare_for_rewriting
 from teapot.arch import RISCV64Architecture
 from teapot.passes.text.dift.riscv64 import RISCV64TextDiftPropagationLLVMPass
 from test_live_register_preservation import make_module
+from runtime_contract_support import fixture_layout
 
 
 class RiscvMemoryAddressCaptureTests(unittest.TestCase):
@@ -104,7 +105,7 @@ class RiscvMemoryAddressCaptureTests(unittest.TestCase):
                 return emit
 
         passes = PassManager()
-        passes.add(Probe(manager, block.section, decoder, self.arch))
+        passes.add(Probe(manager, block.section, decoder, self.arch, dift_layout=fixture_layout('riscv64')))
         passes.run(ir)
         self.assertEqual(len(captured), 1)
         self.assertIn('%pcrel_hi(target_value)', captured[0])

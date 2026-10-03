@@ -149,11 +149,20 @@ def probe(arch, count, taken):
 class NestedCheckpointExecutionTests(unittest.TestCase):
     def check_arch(self, arch, prefix):
         compiler, emulator = prefix + "-gcc", "qemu-" + prefix.split("-")[0]
-        if not shutil.which(compiler) or not shutil.which(emulator):
-            self.skipTest(f"requires {compiler} and {emulator}")
+        if not shutil.which(compiler) or not shutil.which(emulator) or not shutil.which("cmake"):
+            self.skipTest(f"requires {compiler}, {emulator} and cmake")
         runtime = Path(__file__).resolve().parents[1] / "libcheckpoint"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            # The runtime's contract record and the fingerprint a module record
+            # names are generated when the runtime is configured.
+            contract = root / "contract-build"
+            configure = subprocess.run(
+                ["cmake", "-S", str(runtime), "-B", str(contract), "-DBUILD_TESTING=OFF",
+                 "-DCMAKE_SYSTEM_NAME=Linux", f"-DCMAKE_SYSTEM_PROCESSOR={arch.name}",
+                 f"-DCMAKE_C_COMPILER={compiler}", f"-DCMAKE_ASM_COMPILER={compiler}",
+                 f"-DCHECKPOINT_ARCH={arch.name}"], text=True, capture_output=True)
+            self.assertEqual(configure.returncode, 0, configure.stdout + configure.stderr)
             assembly = root / "probe.S"
             assembly.write_text("\n".join(
                 probe(arch, count, taken) for count in range(3) for taken in range(2)) +
@@ -161,10 +170,11 @@ class NestedCheckpointExecutionTests(unittest.TestCase):
             executable = root / "probe"
             command = [compiler, "-O2", "-no-pie", "-DENABLE_NESTED_SPECULATION",
                        "-DDISABLE_DIFT_RUNTIME", "-DDIFT_XOR_MASK=0", "-fno-stack-protector",
-                       "-I", str(runtime / "include"),
+                       "-I", str(runtime / "include"), "-I", str(contract / "include"),
                        str(Path(__file__).with_name("fixtures") / "nested_checkpoint.c"),
                        str(assembly), str(runtime / f"asm/checkpoint_{arch.name}.S"),
-                       str(runtime / "asm/storage.S")]
+                       str(runtime / "asm/storage.S"), str(contract / "contract/runtime_contract_record.S"),
+                       str(runtime / "tests/contract_module_record.c")]
             command += [str(runtime / "src" / source) for source in (
                 "checkpoint.c", "signal_handler.c", "dift_support.c", "report_gadget.c",
                 "dift_wrappers/dift_wrappers.c")]

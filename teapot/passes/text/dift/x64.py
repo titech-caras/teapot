@@ -41,7 +41,7 @@ class X64TextDiftPropagationLLVMPass(TextDiftLLVMBase, X64DiftOperandHelpers):
     scratch registers selected by the live-register manager.
     """
 
-    def __init__(self, reg_manager, section, decoder, arch, *, dift_layout=None):
+    def __init__(self, reg_manager, section, decoder, arch, *, dift_layout):
         super().__init__(reg_manager, section, decoder, arch, dift_layout=dift_layout, insert_memlog=False)
         assert not self.insert_memlog
 

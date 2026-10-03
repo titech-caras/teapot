@@ -15,6 +15,7 @@ from teapot.arch.decoders import x64_decoder
 from teapot.passes.transient.lazy_dift import X64TransientDiftLLVMPass
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
+from runtime_contract_support import fixture_layout
 
 
 class X64PushfMemlogTests(unittest.TestCase):
@@ -41,7 +42,7 @@ class X64PushfMemlogTests(unittest.TestCase):
 
     def test_flag_stack_operations_do_not_propagate_taint(self):
         for cls in (X64TransientDiftLLVMPass, X64TextDiftPropagationLLVMPass):
-            visitor = cls(SimpleNamespace(abi=self.arch.abi), None, None, self.arch)
+            visitor = cls(SimpleNamespace(abi=self.arch.abi), None, None, self.arch, dift_layout=fixture_layout('x64'))
             visitor._x64_instruction_effects = mock.Mock(side_effect=AssertionError("taint requested"))
             visitor.insert_at = mock.Mock()
             for encoded in ("9c", "669c", "489c", "9d", "669d"):

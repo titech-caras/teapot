@@ -18,6 +18,7 @@ from teapot.passes.common.dift.x64 import X64DiftOperandHelpers
 from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
 from teapot.passes.transient.transient_insert_restore_points_pass import TransientInsertRestorePointsPass
 from test_live_register_preservation import make_module
+from runtime_contract_support import fixture_layout
 
 
 RMW = (("0fb00f", 1), ("660fb10f", 2), ("0fb10f", 4), ("480fb10f", 8),
@@ -60,7 +61,8 @@ class X64AdditionalStoreTests(unittest.TestCase):
                 visitor, block = self.visitor(inst)
                 self.assertEqual(visitor.insert_at.call_count, 1)
                 self.assertEqual(visitor._build_memlog_patch.call_args.args[2], width)
-                dift = X64DiftOperandHelpers(SimpleNamespace(abi=self.arch.abi), None, None, self.arch)
+                dift = X64DiftOperandHelpers(SimpleNamespace(abi=self.arch.abi), None, None, self.arch,
+                                             dift_layout=fixture_layout('x64'))
                 effects = dift._x64_instruction_effects(block, inst)
                 self.assertIsNotNone(effects.mem_write_operand_str)
                 self.assertEqual(effects.mem_write_size, width)

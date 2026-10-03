@@ -47,8 +47,8 @@ that the imported packages really come from those paths and hashes the imported 
 paths may be checkout roots or their installed `site-packages` package directories. The driver imports Teapot
 from its own checkout, so `--teapot` must name it; the other two come through `PYTHONPATH`.
 The runtime
-contract is a JSON description of the runtime the objects will be linked with, for example the hashes of its
-archives; it is stored in the key as given. The four opt-in flags are the converter's.
+contract is the `libcheckpoint.contract.json` beside the libcheckpoint archive of the final link; it is
+stored in the key as given. The four opt-in flags are the converter's.
 
 ### AArch64 BTI+PAC (opt-in)
 

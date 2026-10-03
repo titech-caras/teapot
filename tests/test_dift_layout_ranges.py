@@ -4,9 +4,13 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from teapot.datacls.dift_layout import DiftLayout, LAYOUTS, DEFAULT_LAYOUTS
+from teapot.datacls.dift_layout import DiftLayout
+from dift_layout_data import layout_data_path, load_layouts
+
+LAYOUTS, DEFAULT_LAYOUTS = load_layouts() if layout_data_path().is_file() else ({}, {})
 
 
+@unittest.skipUnless(LAYOUTS, "requires the libcheckpoint checkout")
 class DiftLayoutRangesTest(unittest.TestCase):
     def test_native_secondary_allocations_have_high_mapping_headroom(self):
         # Shared objects, allocator reservations, and large mmap-backed objects

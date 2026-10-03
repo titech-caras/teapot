@@ -113,16 +113,17 @@ Relayout preserves unmapped integral ELF symbols as absolute values. RISC-V
 instruction anchors may be zero-size private CodeBlocks outside the function
 metadata; passes walking section blocks must ignore empty blocks.
 
-Outside a source checkout, select the configuration installed by the matching
-runtime build (adjust `/opt/teapot-runtime` to its install prefix):
-```shell
-export TEAPOT_AARCH64_SHADOW_STACK_CONFIG=/opt/teapot-runtime/include/aarch64_shadow_stack.h
-export TEAPOT_DIFT_LAYOUT_FILE=/opt/teapot-runtime/share/libcheckpoint/DiftLayoutData.cmake
-```
-These files remain owned by libcheckpoint. Other runtime constants, among them
-the scratchpad and memory-history layout, are copied by hand into
-`teapot/configs/runtime.py` and `teapot/configs/slots.py` and must match
-`libcheckpoint/include/checkpoint.h`.
+Teapot and the runtime share one contract. Configuring libcheckpoint writes
+`libcheckpoint.contract.json` beside each archive (`libcheckpoint_nested.contract.json`
+for the nested one), with every layout fact both sides depend on, read from the
+runtime's compiled headers, and what that archive can do. Teapot needs the file
+of the archive the rewrite will be linked with (`--runtime-contract`), compares
+each fact with what it emits (`teapot/configs/runtime.py`, `teapot/configs/slots.py`)
+and refuses a mismatch by field name, as well as options the archive cannot serve.
+It takes the DIFT layout, application ranges included, from it. A RISC-V
+rewrite with checkpoints needs an archive that restores the floating-point
+state.
+See `libcheckpoint/README.md` ("Runtime contract").
 
 See [`libcheckpoint/README.md`](libcheckpoint/README.md) for runtime
 build options, shared AArch64 shadow-stack configuration, ASan/MTE tag-storage requirements, DIFT layout profiles,
@@ -198,15 +199,14 @@ ddisasm --ir a.out.gtirb a.out
 When validating frontend or pretty-printer changes, regenerate this GTIRB from
 the binary instead of reusing an older IR file.
 
-2. Call teapot to create an instrumented GTIRB file.
+2. Call teapot to create an instrumented GTIRB file, naming the contract of the libcheckpoint
+archive you will link with.
 ```shell
-teapot a.out.gtirb a.inst.gtirb
+teapot --runtime-contract build-libcheckpoint/libcheckpoint.contract.json a.out.gtirb a.inst.gtirb
 ```
-The DIFT address-space profile is selected at instrumentation time with
-`--dift-layout`. The runtime library must be built with the same profile via
-`-DTEAPOT_DIFT_LAYOUT=...`. The profile definitions live in
-`libcheckpoint/cmake/DiftLayoutData.cmake` and are shared by Teapot and the
-runtime build.
+The DIFT address-space profile is a runtime build option (`-DTEAPOT_DIFT_LAYOUT=...`, profiles in
+`libcheckpoint/cmake/DiftLayoutData.cmake`); Teapot takes it from the contract. `--dift-layout NAME`
+only asserts which profile the runtime must have.
 ASan shadow checks cover every granule touched by an access, including unaligned
 crossings. Checks up to eight bytes use an unrolled path; wider accesses use a
 range loop. AArch64 MTE uses the corresponding 16-byte granule checks in software.
@@ -227,7 +227,8 @@ semantics.
 Nested speculation is disabled by default.  Use
 `--enable-nested-speculation` to also insert checkpoints in the transient copy,
 and link the instrumented binary with the nested-capable `checkpoint_nested`
-runtime target rather than the default `checkpoint` target.
+runtime target rather than the default `checkpoint` target; pass its
+`libcheckpoint_nested.contract.json`.
 
 3. Dump the assembly of the instrumented GTIRB file. The pinned `gtirb-pprinter` prints the flags of
 Teapot's sections and its global symbols itself, so the output assembles as it is.
@@ -292,7 +293,7 @@ reads the original line tables. For example:
 
 ```shell
 ddisasm --ir app.gtirb app
-teapot --debug-source app app.gtirb app.inst.gtirb
+teapot --runtime-contract libcheckpoint.contract.json --debug-source app app.gtirb app.inst.gtirb
 gtirb-pprinter --ir app.inst.gtirb --asm app.raw.S
 python -m teapot.debug_lines app.inst.gtirb app.raw.S app.inst.S
 ```

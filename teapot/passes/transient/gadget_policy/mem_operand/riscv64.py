@@ -20,7 +20,7 @@ from teapot.passes.transient.gadget_policy.mem_operand.base import (
 class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
     EXPECTED_ARCH = "riscv64"
 
-    def __init__(self, reg_manager, transient_section, decoder, arch, *, dift_layout=None,
+    def __init__(self, reg_manager, transient_section, decoder, arch, *, dift_layout,
                  enable_asan_check: bool = True):
         super().__init__(
             reg_manager, transient_section, decoder, arch,

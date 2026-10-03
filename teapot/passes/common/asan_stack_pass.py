@@ -10,7 +10,6 @@ from gtirb_rewriting import Patch, RewritingContext
 from teapot.arch.architecture import Architecture
 from teapot.configs.runtime import ASAN_TAG_STORAGE_SHADOW
 from teapot.configs.blacklist import function_symbol_names, is_blacklisted_function
-from teapot.datacls.dift_layout import get_dift_layout
 from teapot.passes.mixins import RegInstAwarePassMixin, VisitorPassMixin
 from teapot.utils.misc import distinguish_edges
 from teapot.passes.common.return_slot_analysis import ReturnSlotAnalysis, UnsupportedReturnSlot
@@ -21,7 +20,7 @@ class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
 
     def __init__(self, reg_manager: LiveRegisterManager,
                  section: gtirb.Section, decoder: GtirbInstructionDecoder, arch: Architecture,
-                 insert_memlog: bool, *, dift_layout=None, tag_storage: str = ASAN_TAG_STORAGE_SHADOW,
+                 insert_memlog: bool, *, dift_layout, tag_storage: str = ASAN_TAG_STORAGE_SHADOW,
                  transient: bool = False, accept_pac: bool = False):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.section = section
@@ -29,7 +28,7 @@ class AsanStackPass(VisitorPassMixin, RegInstAwarePassMixin):
         self.insert_memlog = insert_memlog
         self.transient = transient
         self.accept_pac = accept_pac
-        self.dift_layout = dift_layout or get_dift_layout(arch.name)
+        self.dift_layout = dift_layout
         self.tag_storage = tag_storage
         self.coverage = Counter()
         self.unsupported_reasons = Counter()

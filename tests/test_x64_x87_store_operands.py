@@ -15,6 +15,7 @@ from teapot.arch.decoders import x64_decoder
 from teapot.passes.transient.lazy_dift import X64TransientDiftLLVMPass
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
 from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
+from runtime_contract_support import fixture_layout
 
 
 # Encodings use [rdi]; width is architectural, not a decoder assertion.
@@ -70,7 +71,7 @@ class X64X87StoreTests(unittest.TestCase):
         # Capstone (5 and 6.0) omits the FPU group from the last of these.
         encodings += ["d8c1", "dec1", "dbe3", "d9e8", "9b", "dfe0", "dbf1"]
         for cls in (X64TransientDiftLLVMPass, X64TextDiftPropagationLLVMPass):
-            visitor = cls(SimpleNamespace(abi=self.arch.abi), None, None, self.arch)
+            visitor = cls(SimpleNamespace(abi=self.arch.abi), None, None, self.arch, dift_layout=fixture_layout('x64'))
             visitor._x64_instruction_effects = mock.Mock(side_effect=AssertionError("taint requested"))
             visitor.insert_at = mock.Mock()
             for encoded in encodings:
@@ -150,7 +151,8 @@ class X64X87StoreTests(unittest.TestCase):
         passes.add(X64TransientMemlogPass(manager, block.section, manager.analyzer.decoder, self.arch))
         # "No taint" must not mean clearing memory tags, nor should stores
         # require a mapped taint shadow just to get rollback logging.
-        passes.add(X64TransientDiftLLVMPass(manager, block.section, manager.analyzer.decoder, self.arch))
+        passes.add(X64TransientDiftLLVMPass(manager, block.section, manager.analyzer.decoder, self.arch,
+                                            dift_layout=fixture_layout('x64')))
         passes.run(ir)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -15,7 +15,6 @@ from gtirb_rewriting.abi import _ABIS
 
 from teapot.arch import get_arch
 from teapot.configs.runtime import ASAN_TAG_STORAGE_MTE, ASAN_TAG_STORAGE_SHADOW
-from teapot.datacls.dift_layout import get_dift_layout
 from teapot.passes.common.asan_stack_pass import AsanStackPass
 from teapot.passes.common.insert_checkpoints_pass import InsertCheckpointsPass
 from teapot.passes.preprocessing.create_trampolines_pass import CreateTrampolinesPass
@@ -131,11 +130,14 @@ class TeapotPipeline:
 
     def __init__(self, ir: gtirb.IR, dift_layout_name=None,
                  options: InstrumentationOptions = InstrumentationOptions(), *,
-                 linked_component=None):
+                 linked_component=None, runtime_contract=None):
         self.ir = ir
         self.dift_layout_name = dift_layout_name
         self.options = options
         self.linked_component = linked_component
+        # The libcheckpoint archive this rewrite will be linked with, as
+        # teapot.runtime_contract.load_runtime_contract read it.
+        self.runtime_contract = runtime_contract
         self.reg_manager = None
 
     def run(self):
@@ -169,12 +171,18 @@ class TeapotPipeline:
                 raise ValueError("component prototype requires all default instrumentation, nesting off")
         if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE and self.arch.name != "aarch64":
             raise ValueError("--aarch64-tag-storage=mte is only valid for AArch64 modules")
+        if self.runtime_contract is None:
+            raise ValueError("select the runtime this rewrite will be linked with: the "
+                             "lib<archive>.contract.json of its libcheckpoint archive (--runtime-contract)")
+        self.abi = self.arch.register_abi(_ABIS)
+        # Before anything is rewritten: the runtime must match what Teapot emits
+        # and provide what the options need. Its DIFT layout is the rewrite's.
+        self.contract_requirements, self.dift_layout = self.runtime_contract.check(
+            self.arch, self.abi, self.options, self.dift_layout_name)
         if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE:
             _add_arch_feature(self.module, AARCH64_MTE_ARCH_FEATURE)
-        self.dift_layout = get_dift_layout(self.arch.name, self.dift_layout_name)
         self.text_section = [section for section in self.module.sections if section.name == ".text"][0]
         self.decoder = CachedGtirbInstructionDecoder(self.module.isa)
-        self.abi = self.arch.register_abi(_ABIS)
         self.checkpoint_df_blocks, self.vector_state = set(), None
         if self.arch.name == 'x64':
             from teapot.arch.x64.checkpoint_state import df_checkpoint_blocks, vector_state

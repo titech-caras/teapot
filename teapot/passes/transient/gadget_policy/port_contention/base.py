@@ -5,19 +5,18 @@ from gtirb_live_register_analysis import LiveRegisterManager
 from gtirb_rewriting import Patch, RewritingContext
 
 from teapot.arch.architecture import Architecture
-from teapot.datacls.dift_layout import get_dift_layout
 from teapot.passes.mixins import ArchSpecificPassMixin, RegInstAwarePassMixin, VisitorPassMixin
 from teapot.utils.misc import conditional_branch_edge
 
 
 class TransientPortContentionPolicyPassBase(ArchSpecificPassMixin, VisitorPassMixin, RegInstAwarePassMixin):
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
-                 decoder: GtirbInstructionDecoder, arch: Architecture, *, dift_layout=None):
+                 decoder: GtirbInstructionDecoder, arch: Architecture, *, dift_layout):
         self.check_expected_arch(arch)
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.transient_section = transient_section
         self.arch = arch
-        self.dift_layout = dift_layout or get_dift_layout(arch.name)
+        self.dift_layout = dift_layout
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         VisitorPassMixin.begin_module(self, module, functions, rewriting_ctx)

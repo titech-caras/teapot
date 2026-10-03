@@ -1,36 +1,37 @@
-import os
-from pathlib import Path
-import re
-
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 
+# The AArch64 shadow-stack layout of libcheckpoint's include/aarch64_shadow_stack.h,
+# keyed like its runtime contract (aarch64.shadow_stack.*), which the contract
+# check compares. Change both together.
+AARCH64_SHADOW_STACK_LAYOUT = {
+    "size": 8388608,
+    "dift_offset": 0,
+    "memlog_offset": 64,
+    "asan_offset": 128,
+    "gadget_mem_offset": 192,
+    "gadget_port_offset": 240,
+    "coverage_offset": 288,
+    "control_offset": 320,
+    "restore_offset": 352,
+    "indirect_target_offset": 384,
+    "report_offset": 416,
+    "abi_offset": 448,
+    "text_dift_capture_offset": 480,
+    "text_dift_llvm_offset": 512,
+}
 
-def _aarch64_shadow_stack_config_path():
-    default_path = Path(__file__).resolve().parents[2] / "libcheckpoint/include/aarch64_shadow_stack.h"
-    return Path(os.environ.get("TEAPOT_AARCH64_SHADOW_STACK_CONFIG", default_path))
 
-
-def _aarch64_shadow_stack_constants():
-    path = _aarch64_shadow_stack_config_path()
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"AArch64 shadow-stack configuration not found: {path}. Set "
-            "TEAPOT_AARCH64_SHADOW_STACK_CONFIG to the header installed by the matching libcheckpoint build.")
-    # The shared header deliberately uses literal definitions, not arbitrary C
-    # expressions; reject missing or nonliteral values rather than guessing.
-    definitions = re.findall(r"^#define AARCH64_SHADOW_STACK_([A-Z_]+) (0|[1-9][0-9]*)$",
-                             path.read_text(), re.MULTILINE)
-    values = {name: int(value) for name, value in definitions}
-    if len(definitions) != len(values):
-        raise ValueError(f"Duplicate AArch64 shadow stack definitions in {path}")
-    size = values.get("SIZE", 0)
+def _check_aarch64_shadow_stack_layout(values):
+    size = values["size"]
     if size < 4096 or size % 4096 or size // 4096 > 4095:
         raise ValueError("AArch64 shadow stack size must be 1-4095 pages for one add/sub immediate")
-    for name in ("CONTROL_OFFSET", "REPORT_OFFSET"):
-        offset = values.get(name, -1)
+    for name in ("control_offset", "report_offset"):
+        offset = values[name]
         if offset < 0 or offset > 504 or offset % 8:
             raise ValueError(f"AArch64 shadow stack {name} must fit a register-pair immediate")
-    return values
+
+
+_check_aarch64_shadow_stack_layout(AARCH64_SHADOW_STACK_LAYOUT)
 
 
 class ScratchpadSlots:
@@ -53,23 +54,21 @@ class ScratchpadSlots:
 
 
 class AArch64ShadowStackSlots:
-    _values = _aarch64_shadow_stack_constants()
-    SIZE = _values["SIZE"]
-    DIFT = _values["DIFT_OFFSET"]
-    MEMLOG = _values["MEMLOG_OFFSET"]
-    ASAN = _values["ASAN_OFFSET"]
-    GADGET_MEM = _values["GADGET_MEM_OFFSET"]
-    GADGET_PORT = _values["GADGET_PORT_OFFSET"]
+    SIZE = AARCH64_SHADOW_STACK_LAYOUT["size"]
+    DIFT = AARCH64_SHADOW_STACK_LAYOUT["dift_offset"]
+    MEMLOG = AARCH64_SHADOW_STACK_LAYOUT["memlog_offset"]
+    ASAN = AARCH64_SHADOW_STACK_LAYOUT["asan_offset"]
+    GADGET_MEM = AARCH64_SHADOW_STACK_LAYOUT["gadget_mem_offset"]
+    GADGET_PORT = AARCH64_SHADOW_STACK_LAYOUT["gadget_port_offset"]
     GADGET = GADGET_MEM
-    COVERAGE = _values["COVERAGE_OFFSET"]
-    CONTROL = _values["CONTROL_OFFSET"]
-    RESTORE = _values["RESTORE_OFFSET"]
-    INDIRECT_TARGET = _values["INDIRECT_TARGET_OFFSET"]
-    REPORT = _values["REPORT_OFFSET"]
-    ABI = _values["ABI_OFFSET"]
-    TEXT_DIFT_CAPTURE = _values["TEXT_DIFT_CAPTURE_OFFSET"]
-    TEXT_DIFT_LLVM = _values["TEXT_DIFT_LLVM_OFFSET"]
-    del _values
+    COVERAGE = AARCH64_SHADOW_STACK_LAYOUT["coverage_offset"]
+    CONTROL = AARCH64_SHADOW_STACK_LAYOUT["control_offset"]
+    RESTORE = AARCH64_SHADOW_STACK_LAYOUT["restore_offset"]
+    INDIRECT_TARGET = AARCH64_SHADOW_STACK_LAYOUT["indirect_target_offset"]
+    REPORT = AARCH64_SHADOW_STACK_LAYOUT["report_offset"]
+    ABI = AARCH64_SHADOW_STACK_LAYOUT["abi_offset"]
+    TEXT_DIFT_CAPTURE = AARCH64_SHADOW_STACK_LAYOUT["text_dift_capture_offset"]
+    TEXT_DIFT_LLVM = AARCH64_SHADOW_STACK_LAYOUT["text_dift_llvm_offset"]
 
 
 SCRATCHPAD_FIRST_SPILL_OFFSET = ScratchpadSlots.FIRST_SPILL

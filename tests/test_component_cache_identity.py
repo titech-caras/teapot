@@ -82,27 +82,6 @@ class CacheIdentityTests(unittest.TestCase):
         self.assertNotEqual(before['files'], after['files'])
         self.assertEqual(checkout, {'version': None, 'files': after['files']})
 
-    def test_layout_and_shadow_stack_file_contents_invalidate(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            layout, stack = root / 'layout.cmake', root / 'stack.h'
-            layout.write_text('layout-v1')
-            stack.write_text('stack-v1')
-            with patch.dict(os.environ, TEAPOT_DIFT_LAYOUT_FILE=str(layout),
-                            TEAPOT_AARCH64_SHADOW_STACK_CONFIG=str(stack)):
-                first = driver.configuration_identity()
-                layout.write_text('layout-v2')
-                second = driver.configuration_identity()
-                self.assertNotEqual(first, second)
-                stack.write_text('stack-v2')
-                self.assertNotEqual(second, driver.configuration_identity())
-                # Paths themselves do not destroy cross-host reuse.
-                alternate = root / 'same-stack.h'
-                alternate.write_bytes(stack.read_bytes())
-                latest = driver.configuration_identity()
-                with patch.dict(os.environ, TEAPOT_AARCH64_SHADOW_STACK_CONFIG=str(alternate)):
-                    self.assertEqual(latest, driver.configuration_identity())
-
     def test_import_must_match_declared_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

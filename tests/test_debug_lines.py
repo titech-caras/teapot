@@ -21,6 +21,7 @@ from teapot.arch import get_arch
 from teapot.debug_lines import SourceLines, _filename, _asm_string, emit_source_lines
 from teapot.pipeline import TeapotPipeline
 from teapot.utils.serialization import compact_for_pprinter
+from runtime_contract_support import fixture_contract, fixture_contract_path
 
 
 class SourceLineTests(unittest.TestCase):
@@ -106,7 +107,7 @@ class SourceLineTests(unittest.TestCase):
                 {gtirb.Offset(block, 0): "existing analysis comment"}, "mapping<Offset,string>")
             if version == 4:
                 lines = SourceLines(module, root / "input", arch.name, GtirbInstructionDecoder(module.isa))
-                TeapotPipeline(ir).run()
+                TeapotPipeline(ir, runtime_contract=fixture_contract(arch.name)).run()
                 before = {bi.uuid: (bytes(bi.contents), copy.copy(dict(bi.symbolic_expressions)))
                           for bi in module.byte_intervals}
                 lines.finish(GtirbInstructionDecoder(module.isa))
@@ -118,6 +119,7 @@ class SourceLineTests(unittest.TestCase):
                 # Exercise both public CLI stages, including compact serialization.
                 ir.save_protobuf(root / "input.gtirb")
                 self._run([sys.executable, "-B", "-m", "teapot.cmdline", "--compact-output",
+                           "--runtime-contract", str(fixture_contract_path(arch.name)),
                            "--debug-source", "input", "input.gtirb", "instrumented.gtirb"], root)
                 ir = gtirb.IR.load_protobuf(root / "instrumented.gtirb")
                 module = ir.modules[0]

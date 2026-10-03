@@ -36,11 +36,10 @@ from elftools.elf.elffile import ELFFile
 
 from teapot.configs.blacklist import is_blacklisted_function_name
 from teapot.configs.runtime import ROB_LEN, SYMBOL_SUFFIX
-from teapot.configs.slots import AArch64ShadowStackSlots, _aarch64_shadow_stack_config_path
 from teapot.datacls.linked_component import LinkedComponent
-from teapot.datacls.dift_layout import LAYOUTS, _layout_data_path
 from teapot.arch import module_isa_name
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
+from teapot.runtime_contract import RuntimeContractError, load_runtime_contract
 from teapot.utils.serialization import compact_for_pprinter
 from experiments.reusable_libraries.targets import (
     for_machine, mode_for, mode_metadata, target_for, MODES, TARGET_IDENTIFICATIONS)
@@ -155,18 +154,6 @@ def portable_identity(identity):
     return {"sha256": identity["sha256"],
             "libraries": sorted((Path(path).name, digest)
                                 for path, digest in identity["libraries"].items())}
-
-
-def configuration_identity():
-    # Names alone do not identify overrides. Include the actual loaded values
-    # as well, so changing an override after import cannot alias a fresh process.
-    return {
-        'dift_layout_file': sha(_layout_data_path()),
-        'aarch64_shadow_stack_file': sha(_aarch64_shadow_stack_config_path()),
-        'dift_layouts': {name: asdict(layout) for name, layout in LAYOUTS.items()},
-        'aarch64_shadow_stack': {name: value for name, value in vars(AArch64ShadowStackSlots).items()
-                                 if name.isupper()},
-    }
 
 
 def run(root, name, command):
@@ -296,7 +283,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         if len(definitions) != 1 or definitions[0].referent.section.name != ".text":
             raise RuntimeError("selected export is not a uniquely recovered .text entry: " + name)
     context = LinkedComponent(component_id, selected_symbols, own_exports)
-    pipeline = TeapotPipeline(ir, args.mode_layout, args.instrumentation_options, linked_component=context)
+    pipeline = TeapotPipeline(ir, args.mode_layout, args.instrumentation_options, linked_component=context,
+                              runtime_contract=args.contract)
     started = time.monotonic()
     pipeline.run()
     rewrite_seconds = time.monotonic() - started
@@ -406,7 +394,8 @@ def main():
     parser.add_argument("--teapot", required=True, type=Path)
     parser.add_argument("--rewriting", required=True, type=Path)
     parser.add_argument("--lra", required=True, type=Path)
-    parser.add_argument("--runtime-contract", required=True, type=Path)
+    parser.add_argument("--runtime-contract", required=True, type=Path,
+                        help="the lib<archive>.contract.json beside the libcheckpoint archive of the final link")
     parser.add_argument("--ddisasm", required=True)
     parser.add_argument("--pprinter", required=True)
     parser.add_argument("--cc", default="gcc")
@@ -422,6 +411,10 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.jobs <= 8:
         parser.error("--jobs must be 1..8")
+    try:
+        args.contract = load_runtime_contract(args.runtime_contract)
+    except RuntimeContractError as error:
+        parser.error(str(error))
     for option in ("ddisasm", "pprinter", "cc"):
         if shutil.which(getattr(args, option)) is None:
             parser.error(f"--{option}: {getattr(args, option)} is not an executable")
@@ -474,7 +467,6 @@ def main():
                **tool_key,
                "runtime_contract": json.loads(args.runtime_contract.read_text()),
                "options": asdict(args.instrumentation_options), "ROB_LEN": ROB_LEN,
-               "configuration": configuration_identity(),
                "mode": args.mode,
                "target_identification": args.target_identification,
                "liveness_contract": "standalone-ddisasm-abi-v1",

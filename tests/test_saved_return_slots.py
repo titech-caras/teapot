@@ -19,6 +19,7 @@ from teapot.passes.common.asan_stack_pass import AsanStackPass
 from teapot.passes.common.return_slot_analysis import ReturnSlotAnalysis, UnsupportedReturnSlot
 from teapot.passes.preprocessing.import_symbols_pass import ImportSymbolsPass
 from test_live_register_preservation import make_module, symbol_references
+from runtime_contract_support import fixture_layout
 
 
 class SavedReturnSlotTests(unittest.TestCase):
@@ -41,7 +42,7 @@ class SavedReturnSlotTests(unittest.TestCase):
         function.get_exit_blocks.return_value = [fallthrough, returning]
         decoder = Mock()
         decoder.get_instructions.return_value = [SimpleNamespace(size=1)]
-        visitor = AsanStackPass(Mock(abi=arch.abi), None, decoder, arch, False)
+        visitor = AsanStackPass(Mock(abi=arch.abi), None, decoder, arch, False, dift_layout=fixture_layout(arch.name))
         visitor.allocate_registers = Mock(return_value=lambda patch: patch)
         visitor.insert_at = Mock()
         visitor.visit_function(function)
@@ -213,7 +214,8 @@ class SavedReturnSlotTests(unittest.TestCase):
         ir, _, blocks, _, decoder, registers = self.make_function(arch, [
             "mov x30,x0\nstp x29,x30,[sp,#-16]!\nldp x29,x30,[sp],#16\nret"])
         original = bytes(blocks[0].byte_interval.contents)
-        stack_pass = AsanStackPass(registers, blocks[0].section, decoder, arch, True, transient=True)
+        stack_pass = AsanStackPass(registers, blocks[0].section, decoder, arch, True, transient=True,
+                                   dift_layout=fixture_layout(arch.name))
         passes = PassManager()
         passes.add(stack_pass)
         output = io.StringIO()

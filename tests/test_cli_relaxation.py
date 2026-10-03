@@ -10,11 +10,13 @@ import gtirb
 
 from teapot import cmdline
 from teapot.arch.x64.architecture import X64Architecture
+from runtime_contract_support import fixture_contract_path
 
 
 class RelaxationOptionTests(unittest.TestCase):
     def options_for(self, ir):
-        with patch('sys.argv', ['teapot', 'input', 'output', '--disable-aarch64-relax']), \
+        with patch('sys.argv', ['teapot', 'input', 'output', '--disable-aarch64-relax',
+                                '--runtime-contract', str(fixture_contract_path('x64'))]), \
                 patch.object(gtirb.IR, 'load_protobuf', return_value=ir), \
                 patch.object(gtirb.IR, 'save_protobuf'), \
                 patch.object(cmdline, 'TeapotPipeline') as pipeline:

@@ -54,7 +54,7 @@ class TextDiftLLVMBase(DiftPassBase):
     REPLAY_SYMBOLS = frozenset({"dift_reg_tags", "scratchpad"})
 
     def __init__(self, reg_manager: LiveRegisterManager, section: gtirb.Section, decoder: GtirbInstructionDecoder,
-                 arch: Architecture, *, dift_layout=None, insert_memlog: bool = False):
+                 arch: Architecture, *, dift_layout, insert_memlog: bool = False):
         super().__init__(
             reg_manager, section, decoder, arch,
             dift_layout=dift_layout, insert_memlog=insert_memlog)

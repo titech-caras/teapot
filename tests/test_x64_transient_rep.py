@@ -22,6 +22,7 @@ from teapot.passes.transient.transient_insert_restore_points_pass import Transie
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 import test_x64_rep_dift as rep_tests
 from test_live_register_preservation import make_module
+from runtime_contract_support import fixture_contract, fixture_layout
 
 
 class X64TransientRepTests(unittest.TestCase):
@@ -40,7 +41,7 @@ class X64TransientRepTests(unittest.TestCase):
     def test_rep_requires_iteration_budget(self):
         rep = X64TransientRepPass(
             SimpleNamespace(abi=self.arch.abi), None, None, self.arch,
-            enable_checkpoints=False)
+            dift_layout=fixture_layout('x64'), enable_checkpoints=False)
         for encoding in ("f3a4", "f2a4", "f2ae"):
             with self.subTest(encoding=encoding):
                 inst = next(self.decoder.disasm(bytes.fromhex(encoding), 0x1000))
@@ -55,7 +56,7 @@ class X64TransientRepTests(unittest.TestCase):
                 gtirb.Symbol(name="restore_checkpoint_EXT_LIB", payload=gtirb.ProxyBlock(module=module), module=module)
                 manager = LiveRegisterManager(module, abi)
                 decoder = manager.analyzer.decoder
-                rep = X64TransientRepPass(manager, block.section, decoder, self.arch)
+                rep = X64TransientRepPass(manager, block.section, decoder, self.arch, dift_layout=fixture_layout('x64'))
                 passes = PassManager()
                 passes.add(TransientInsertRestorePointsPass(
                     manager, block.section, block.section, decoder, self.arch))
@@ -150,7 +151,8 @@ class X64TransientRepTests(unittest.TestCase):
             with self.subTest(nested=nested):
                 ir, module, block, abi, _ = make_module(
                     self.arch, gtirb.Module.ISA.X64, b"\xf3\xa4\xc3")
-                pipeline = TeapotPipeline(ir, options=InstrumentationOptions(enable_nested_speculation=nested))
+                pipeline = TeapotPipeline(ir, options=InstrumentationOptions(enable_nested_speculation=nested),
+                                          runtime_contract=fixture_contract('x64', nested=nested))
                 pipeline.arch = self.arch
                 pipeline.reg_manager = LiveRegisterManager(module, abi)
                 pipeline.decoder = pipeline.reg_manager.analyzer.decoder

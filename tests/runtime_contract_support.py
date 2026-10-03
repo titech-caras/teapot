@@ -1,0 +1,36 @@
+"""Runtime contracts for tests: libcheckpoint's generated files, checked in.
+
+tests/test_runtime_contract.py regenerates them from the libcheckpoint tree
+when one is available and fails when they differ."""
+from pathlib import Path
+
+from teapot.runtime_contract import load_runtime_contract
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "runtime_contracts"
+# The DIFT layout each ISA's tests use: the runtime's default for that ISA.
+_DEFAULT_RUNTIME = {"x64": "x64", "aarch64": "aarch64", "riscv64": "riscv64"}
+
+
+def fixture_contract_path(name: str, *, nested: bool = False) -> Path:
+    """A fixture runtime's contract file: x64, aarch64, aarch64-bti, aarch64-mte, riscv64 (with
+    the FP state, which RISC-V rewrites with checkpoints need) or riscv64-nofp (without it)."""
+    return FIXTURES / f"{name}{'-nested' if nested else ''}.contract.json"
+
+
+def runtime_contract(name: str, *, nested: bool = False):
+    return load_runtime_contract(fixture_contract_path(name, nested=nested))
+
+
+def fixture_contract(arch_name: str, *, nested: bool = False, target_identification="software",
+                     tag_storage="shadow"):
+    """The fixture runtime a rewrite of ``arch_name`` with these options links with."""
+    if arch_name == "aarch64" and target_identification == "aarch64-bti-pac":
+        return runtime_contract("aarch64-bti", nested=nested)
+    if arch_name == "aarch64" and tag_storage == "mte":
+        return runtime_contract("aarch64-mte", nested=nested)
+    return runtime_contract(_DEFAULT_RUNTIME[arch_name], nested=nested)
+
+
+def fixture_layout(arch_name: str):
+    """The DIFT layout of the ISA's default fixture runtime."""
+    return runtime_contract(_DEFAULT_RUNTIME[arch_name]).dift_layout()

@@ -9,6 +9,7 @@ from gtirb_rewriting import Assembler
 from teapot.arch import X64Architecture, AArch64Architecture, RISCV64Architecture
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from test_live_register_preservation import make_module, symbol_references
+from runtime_contract_support import fixture_contract
 
 
 class MemlogOptionTests(unittest.TestCase):
@@ -30,7 +31,7 @@ class MemlogOptionTests(unittest.TestCase):
                     ir.cfg.add(gtirb.Edge(block, gtirb.ProxyBlock(module=module),
                                          gtirb.Edge.Label(gtirb.Edge.Type.Return)))
                     pipeline = TeapotPipeline(ir, options=InstrumentationOptions(
-                        enable_memlog=enabled, enable_gadgets=False))
+                        enable_memlog=enabled, enable_gadgets=False), runtime_contract=fixture_contract(arch.name))
                     with redirect_stdout(io.StringIO()):
                         pipeline.run()
                     refs = symbol_references(pipeline.transient_section)

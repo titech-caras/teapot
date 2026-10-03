@@ -10,7 +10,6 @@ from gtirb_rewriting.assembly import Register
 
 from teapot.arch.architecture import Architecture
 from teapot.configs.blacklist import is_blacklisted_function
-from teapot.datacls.dift_layout import get_dift_layout
 from teapot.passes.mixins import ArchSpecificPassMixin, InstVisitorPassMixin
 
 
@@ -40,12 +39,12 @@ class DiftPassBase(ArchSpecificPassMixin, InstVisitorPassMixin):
         return sorted(registers, key=lambda reg: reg.name)
 
     def __init__(self, reg_manager: LiveRegisterManager, section: gtirb.Section, decoder: GtirbInstructionDecoder,
-                 arch: Architecture, *, dift_layout=None, insert_memlog: bool = False):
+                 arch: Architecture, *, dift_layout, insert_memlog: bool = False):
         self.check_expected_arch(arch)
         super().__init__(reg_manager, decoder)
         self.section = section
         self.arch = arch
-        self.dift_layout = dift_layout or get_dift_layout(arch.name)
+        self.dift_layout = dift_layout
         self.insert_memlog = insert_memlog
 
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:

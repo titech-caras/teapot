@@ -12,12 +12,12 @@ from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext, patch_constraints
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
-from teapot.datacls.dift_layout import get_dift_layout
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.passes.common.asan_stack_pass import AsanStackPass
 from teapot.passes.text.text_indirect_branch_transform_pass import TextIndirectBranchTransformPass
 from teapot.passes.text.text_initialize_library_pass import TextInitializeLibraryPass
 from test_live_register_preservation import make_module, symbol_references
+from runtime_contract_support import fixture_contract, fixture_layout
 
 
 class TextEntryMarkerOrderTests(unittest.TestCase):
@@ -70,7 +70,8 @@ class TextEntryMarkerOrderTests(unittest.TestCase):
             for inst in GtirbInstructionDecoder(isa).get_instructions(block)}
         ir.cfg.add(gtirb.Edge(block, gtirb.ProxyBlock(module=module),
                               gtirb.Edge.Label(gtirb.Edge.Type.Return)))
-        pipeline = TeapotPipeline(ir, 'x64-la48-asan-new' if arch.name == 'x64' else None)
+        pipeline = TeapotPipeline(ir, 'x64-la48-asan-new' if arch.name == 'x64' else None,
+                                  runtime_contract=fixture_contract(arch.name))
         with redirect_stdout(io.StringIO()):
             pipeline.run()
         self.assertEqual(pipeline.reg_manager.analysis_source, 'ddisasm')
@@ -130,7 +131,7 @@ class TextEntryMarkerOrderTests(unittest.TestCase):
                     pipeline.text_section = gtirb.Section(name='.text')
                     pipeline.text_transient_mapping = SimpleNamespace(code_blocks_map={})
                     pipeline.decoder = None
-                    pipeline.dift_layout = get_dift_layout(arch.name)
+                    pipeline.dift_layout = fixture_layout(arch.name)
                     pipeline.landing_pad_targets = set()
                     pipeline.checkpoint_block_uuids = set()
                     pipeline.checkpoint_spare_registers = {}
