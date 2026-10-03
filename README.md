@@ -11,10 +11,17 @@ The submodule `libcheckpoint` contains the runtime library.
 ### Checkpoint efficiency options
 
 DDisasm supplies the live-register masks, the condition flags included: the six
-x64 arithmetic flags one by one and AArch64 NZCV as one. Neither ABI preserves
-the flags across a call, so every call kills them and none is live into a
-return. For lifts whose masks lack `liveRegisterFlagRule`, such as those of
-older DDisasm versions, LRA recomputes the flags by the same rule.
+x64 arithmetic flags one by one and AArch64 NZCV as one. None is live into a
+return, and a call kills them, except that a direct call to a known function
+in the module passes on the flags its entry reads (some callees, such as
+OpenSSL's `__rsaz_512_mulx`, take the carry their callers leave). DDisasm names
+this rule `callee-entry` in `liveRegisterFlagRule`. Teapot runs no liveness
+analysis of its own: it refuses a lift without these masks, or whose masks
+follow another rule, such as the `call-boundary` of older DDisasm versions,
+which killed the flags at every call; relift such an input with the supported
+DDisasm.
+`tools/mask_audit.py` reports a lift's coverage before rewriting, and the
+rewrite prints how many original instructions lack a mask (they stay all-live).
 `--conservative-flags` keeps the flags live at every instruction.
 `--force-checkpoint-df` uses the DF-saving x64 entry everywhere; normally a CFG
 scan selects it only where DF may be set.
@@ -26,9 +33,7 @@ hosts). Separate fixed entries record their restore stub in each checkpoint;
 rollback jumps through that pointer, including for mixed-profile nesting.
 MXCSR is preserved independently, even when all vector registers are dead.
 Checkpoint choices use DDisasm's per-instruction vector-piece masks (including
-the `liveRegisterSetsHigh` word). Missing masks require full saves. Python
-vector analysis is only a diagnostic `--debug-vector-liveness` cross-check;
-the Python flag analysis remains authoritative for flags. Known local calls,
+the `liveRegisterSetsHigh` word). Missing masks require full saves. Known local calls,
 tails and returns carry vector dependencies interprocedurally: even ABI-volatile
 vectors may survive a local call under IPA register allocation. Only external
 and unknown calls use the vector ABI kill/argument summary. Returns also retain
@@ -92,7 +97,7 @@ discarded on rollback. `--transient-dift=eager` flushes the same LLVM model at
 every instruction for comparisons; it is not a separate tag implementation.
 x64 REP keeps its dedicated per-element handling.
 
-Teapot prefers ddisasm's interprocedural `liveRegisterNames` and
+Teapot uses ddisasm's interprocedural `liveRegisterNames` and
 `liveRegisterSets` metadata. Known internal calls are analyzed through the CFG,
 including conditional tail calls and returns across recovered function boundaries;
 external calls use the target ABI, and unresolved indirect transfers remain
@@ -105,9 +110,9 @@ The LRA API's default refresh instead invalidates old masks after unspecified
 edits, including potentially affected predecessors and callers, without running
 Python analysis. Inserted/replaced instructions without metadata are all-live,
 not reanalyzed in Python. Invalid individual entries are removed with a warning,
-leaving the remaining DDisasm results intact. Missing or incompatible tables produce a fallback warning;
-the Python fallback keeps all registers live at block exits and every scratch
-GPR live at calls, preserving private assembly-helper conventions.
+leaving the remaining DDisasm results intact. Missing or incompatible tables,
+and masks without the flag rule, stop the rewrite with a request to relift:
+there is no Python fallback.
 
 Relayout preserves unmapped integral ELF symbols as absolute values. RISC-V
 instruction anchors may be zero-size private CodeBlocks outside the function

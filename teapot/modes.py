@@ -73,7 +73,6 @@ COMPONENT_FIXED = {
     "conservative_flags": "drop --conservative-flags",
     "force_checkpoint_df": "drop --force-checkpoint-df",
     "x64_vector_state": "the vector state is chosen per site; drop --x64-vector-state",
-    "debug_vector_liveness": "drop --debug-vector-liveness",
 }
 COMPONENT_FREE = frozenset({"aarch64_tag_storage", "target_identification"})
 

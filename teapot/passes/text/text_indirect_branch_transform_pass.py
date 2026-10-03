@@ -4,8 +4,8 @@ import gtirb
 from capstone import CS_OP_IMM
 from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext, Patch
-from gtirb_live_register_analysis import LiveRegisterManager
-from gtirb_live_register_analysis.manager import NotEnoughFreeRegistersException
+from teapot.liveness import LiveRegisterManager
+from teapot.liveness import NotEnoughFreeRegistersException
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 
 from teapot.arch.architecture import Architecture

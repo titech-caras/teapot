@@ -20,7 +20,8 @@ class LinkedComponentTests(unittest.TestCase):
 
     def module(self):
         module = gtirb.Module(name="component", isa=gtirb.Module.ISA.X64,
-                              file_format=gtirb.Module.FileFormat.ELF)
+                              file_format=gtirb.Module.FileFormat.ELF,
+                              byte_order=gtirb.Module.ByteOrder.Little)
         module.aux_data["elfSymbolInfo"] = gtirb.AuxData(
             {}, "mapping<UUID,tuple<uint64_t,string,string,string,uint64_t>>")
         return module
@@ -133,6 +134,7 @@ class LinkedComponentTests(unittest.TestCase):
         masks = {gtirb.Offset(block, 0): 0, gtirb.Offset(block, 1): 2}
         module.aux_data["liveRegisterNames"] = gtirb.AuxData(names, "sequence<string>")
         module.aux_data["liveRegisterSets"] = gtirb.AuxData(masks, "mapping<Offset,uint64_t>")
+        module.aux_data["liveRegisterFlagRule"] = gtirb.AuxData("callee-entry", "string")
         return module, block, names, masks
 
     def test_legacy_all_live_helper_remains_explicit(self):
@@ -151,7 +153,8 @@ class LinkedComponentTests(unittest.TestCase):
             pass
         with patch('teapot.pipeline.LiveRegisterManager',
                    return_value=SimpleNamespace(analysis_source='ddisasm',
-                       analyzer=SimpleNamespace(decoder=GtirbInstructionDecoder(module.isa)))), \
+                       decoder=GtirbInstructionDecoder(module.isa), masks={}, discarded=0,
+                       producer_vector_mask=lambda block, displacement: None)), \
                 patch.object(LinkedComponent, 'make_liveness_caller_independent') as force_live, \
                 patch.object(pipeline, '_run_normalize_passes', side_effect=LivenessInitialized):
             with self.assertRaises(LivenessInitialized):

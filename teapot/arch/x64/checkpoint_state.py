@@ -4,9 +4,59 @@ from collections import deque
 import gtirb
 from capstone import CsError
 from gtirb_functions import Function
-from gtirb_live_register_analysis.vectors import checkpoint_case, extended_state_clobbers
 
 from teapot.configs.runtime import X64_VECTOR_STATE_ARGUMENTS
+
+# Vector-piece mask bits as LiveRegisterManager.producer_vector_mask gives them:
+# the low 128 bits of xmm0-31 first, then the next 128 and the high 256 bits of
+# each register, then the mask registers.
+XMM0_7 = sum(1 << n for n in range(8))
+
+
+def checkpoint_case(mask):
+    """The checkpoint entry a site needs: 0 integer only, 1 XMM0-7, 2 full (also when unknown)."""
+    if mask is None or mask & ~XMM0_7:
+        return 2
+    return int(bool(mask))
+
+
+def extended_state_clobbers(module, decoder):
+    """Blocks that can speculate into x87, MMX or saved-environment state.
+
+    Vector values are ABI caller-saved, but an interrupted internal callee may
+    leave, for example, a nonempty x87 stack; the vector masks do not model that
+    state, so such blocks, and every block that can reach one (internal calls
+    included), need the full save. External and PLT calls stop simulation and
+    are not traversed.
+    """
+    blocks = {b for b in module.code_blocks if b.section.name == '.text'}
+    unsafe = set()
+    predecessors = {b: set() for b in blocks}
+
+    def unmodeled(insn):
+        op = insn.mnemonic.split()[-1]
+        reads, writes = insn.regs_access()
+        return (op.startswith(('f', 'xsave', 'xrstor')) or op == 'emms' or
+                any(insn.reg_name(r).startswith(('st', 'mm')) for r in (*reads, *writes)))
+
+    for block in blocks:
+        try:
+            instructions = list(decoder.get_instructions(block))
+            if (sum(i.size for i in instructions) != block.size or
+                    any(unmodeled(i) for i in instructions)):
+                unsafe.add(block)
+        except (CsError, ValueError):
+            unsafe.add(block)
+        for edge in block.outgoing_edges:
+            if (edge.target in blocks and edge.label and
+                    edge.label.type != gtirb.EdgeType.Return):
+                predecessors[edge.target].add(block)
+    queue = deque(unsafe)
+    while queue:
+        for source in predecessors[queue.popleft()] - unsafe:
+            unsafe.add(source)
+            queue.append(source)
+    return {b.uuid for b in unsafe}
 
 
 def df_checkpoint_blocks(module, decoder, abi):
@@ -61,16 +111,16 @@ def df_checkpoint_blocks(module, decoder, abi):
     return result
 
 
-def vector_checkpoint_cases(module, reg_manager, requested='auto', *, debug_cross_check=False):
+def vector_checkpoint_cases(module, reg_manager, requested='auto'):
     """Select at the original branch, before patches change uses or offsets."""
     if requested != 'auto':
         case = 1 if requested == 'xmm0-7' else 2
         return {b.uuid: case for b in module.code_blocks}
     result, reasons = {}, {}
-    opaque = extended_state_clobbers(module, reg_manager.analyzer.decoder)
+    opaque = extended_state_clobbers(module, reg_manager.decoder)
     for block in module.code_blocks:
         try:
-            instructions = list(reg_manager.analyzer.decoder.get_instructions(block))
+            instructions = list(reg_manager.decoder.get_instructions(block))
         except (CsError, ValueError):
             instructions = []
         mask = None
@@ -81,23 +131,6 @@ def vector_checkpoint_cases(module, reg_manager, requested='auto', *, debug_cros
         if block.uuid in opaque:
             case, reason = 2, 'reachable-extended-state'
         result[block.uuid], reasons[block.uuid] = case, reason
-    if debug_cross_check and all(key in module.aux_data for key in ('functionEntries', 'functionBlocks', 'functionNames')):
-        python_cases = {}
-        for function in Function.build_functions(module):
-            masks = reg_manager.analyze_vectors(function)
-            for block in function.get_all_blocks():
-                values = masks.get(block.uuid) if masks is not None else None
-                case = checkpoint_case(values[-1] if values else None)
-                python_cases[block.uuid] = max(python_cases.get(block.uuid, 0), case)
-        from collections import Counter
-        differences = Counter()
-        for block in sorted(module.code_blocks, key=lambda b: (b.address or 0, b.size)):
-            other = 2 if block.uuid in opaque else python_cases.get(block.uuid, 2)
-            if other != result[block.uuid]:
-                differences[(result[block.uuid], other)] += 1
-                print(f'[teapot] vector cross-check {block.address!r}: '
-                      f'ddisasm={result[block.uuid]} python={other} reason={reasons[block.uuid]}')
-        print(f'[teapot] vector cross-check disagreements (ddisasm,python): {dict(differences)}')
     reg_manager.checkpoint_vector_reasons = reasons
     return result
 

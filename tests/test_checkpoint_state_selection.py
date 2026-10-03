@@ -1,8 +1,8 @@
 import unittest
 from uuid import uuid4
 import gtirb
-from gtirb_live_register_analysis import LiveRegisterManager
-from gtirb_live_register_analysis.manager import VECTOR_REGISTER_NAMES
+from teapot.liveness import LiveRegisterManager
+from teapot.liveness import VECTOR_REGISTER_NAMES
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from teapot.arch import X64Architecture
 from teapot.arch.x64.checkpoint_state import df_checkpoint_blocks, vector_checkpoint_cases, vector_state
@@ -54,6 +54,7 @@ class CheckpointStateSelectionTests(unittest.TestCase):
                 for i in decoder.get_instructions(b)}, 'mapping<Offset,uint64_t>')
             module.aux_data['liveRegisterSetsHigh'] = gtirb.AuxData(
                 dict.fromkeys(module.aux_data['liveRegisterSets'].data, 0), 'mapping<Offset,uint64_t>')
+            module.aux_data['liveRegisterFlagRule'] = gtirb.AuxData('callee-entry', 'string')
             manager = LiveRegisterManager(module, abi, decoder)
             # The production path must not invoke the independent Python pass.
             manager.analyze_vectors = lambda _: self.fail('Python vector pass used without debug option')

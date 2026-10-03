@@ -50,9 +50,9 @@ class ModeTableTests(unittest.TestCase):
              "unknown target identification 'aarch64-bti'"),
             ("x64", InstrumentationOptions(enable_nested_speculation=True), True,
              "enable_nested_speculation \\(nested speculation is not supported; drop --enable-nested-speculation\\)"),
-            ("x64", InstrumentationOptions(enable_dift=False, debug_vector_liveness=True), True,
+            ("x64", InstrumentationOptions(enable_dift=False, conservative_flags=True), True,
              "requires the default instrumentation: enable_dift \\(drop --disable-dift\\); "
-             "debug_vector_liveness \\(drop --debug-vector-liveness\\)"),
+             "conservative_flags \\(drop --conservative-flags\\)"),
         ]
         for isa, options, component, message in cases:
             with self.subTest(message=message):

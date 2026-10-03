@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 import gtirb
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 from gtirb_rewriting import PassManager
 from gtirb_rewriting.prepare import prepare_for_rewriting
@@ -87,7 +87,7 @@ class RiscvMemoryAddressCaptureTests(unittest.TestCase):
 
     def capture_from_real_llvm_pass(self):
         ir, module, block, abi, decoder, _, _ = self.fixture()
-        manager = LiveRegisterManager(module, abi, decoder, analysis_scope='block')
+        manager = LiveRegisterManager(module, abi, decoder)
         captured = []
 
         class Probe(RISCV64TextDiftPropagationLLVMPass):

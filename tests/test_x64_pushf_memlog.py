@@ -68,7 +68,7 @@ class X64PushfMemlogTests(unittest.TestCase):
                          and shutil.which(os.environ.get("PPRINTER_PATH", "gtirb-pprinter")),
                          "requires native x64, compiler and printer")
     def test_rewritten_flags_stack_pointer_and_rollback(self):
-        from gtirb_live_register_analysis import LiveRegisterManager
+        from teapot.liveness import LiveRegisterManager
         from gtirb_rewriting import PassManager
         from test_live_register_preservation import make_module
 
@@ -87,11 +87,11 @@ class X64PushfMemlogTests(unittest.TestCase):
                 for name in ("scratchpad", "old_rsp", "memory_history_top"):
                     gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
                 manager = LiveRegisterManager(module, abi)
-                for inst in manager.analyzer.decoder.get_instructions(block):
+                for inst in manager.decoder.get_instructions(block):
                     module.aux_data["liveRegisterSets"].data[gtirb.Offset(
                         block, inst.address - block.address)] = (1 << len(registers)) - 1
                 passes = PassManager()
-                passes.add(X64TransientMemlogPass(manager, block.section, manager.analyzer.decoder, self.arch))
+                passes.add(X64TransientMemlogPass(manager, block.section, manager.decoder, self.arch))
                 passes.run(ir)
                 root = Path(directory)
                 ir.save_protobuf(root / "pushf.gtirb")

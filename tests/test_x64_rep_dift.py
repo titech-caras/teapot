@@ -10,7 +10,7 @@ import unittest
 
 import gtirb
 from gtirb_functions import Function
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_rewriting import InsertionContext, RewritingContext
 from gtirb_rewriting.assembly import X86Syntax
 
@@ -200,12 +200,12 @@ class X64RepDiftTests(unittest.TestCase):
                         gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
                     manager = LiveRegisterManager(module, abi)
                     for part in module.code_blocks:
-                        for inst in manager.analyzer.decoder.get_instructions(part):
+                        for inst in manager.decoder.get_instructions(part):
                             module.aux_data["liveRegisterSets"].data[gtirb.Offset(
                                 part, inst.address - part.address)] = (1 << len(registers)) - 1
                     functions = list(Function.build_functions(module))
                     context = RewritingContext(module, functions)
-                    dift = cls(manager, block.section, manager.analyzer.decoder, self.arch,
+                    dift = cls(manager, block.section, manager.decoder, self.arch,
                                dift_layout=SimpleNamespace(xor_mask=1 << 32))
                     dift.begin_module(module, functions, context)
                     context.apply()

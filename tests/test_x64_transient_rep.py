@@ -10,7 +10,7 @@ import warnings
 from unittest.mock import Mock
 
 import gtirb
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_functions import Function
 from gtirb_rewriting import Pass, PassManager, Patch
 
@@ -55,7 +55,7 @@ class X64TransientRepTests(unittest.TestCase):
                 ir, module, block, abi, _ = make_module(self.arch, gtirb.Module.ISA.X64, code + b"\xc3")
                 gtirb.Symbol(name="restore_checkpoint_EXT_LIB", payload=gtirb.ProxyBlock(module=module), module=module)
                 manager = LiveRegisterManager(module, abi)
-                decoder = manager.analyzer.decoder
+                decoder = manager.decoder
                 rep = X64TransientRepPass(manager, block.section, decoder, self.arch, dift_layout=fixture_layout('x64'))
                 passes = PassManager()
                 passes.add(TransientInsertRestorePointsPass(
@@ -155,7 +155,7 @@ class X64TransientRepTests(unittest.TestCase):
                                           runtime_contract=fixture_contract('x64', nested=nested))
                 pipeline.arch = self.arch
                 pipeline.reg_manager = LiveRegisterManager(module, abi)
-                pipeline.decoder = pipeline.reg_manager.analyzer.decoder
+                pipeline.decoder = pipeline.reg_manager.decoder
                 pipeline.dift_layout = SimpleNamespace(xor_mask=1 << 32, asan_shadow_offset=0x10000000)
                 pipeline.text_section = pipeline.transient_section = block.section
                 pipeline.guard_section = gtirb.Section(name=".guards", module=module)
@@ -194,20 +194,20 @@ class X64TransientRepTests(unittest.TestCase):
                              "report_gadget_KASPER_CACHE", "report_gadget_KASPER_MDS", "report_gadget_KASPER_PORT"):
                     gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
                 manager = LiveRegisterManager(module, abi)
-                for original in manager.analyzer.decoder.get_instructions(block):
+                for original in manager.decoder.get_instructions(block):
                     module.aux_data["liveRegisterSets"].data[gtirb.Offset(
                         block, original.address - block.address)] = (1 << len(registers)) - 1
                 layout = SimpleNamespace(xor_mask=1 << 32, asan_shadow_offset=0x10000000)
-                rep = X64TransientRepPass(manager, block.section, manager.analyzer.decoder, self.arch,
+                rep = X64TransientRepPass(manager, block.section, manager.decoder, self.arch,
                                            dift_layout=layout, insert_memlog=True)
                 effects = rep._rep_string_effects(inst)
                 passes = PassManager()
                 # Other visitors share the original instruction stream. They
                 # must not add a second one-element policy/DIFT/history patch.
                 passes.add(self.arch.create_transient_mem_operand_policy_pass(
-                    manager, block.section, manager.analyzer.decoder, dift_layout=layout, enable_asan_check=True))
-                passes.add(self.arch.create_transient_dift_pass(manager, block.section, manager.analyzer.decoder, layout))
-                passes.add(self.arch.create_transient_memlog_pass(manager, block.section, manager.analyzer.decoder))
+                    manager, block.section, manager.decoder, dift_layout=layout, enable_asan_check=True))
+                passes.add(self.arch.create_transient_dift_pass(manager, block.section, manager.decoder, layout))
+                passes.add(self.arch.create_transient_memlog_pass(manager, block.section, manager.decoder))
 
                 @self.arch.constraints(clobbers_flags=True)
                 def mark(_ctx):

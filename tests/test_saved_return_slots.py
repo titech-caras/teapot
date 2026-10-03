@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 import gtirb
 from gtirb_functions import Function
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 from gtirb_rewriting import Assembler, PassManager
 
@@ -72,8 +72,7 @@ class SavedReturnSlotTests(unittest.TestCase):
             label = kind if isinstance(kind, gtirb.Edge.Label) else gtirb.Edge.Label(kind)
             module.ir.cfg.add(gtirb.Edge(blocks[source], destination, label))
         decoder = CachedGtirbInstructionDecoder(isa)
-        manager = LiveRegisterManager(module, abi, decoder, analysis_scope="block")
-        manager.analyzer.analyze = Mock(side_effect=AssertionError("Unexpected Python LRA fallback"))
+        manager = LiveRegisterManager(module, abi, decoder)
         function = next(iter(Function.build_functions(module)))
         return ir, module, blocks, function, decoder, manager
 

@@ -5,11 +5,6 @@ from typing import Optional
 import gtirb
 from capstone import CS_GRP_CALL
 from gtirb_rewriting.decoder import GtirbInstructionDecoder
-from gtirb_live_register_analysis import (
-    LIVE_REGISTER_NAMES_AUXDATA,
-    LIVE_REGISTER_SETS_AUXDATA,
-    LiveRegisterManager,
-)
 from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 from gtirb_rewriting import PassManager
 from gtirb_rewriting.abi import _ABIS
@@ -42,6 +37,7 @@ from teapot.preprocess.copy_section import (
 )
 from teapot.preprocess.contract_record import add_contract_record
 from teapot.preprocess.create_guards import create_guards
+from teapot.liveness import LivenessMetadataError, LiveRegisterManager
 from teapot.modes import validate_options
 from teapot.rewrite_state import RewriteState
 
@@ -120,7 +116,6 @@ class InstrumentationOptions:
     conservative_flags: bool = False
     force_checkpoint_df: bool = False
     x64_vector_state: str = 'auto'
-    debug_vector_liveness: bool = False
 
 
 class TeapotPipeline:
@@ -196,25 +191,18 @@ class TeapotPipeline:
             self.vector_state = vector_state(self.options.x64_vector_state)
             print(f'[teapot] x64 vector state: {self.vector_state}; '
                   f'DF-sensitive blocks: {len(self.checkpoint_df_blocks)}', flush=True)
+        # Teapot's manager refuses a lift without DDisasm's validated masks under
+        # the flag rule (teapot/liveness.py); there is no analysis to fall back to.
         self.reg_manager = LiveRegisterManager(
-            self.module, self.abi, self.decoder, analysis_scope="block",
-            conservative_flags=self.options.conservative_flags)
+            self.module, self.abi, self.decoder, conservative_flags=self.options.conservative_flags)
+        self._count_liveness_coverage()
         if self.arch.name == 'x64':
             from teapot.arch.x64.checkpoint_state import vector_checkpoint_cases
             self.checkpoint_vector_cases = vector_checkpoint_cases(
-                self.module, self.reg_manager, self.options.x64_vector_state,
-                debug_cross_check=self.options.debug_vector_liveness)
-        print(f"[teapot] live-register analysis: {self.reg_manager.analysis_source}", flush=True)
+                self.module, self.reg_manager, self.options.x64_vector_state)
         if self.options.enable_indirect_transform:
             self._find_potential_indirect_targets()
-        if self.reg_manager.analysis_source == "python":
-            # Invalid tables must not enter the rewriter's offset hooks.
-            self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
-            self.module.aux_data.pop(LIVE_REGISTER_SETS_AUXDATA, None)
-            self.module.aux_data.pop('liveRegisterSetsHigh', None)
         if self.linked_component is not None:
-            if self.reg_manager.analysis_source != "ddisasm":
-                raise ValueError("component prototype requires validated DDisasm liveness metadata")
             # A standalone ELF is analyzed at ABI boundaries. Preserve its
             # masks, including genuinely live arguments/results; do not
             # replace them with the liveness of a particular linked caller
@@ -293,6 +281,27 @@ class TeapotPipeline:
         # Last: a new section without addresses, after every rewrite.
         add_contract_record(self.module, self.runtime_contract, self.contract_requirements, self.options,
                             self.linked_component.component_id if self.linked_component is not None else None)
+
+    def _count_liveness_coverage(self):
+        """Count what stays all-live: instructions without a mask, discarded entries.
+
+        Both are safe, since every register stays live there; the count says how
+        many there are (the A2 coverage ledger found none on the evaluation
+        corpus). Teapot's manager has already refused unusable tables.
+        """
+        manager = self.reg_manager
+        masks = manager.masks
+        instructions = missing = 0
+        for block in self.text_section.code_blocks:
+            if not block.size:
+                continue
+            for instruction in self.decoder.get_instructions(block):
+                instructions += 1
+                if block.address is None or gtirb.Offset(
+                        block, instruction.address - block.address) not in masks:
+                    missing += 1
+        print(f"[teapot] live-register masks: {instructions} original instructions, {missing} without "
+              f"a mask (all-live), {manager.discarded} invalid entries discarded", flush=True)
 
     def _pin_section_bounds(self):
         """Put the section bounds back at their intervals' ends.
@@ -451,18 +460,14 @@ class TeapotPipeline:
         if self.reg_manager is None:
             CachedGtirbInstructionDecoder.cache.clear()
             return
-        previous_source = self.reg_manager.analysis_source
         # These rounds preserve application register dependencies: inserted
         # patches save their clobbers and replacements retain original effects.
         # A transformation changing those effects must invalidate, not opt in.
-        self.reg_manager.refresh(preserve_liveness=True)
-        source = self.reg_manager.analysis_source
-        if source != previous_source:
-            print(f"[teapot] live-register analysis: {previous_source} -> {source}", flush=True)
-        if source == "python":
-            self.module.aux_data.pop(LIVE_REGISTER_NAMES_AUXDATA, None)
-            self.module.aux_data.pop(LIVE_REGISTER_SETS_AUXDATA, None)
-            self.module.aux_data.pop('liveRegisterSetsHigh', None)
+        try:
+            # Revalidates the tables and the flag rule as on input.
+            self.reg_manager.refresh(preserve_liveness=True)
+        except LivenessMetadataError as error:
+            raise RuntimeError(f"a rewrite round left the live-register masks unusable: {error}") from None
 
     def _run_normalize_passes(self):
         pass_manager = PassManager()

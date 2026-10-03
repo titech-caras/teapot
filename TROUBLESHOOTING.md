@@ -10,17 +10,18 @@ sure the container was built from the pinned requirements, or mount the local
 fork at `/workspace/gtirb-rewriting`; older images prepare the entire expanded
 module and can take hours on RV64 `test_all`.
 
-**Live-register metadata and fallback**
+**Live-register metadata**
 
-Teapot prefers ddisasm's interprocedural `liveRegisterNames` and
-`liveRegisterSets` metadata. External calls follow the target ABI; unresolved
-indirect transfers, replaceable weak targets and missing instruction entries
-remain all-live. Regenerate old frontend metadata before relinking weak
-placeholders against a different implementation. If the
-table is absent or incompatible, Teapot uses Python analysis, which keeps every
-allocatable scratch GPR live at calls on every ISA. This also preserves inputs
-to local assembly helpers with private register conventions. Do not weaken
-either conservative path to make register allocation easier.
+Teapot requires ddisasm's interprocedural `liveRegisterNames` and
+`liveRegisterSets` metadata with `liveRegisterFlagRule`. External calls follow
+the target ABI; unresolved indirect transfers, replaceable weak targets and
+missing instruction entries remain all-live. Regenerate old frontend metadata
+before relinking weak placeholders against a different implementation. If the
+table is absent or incompatible, or the masks lack the flag rule (an older
+DDisasm), Teapot stops with "relift the input with the supported DDisasm":
+it has no Python analysis to fall back to. `tools/mask_audit.py LIFT.gtirb`
+shows what Teapot would see. Do not weaken the all-live default for missing
+entries to make register allocation easier.
 Individual invalid entries are dropped with a warning and become all-live;
 valid DDisasm entries remain in use. Source transitions are logged after refresh.
 Offset validation does not establish validity after a change to register effects

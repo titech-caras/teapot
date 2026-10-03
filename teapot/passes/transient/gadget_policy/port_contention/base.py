@@ -1,7 +1,7 @@
 import gtirb
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_functions import Function
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_rewriting import Patch, RewritingContext
 
 from teapot.arch.architecture import Architecture

@@ -108,7 +108,7 @@ class X64X87StoreTests(unittest.TestCase):
                          and shutil.which(os.environ.get("PPRINTER_PATH", "gtirb-pprinter")),
                          "requires native x64, compiler and printer")
     def test_rewritten_x87_values_and_rollback(self):
-        from gtirb_live_register_analysis import LiveRegisterManager
+        from teapot.liveness import LiveRegisterManager
         from gtirb_rewriting import PassManager
         from test_live_register_preservation import make_module
 
@@ -144,14 +144,14 @@ class X64X87StoreTests(unittest.TestCase):
         for name in ("scratchpad", "old_rsp", "memory_history_top"):
             gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
         manager = LiveRegisterManager(module, abi)
-        for inst in manager.analyzer.decoder.get_instructions(block):
+        for inst in manager.decoder.get_instructions(block):
             module.aux_data["liveRegisterSets"].data[gtirb.Offset(
                 block, inst.address - block.address)] = (1 << len(registers)) - 1
         passes = PassManager()
-        passes.add(X64TransientMemlogPass(manager, block.section, manager.analyzer.decoder, self.arch))
+        passes.add(X64TransientMemlogPass(manager, block.section, manager.decoder, self.arch))
         # "No taint" must not mean clearing memory tags, nor should stores
         # require a mapped taint shadow just to get rollback logging.
-        passes.add(X64TransientDiftLLVMPass(manager, block.section, manager.analyzer.decoder, self.arch,
+        passes.add(X64TransientDiftLLVMPass(manager, block.section, manager.decoder, self.arch,
                                             dift_layout=fixture_layout('x64')))
         passes.run(ir)
         with tempfile.TemporaryDirectory() as directory:

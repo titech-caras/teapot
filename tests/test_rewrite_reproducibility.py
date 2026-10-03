@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 import gtirb
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_rewriting import Assembler, PassManager
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
@@ -49,7 +49,7 @@ def rewritten_code(path, variant, mode):
         TeapotPipeline(ir, runtime_contract=fixture_contract(arch.name)).run()
     else:
         passes = PassManager()
-        passes.add(VARIANTS[variant][3 + mode](manager, section, manager.analyzer.decoder, arch,
+        passes.add(VARIANTS[variant][3 + mode](manager, section, manager.decoder, arch,
                                                dift_layout=fixture_layout(arch.name)))
         passes.run(ir)
 
@@ -100,7 +100,7 @@ class RewriteReproducibilityTests(unittest.TestCase):
                 for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "dift_reg_queue_pending", "old_rsp", "memory_history_top"):
                     gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
                 manager = LiveRegisterManager(module, abi)
-                for index, inst in enumerate(manager.analyzer.decoder.get_instructions(block)):
+                for index, inst in enumerate(manager.decoder.get_instructions(block)):
                     # Exercise both dead-register allocation and all-live spills.
                     module.aux_data["liveRegisterSets"].data[gtirb.Offset(block, inst.address-block.address)] = \
                         (1 << len(registers)) - 1 if index % 2 else 0

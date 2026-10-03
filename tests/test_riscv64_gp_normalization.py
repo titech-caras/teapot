@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 import gtirb
 from gtirb_functions import Function
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 from gtirb_rewriting import Assembler, PassManager
 
@@ -46,8 +46,7 @@ class RISCV64GPNormalizationTests(unittest.TestCase):
         module.aux_data["liveRegisterSets"].data = {
             gtirb.Offset(block, inst.address - block.address): mask
             for inst in decoder.get_instructions(block)}
-        manager = LiveRegisterManager(module, abi, decoder, analysis_scope="block")
-        manager.analyzer.analyze = Mock(side_effect=AssertionError("Unexpected Python LRA fallback"))
+        manager = LiveRegisterManager(module, abi, decoder)
         module.aux_data["riscvUnresolvedPcrelReferences"] = gtirb.AuxData(
             [], "sequence<tuple<uint64_t,uint64_t,string>>")
         normalization = NormalizeRISCV64GPReferencesPass(decoder, manager, arch)

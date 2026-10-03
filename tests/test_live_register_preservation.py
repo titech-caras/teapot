@@ -1,12 +1,13 @@
 import unittest
 import io
+import warnings
 from contextlib import redirect_stdout
 from unittest.mock import Mock
 from uuid import uuid4
 
 import gtirb
 from gtirb_functions import Function
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
 from gtirb_rewriting import Patch, RewritingContext, patch_constraints
 from gtirb_rewriting.abi import _ABIS
@@ -49,6 +50,8 @@ def make_module(arch, isa, contents):
     module.aux_data["liveRegisterNames"] = gtirb.AuxData(
         [reg.name for reg in registers], "sequence<string>")
     module.aux_data["liveRegisterSets"] = gtirb.AuxData({}, "mapping<Offset,uint64_t>")
+    # The supported DDisasm's masks carry the flag rule; Teapot refuses lifts without it.
+    module.aux_data["liveRegisterFlagRule"] = gtirb.AuxData("callee-entry", "string")
     return ir, module, block, abi, registers
 
 
@@ -66,28 +69,34 @@ def symbol_references(section):
 
 
 class LiveRegisterPreservationTests(unittest.TestCase):
-    def test_refresh_reports_source_transitions(self):
+    def test_refresh_refuses_a_lost_table(self):
+        # Teapot runs no Python liveness analysis: a rewrite round that leaves
+        # the masks unusable stops the rewrite instead of falling back.
         ir, module, _, abi, _ = make_module(
             X64Architecture(), gtirb.Module.ISA.X64, b"\x90\xc3")
-        metadata = {name: module.aux_data[name]
-                    for name in ("liveRegisterNames", "liveRegisterSets")}
         pipeline = TeapotPipeline(ir)
         pipeline.module = module
-        pipeline.reg_manager = LiveRegisterManager(module, abi, analysis_scope="block")
+        pipeline.reg_manager = LiveRegisterManager(module, abi, CachedGtirbInstructionDecoder(module.isa))
         output = io.StringIO()
         with redirect_stdout(output):
             pipeline._refresh_register_analysis()
-            self.assertEqual(output.getvalue(), "")
             module.aux_data["liveRegisterSets"] = gtirb.AuxData([], "sequence<uint64_t>")
-            with self.assertWarnsRegex(RuntimeWarning, "Python block-scope"):
-                pipeline._refresh_register_analysis()
-            self.assertNotIn("liveRegisterSets", module.aux_data)
-            module.aux_data.update(metadata)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                with self.assertRaisesRegex(RuntimeError, "left the live-register masks unusable: module "
+                                                          "'liveness-test': liveRegisterSets has type sequence"):
+                    pipeline._refresh_register_analysis()
+        self.assertEqual(output.getvalue(), "")
+        # Losing the flag rule is refused the same way: the flags bit would no
+        # longer be known to follow it.
+        ir, module, _, abi, _ = make_module(X64Architecture(), gtirb.Module.ISA.X64, b"\x90\xc3")
+        pipeline = TeapotPipeline(ir)
+        pipeline.module = module
+        pipeline.reg_manager = LiveRegisterManager(module, abi, CachedGtirbInstructionDecoder(module.isa))
+        del module.aux_data["liveRegisterFlagRule"]
+        with self.assertRaisesRegex(RuntimeError, "left the live-register masks unusable: .*the masks name "
+                                                  "no liveRegisterFlagRule"):
             pipeline._refresh_register_analysis()
-        self.assertEqual(output.getvalue().splitlines(), [
-            "[teapot] live-register analysis: ddisasm -> python",
-            "[teapot] live-register analysis: python -> ddisasm",
-        ])
 
     def test_copies_diverge_without_sharing_added_live_state(self):
         for reverse in (False, True):
@@ -112,7 +121,6 @@ class LiveRegisterPreservationTests(unittest.TestCase):
                 self.assertEqual(high[gtirb.Offset(copied, 0)], 1 << 55)
                 self.assertEqual(high[gtirb.Offset(copied, 1)], 0)
                 manager.refresh(preserve_liveness=True)
-                manager.analyzer.analyze = Mock(side_effect=AssertionError("Python fallback"))
 
                 @patch_constraints()
                 def nop(_ctx):
@@ -138,13 +146,12 @@ class LiveRegisterPreservationTests(unittest.TestCase):
                     blocks = sorted(function.get_all_blocks(), key=lambda block: block.address)
                     values = []
                     for block in blocks:
-                        for index, _ in enumerate(manager.analyzer.decoder.get_instructions(block)):
+                        for index, _ in enumerate(manager.decoder.get_instructions(block)):
                             values.append(set(manager.live_registers(function, block, index)))
                     actual[blocks[0].section.name] = values
-                # Missing producer masks keep every non-flag register live. No flag
-                # is live into RET: neither ABI preserves flags for the caller.
-                flags = {abi.flag_register()}
-                all_live = set(abi.all_registers()) - flags
+                # A missing producer mask keeps every register live, the flags
+                # too: the masks carry the flag rule, so nothing recomputes them.
+                all_live = set(abi.all_registers())
                 self.assertEqual(actual[".text"], [all_live, {rax}, set(), {rbx}])
                 self.assertEqual(actual[copied_section.name], [{rax}, all_live, set(), {rbx}])
 
@@ -228,7 +235,6 @@ class LiveRegisterPreservationTests(unittest.TestCase):
 
     def _insert_coverage_probe(self, arch, module, block, abi):
         manager = LiveRegisterManager(module, abi)
-        manager.analyzer.analyze = Mock(side_effect=AssertionError("Python fallback"))
         function = next(iter(Function.build_functions(module)))
         manager.analyze(function)
         allocated = []
@@ -241,7 +247,7 @@ class LiveRegisterPreservationTests(unittest.TestCase):
         arch.coverage_patch = lambda _idx, index_base_symbol=None: patch
         guard_section = gtirb.Section(name=".teapot_guards", module=module)
         visitor = TransientCoveragePass(
-            manager, block.section, manager.analyzer.decoder, guard_section, arch)
+            manager, block.section, manager.decoder, guard_section, arch)
         ctx = RewritingContext(module, [function])
         visitor.rewriting_ctx = ctx
         visitor.visit_code_block(block, function)
@@ -249,7 +255,7 @@ class LiveRegisterPreservationTests(unittest.TestCase):
         self.assertEqual(len(allocated), 1)
         manager.refresh(preserve_liveness=True)
         instructions = [inst for current in sorted(module.code_blocks, key=lambda b: b.address)
-                        for inst in manager.analyzer.decoder.get_instructions(current)]
+                        for inst in manager.decoder.get_instructions(current)]
         return allocated, instructions
 
     def test_aarch64_direct_relaxation_retains_only_surviving_masks(self):

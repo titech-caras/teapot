@@ -10,7 +10,7 @@ from unittest import mock
 
 import gtirb
 from gtirb_rewriting import InsertionContext, PassManager
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 
 from teapot.arch import X64Architecture
 from teapot.arch.decoders import x64_decoder
@@ -109,7 +109,7 @@ class X64AdditionalStoreTests(unittest.TestCase):
                 manager = LiveRegisterManager(module, abi)
                 passes = PassManager()
                 passes.add(TransientInsertRestorePointsPass(
-                    manager, block.section, block.section, manager.analyzer.decoder, self.arch))
+                    manager, block.section, block.section, manager.decoder, self.arch))
                 passes.run(ir)
                 interval = next(iter(block.section.byte_intervals))
                 rollback = [offset for offset, expr in interval.symbolic_expressions.items()

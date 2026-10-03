@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import gtirb
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_rewriting import Assembler, PassManager
 
 from teapot.arch import X64Architecture, AArch64Architecture, RISCV64Architecture
@@ -39,13 +39,17 @@ class LazyDiftTests(unittest.TestCase):
                              'report_gadget_KASPER_MDS'):
                     gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
                 manager = LiveRegisterManager(module, abi)
-                for index, inst in enumerate(manager.analyzer.decoder.get_instructions(block)):
+                flags = 1 << registers.index(abi.flag_register())
+                for index, inst in enumerate(manager.decoder.get_instructions(block)):
                     # Boundary 1 has spare GPRs; later boundaries force spills.
-                    module.aux_data['liveRegisterSets'].data[gtirb.Offset(block, inst.address-block.address)] = \
-                        0 if index == 1 else (1 << len(registers)) - 1
-                memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.analyzer.decoder, arch,
+                    # The flags bit as DDisasm gives it: live only before the je.
+                    mask = 0 if index == 1 else ((1 << len(registers)) - 1) & ~flags
+                    if inst.mnemonic == 'je':
+                        mask |= flags
+                    module.aux_data['liveRegisterSets'].data[gtirb.Offset(block, inst.address-block.address)] = mask
+                memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.decoder, arch,
                                                     dift_layout=fixture_layout('x64'))
-                replay = transient_replay_pass(arch, manager, block.section, manager.analyzer.decoder,
+                replay = transient_replay_pass(arch, manager, block.section, manager.decoder,
                                               memory_policy=memory, dift_layout=fixture_layout('x64'))
                 passes = PassManager()
                 passes.add(replay)
@@ -72,9 +76,9 @@ class LazyDiftTests(unittest.TestCase):
                      'report_gadget_KASPER_MDS'):
             gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
         manager = LiveRegisterManager(module, abi)
-        memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.analyzer.decoder, arch,
+        memory = X64TransientMemOperandPoliciesPass(manager, block.section, manager.decoder, arch,
                                                     dift_layout=fixture_layout('x64'))
-        replay = transient_replay_pass(arch, manager, block.section, manager.analyzer.decoder,
+        replay = transient_replay_pass(arch, manager, block.section, manager.decoder,
                                       memory_policy=memory, dift_layout=fixture_layout('x64'))
         observed = []
         original = replay._flush_dift

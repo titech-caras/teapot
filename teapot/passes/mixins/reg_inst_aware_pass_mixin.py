@@ -1,5 +1,5 @@
 from gtirb_rewriting import Pass
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 
 

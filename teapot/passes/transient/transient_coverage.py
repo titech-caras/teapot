@@ -2,7 +2,7 @@ import gtirb
 from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext, Patch
 from gtirb_capstone.instructions import GtirbInstructionDecoder
-from gtirb_live_register_analysis import LiveRegisterManager
+from teapot.liveness import LiveRegisterManager
 
 from teapot.arch.architecture import Architecture
 from teapot.preprocess.create_guards import create_guards

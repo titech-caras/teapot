@@ -20,8 +20,6 @@ def main():
                         default='auto', help=('Checkpoint vector state: auto uses per-site liveness '
                                               '(unknown means full); xmm0-7/sse/avx are unsafe '
                                               'overrides that can corrupt program results'))
-    parser.add_argument('--debug-vector-liveness', action='store_true',
-                        help='Compare DDisasm checkpoint vector masks with Python analysis (diagnostic only)')
     parser.add_argument("--conservative-flags", action="store_true",
                         help="Keep the condition flags live at every instruction instead of dead across calls and returns.")
     parser.add_argument("--target-identification", choices=("software", "aarch64-bti-pac"),
@@ -169,7 +167,6 @@ def main():
         conservative_flags=args.conservative_flags,
         force_checkpoint_df=args.force_checkpoint_df,
         x64_vector_state=args.x64_vector_state,
-        debug_vector_liveness=args.debug_vector_liveness,
     )
     pipeline = TeapotPipeline(ir, args.dift_layout, options, runtime_contract=runtime_contract)
     try:
