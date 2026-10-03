@@ -122,7 +122,10 @@ each fact with what it emits (`teapot/configs/runtime.py`, `teapot/configs/slots
 and refuses a mismatch by field name, as well as options the archive cannot serve.
 It takes the DIFT layout, application ranges included, from it. A RISC-V
 rewrite with checkpoints needs an archive that restores the floating-point
-state.
+state. Every rewritten module then carries a record that only links with an
+archive of the same ABI and that the runtime checks again at start-up, from its
+`.preinit_array` entry: before every `.init_array` constructor, but after the
+`.preinit_array` entries of objects linked before it and after IFUNC resolvers.
 See `libcheckpoint/README.md` ("Runtime contract").
 
 See [`libcheckpoint/README.md`](libcheckpoint/README.md) for runtime

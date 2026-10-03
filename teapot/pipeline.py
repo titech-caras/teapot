@@ -39,6 +39,7 @@ from teapot.preprocess.copy_section import (
     create_section_bounds,
     set_elf_section_properties,
 )
+from teapot.preprocess.contract_record import add_contract_record
 from teapot.preprocess.create_guards import create_guards
 
 ARCH_INFO_AUX_TYPE = "mapping<string,string>"
@@ -282,6 +283,9 @@ class TeapotPipeline:
         self._verify_target_markers()
         if source_lines is not None:
             source_lines.finish(GtirbInstructionDecoder(self.module.isa))
+        # Last: a new section without addresses, after every rewrite.
+        add_contract_record(self.module, self.runtime_contract, self.contract_requirements, self.options,
+                            self.linked_component.component_id if self.linked_component is not None else None)
 
     def _pin_section_bounds(self):
         """Put the section bounds back at their intervals' ends.
@@ -479,7 +483,8 @@ class TeapotPipeline:
 
     def _run_preprocess_passes(self):
         pass_manager = PassManager()
-        pass_manager.add(ImportSymbolsPass(self.arch.checkpoint_lib_symbols()))
+        pass_manager.add(ImportSymbolsPass(
+            [*self.arch.checkpoint_lib_symbols(), self.runtime_contract.anchor]))
         trampolines = CreateTrampolinesPass(
             self.text_section,
             self.trampoline_section,

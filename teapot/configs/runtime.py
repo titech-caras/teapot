@@ -1,5 +1,7 @@
 SYMBOL_SUFFIX = "__teapot__"
 
+# The speculation budget: Teapot's alone, recorded in each module's contract
+# record but never compared with the runtime, which does not read it.
 ROB_LEN = 250
 
 # The layout Teapot's emitted code assumes. teapot/runtime_contract.py compares
