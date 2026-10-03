@@ -7,10 +7,10 @@ of a direct branch or call is not an indirect target and gets no pad (on
 RISC-V, also the operands of a proven direct AUIPC+JALR pair), and neither is
 the AUIPC label that a RISC-V ``%pcrel_lo`` operand names.
 
-Return sites are padded in software mode, where a return checks the marker
-pair like any other transfer: the block at the address after every call,
-including calls the lift thinks never return. The combined mode keeps the
-copy's return range clause, so its return sites get no pad.
+Return sites are padded too, since a return checks the marker pair like any
+other transfer, in both modes (BTI does not check a return's target): the
+block at the address after every call, including calls the lift thinks never
+return.
 
 The pass runs right after the copy is made. Later passes insert block entry
 code (guard push, memory logging, landing restore) in front of the pads, and
@@ -153,7 +153,7 @@ class PadTransientTargetsPass(Pass):
                         isinstance(target, gtirb.CodeBlock) and target.section is self.section):
                     targets.add(target)
         if self.pad_return_sites:
-            targets |= self.return_sites()
+            targets |= self.return_sites() | self.decoded_return_sites()[0]
         resolved = {}
         for block in targets:
             entry = self._paddable_entry(block)
@@ -179,6 +179,38 @@ class PadTransientTargetsPass(Pass):
                         sites.add(site)
         return sites
 
+    def decoded_return_sites(self):
+        """The blocks after every call instruction in the copy, found by decoding.
+
+        Independent of the CFG: a call the lift gives no call edge still gets
+        its return site padded, and is counted (the second value). A call
+        that ends its interval has no continuation in the copy. A call inside
+        a block, which the lift should never produce, is refused: its return
+        address cannot carry a marker.
+        """
+        if self.arch is None or self.decoder is None:
+            return set(), 0
+        sites, without_edge = set(), 0
+        for interval in self.section.byte_intervals:
+            by_offset = {block.offset: block for block in interval.blocks
+                         if isinstance(block, gtirb.CodeBlock) and block.size}
+            for block in by_offset.values():
+                instructions = list(self.decoder.get_instructions(block))
+                for instruction in instructions[:-1]:
+                    if self.arch.abi.is_call_instruction(instruction):
+                        raise ValueError(f"{instruction.mnemonic} at {instruction.address:#x} does not end its "
+                                         "block, so its return address cannot carry a marker")
+                if not instructions or not self.arch.abi.is_call_instruction(instructions[-1]):
+                    continue
+                site = by_offset.get(block.offset + block.size)
+                if site is None:
+                    continue
+                sites.add(site)
+                if not any(edge.label is not None and edge.label.type == gtirb.Edge.Type.Call
+                           for edge in block.outgoing_edges):
+                    without_edge += 1
+        return sites, without_edge
+
     def _already_marked(self, block):
         contents = bytes(block.contents)
         if len(contents) < 8:
@@ -190,6 +222,8 @@ class PadTransientTargetsPass(Pass):
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext):
         text_out = self.marker_text()
         resolved = self._resolved_targets()
+        decoded, without_edge = self.decoded_return_sites() if self.pad_return_sites else (set(), 0)
+        resumptions = (self.return_sites() | decoded) if self.pad_return_sites else set()
         entries = set(resolved.values())
         targets = {entry for entry in entries if not self._already_marked(entry)}
         # gtirb-rewriting can place code inserted at a block's start in front
@@ -216,7 +250,8 @@ class PadTransientTargetsPass(Pass):
             # which the block's later pieces never pass.
             self.state.pads.set(TransientPads(
                 padded_blocks=frozenset(block.uuid for block in entries),
-                copy_blocks=frozenset(block.uuid for block in self.section.code_blocks if block.size)))
+                copy_blocks=frozenset(block.uuid for block in self.section.code_blocks if block.size),
+                resumptions=frozenset(resolved[site].uuid for site in resumptions if site in resolved)))
         for block in sorted(targets, key=lambda b: b.address or 0):
             @patch_constraints()
             def patch(_ctx, text_out=text_out):
@@ -225,7 +260,8 @@ class PadTransientTargetsPass(Pass):
             rewriting_ctx.insert_at(block, 0, Patch.from_function(patch))
             self.padded += 1
         print(f"[teapot] padded {self.padded} speculative-copy targets "
-              f"({len(aliases)} zero-size label aliases)", flush=True)
+              f"({len(aliases)} zero-size label aliases; {len(resumptions)} return sites, "
+              f"{without_edge} after calls without a call edge)", flush=True)
 
 
 class AnchorTransientPadsPass(Pass):

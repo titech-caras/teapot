@@ -63,6 +63,10 @@ class TransientPads:
     # block at that time (the anchor search must not cross into another one).
     padded_blocks: FrozenSet
     copy_blocks: FrozenSet
+    # The blocks a return from one of the copy's calls lands on: after each
+    # call the lift marks, and after each call instruction found by decoding.
+    # The pipeline's final check finds each one's call again.
+    resumptions: FrozenSet = frozenset()
 
 
 @dataclass

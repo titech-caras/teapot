@@ -147,9 +147,8 @@ static int guarded_check(uintptr_t p) {
 }
 static int expected(uintptr_t p) {
 #ifdef WINDOW_PREDICATE
-    /* Combined mode: an in-window target needs the pair; returns keep the
-       copy sub-range clause through a separate option. */
-    if (p < (uintptr_t)text_start || p >= (uintptr_t)transient_end) return 0;
+    /* Combined mode: an aligned in-window target needs the pair, returns too. */
+    if (p < (uintptr_t)text_start || p >= (uintptr_t)transient_end || (p & 3)) return 0;
 #endif
     if (sigsetjmp(fault, 1)) return 0;
     uint32_t a, b;
@@ -238,15 +237,32 @@ int main(void) {
                 self._execute(arch, "aarch64-linux-gnu-gcc",
                               ["qemu-aarch64", "-L", "/usr/aarch64-linux-gnu"],
                               "x0", scratch, "mov w0,", window=window)
+        # The combined mode, with its own marker words and the options the check
+        # pass hands a return and a signed return.
+        bti = AArch64BTIArchitecture()
+        scratch = tuple(bti.abi.get_register(name) for name in ("x8", "x9", "x10"))
+        for mnemonic in ("ret", "retaa"):
+            options = bti.indirect_branch_check_options(SimpleNamespace(mnemonic=mnemonic))
+            self.assertLessEqual(set(options), {"strip_pac", "window"})
+            with self.subTest(mode="aarch64-bti-pac", instruction=mnemonic):
+                self._execute(bti, "aarch64-linux-gnu-gcc",
+                              ["qemu-aarch64", "-cpu", "max", "-L", "/usr/aarch64-linux-gnu"],
+                              "x0", scratch, "mov w0,", signed=options.get("strip_pac", False),
+                              window=options.get("window", False))
 
-    def test_only_the_combined_mode_keeps_the_window_and_return_clause(self):
+    def test_only_the_combined_mode_keeps_the_window(self):
         ret, br = SimpleNamespace(mnemonic="ret"), SimpleNamespace(mnemonic="br")
         for arch in (X64Architecture(), AArch64Architecture(), RISCV64Architecture()):
             with self.subTest(isa=arch.name):
                 self.assertEqual(arch.indirect_branch_check_options(ret), {})
                 self.assertEqual(arch.indirect_branch_check_options(br), {})
+        # Returns get the window and the marker pair like any other transfer
+        # (BTI does not check a return's target); no clause admits any address
+        # in the copy.
         bti = AArch64BTIArchitecture()
-        self.assertEqual(bti.indirect_branch_check_options(ret), {"window": True, "ret_clause": True})
+        self.assertEqual(bti.indirect_branch_check_options(ret), {"window": True})
+        self.assertEqual(bti.indirect_branch_check_options(SimpleNamespace(mnemonic="retaa")),
+                         {"strip_pac": True, "window": True})
         self.assertEqual(bti.indirect_branch_check_options(br), {"window": True})
 
     def test_aarch64_signed_targets_keep_the_exact_policy_and_original_pointer(self):

@@ -10,6 +10,7 @@ from gtirb_rewriting import RewritingContext
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
 from teapot.arch.aarch64.bti import AArch64BTIArchitecture
+from teapot.arch.aarch64.bti_pac import AArch64BTIPACArchitecture
 from teapot.passes.transient.pad_transient_targets_pass import (
     AnchorTransientPadsPass, PadTransientTargetsPass,
 )
@@ -532,7 +533,7 @@ class PadTransientTargetsTests(unittest.TestCase):
         with redirect_stdout(output):
             pad.begin_module(module, [], context)
             context.apply()
-        self.assertIn("(1 zero-size label aliases)", output.getvalue())
+        self.assertIn("(1 zero-size label aliases;", output.getvalue())
         for symbol in names + [tail]:
             self.assertIs(symbol.referent, real)
             self.assertFalse(symbol.at_end)
@@ -543,7 +544,7 @@ class PadTransientTargetsTests(unittest.TestCase):
         for table in ("functionEntries", "functionBlocks"):
             self.assertEqual(module.aux_data[table].data[function], {label, real})
 
-    def test_software_mode_pads_every_return_site(self):
+    def test_pads_every_return_site(self):
         # Blocks: a call with a fallthrough, a call the lift thinks never
         # returns, a direct branch, and the three blocks that follow them.
         module = gtirb.Module(name="pad", isa=gtirb.Module.ISA.ARM64)
@@ -559,18 +560,41 @@ class PadTransientTargetsTests(unittest.TestCase):
                                      (noreturn, callee, gtirb.Edge.Type.Call),
                                      (branch, call, gtirb.Edge.Type.Branch)):
             ir.cfg.add(gtirb.Edge(source, target, gtirb.Edge.Label(kind, direct=True)))
-        software = PadTransientTargetsPass(section, None, (0xd280229f, 0xd280a29f),
-                                           pad_return_sites=True)
-        self.assertEqual(software.target_blocks(), {after_call, after_noreturn})
-        combined = PadTransientTargetsPass(section, None, (0xd280229f, 0xd280a29f))
-        self.assertEqual(combined.target_blocks(), set())
+        padded = PadTransientTargetsPass(section, None, (0xd280229f, 0xd280a29f),
+                                         pad_return_sites=True)
+        self.assertEqual(padded.target_blocks(), {after_call, after_noreturn})
+        # The option exists so unit tests can look at indirect targets alone.
+        unpadded = PadTransientTargetsPass(section, None, (0xd280229f, 0xd280a29f))
+        self.assertEqual(unpadded.target_blocks(), set())
 
-    def test_only_the_combined_mode_leaves_return_sites_unpadded(self):
+    def test_a_call_without_a_call_edge_still_gets_its_return_site_padded(self):
+        # Found by decoding, independently of the CFG, and counted.
+        arch = AArch64Architecture()
+        module = gtirb.Module(name="pad", isa=gtirb.Module.ISA.ARM64, byte_order=gtirb.Module.ByteOrder.Little)
+        gtirb.IR(modules=[module])
+        section = gtirb.Section(name=".teapot_transient", module=module)
+        contents = (0x94000002).to_bytes(4, "little") + bytes.fromhex("1f2003d5c0035fd6")  # bl; nop; ret
+        interval = gtirb.ByteInterval(section=section, address=0x1000, contents=contents)
+        call = gtirb.CodeBlock(offset=0, size=4, byte_interval=interval)
+        site = gtirb.CodeBlock(offset=4, size=8, byte_interval=interval)
+        pad = PadTransientTargetsPass(section, GtirbInstructionDecoder(module.isa), (0xd280229f, 0xd280a29f),
+                                      arch=arch, pad_return_sites=True)
+        self.assertEqual(pad.return_sites(), set())
+        self.assertEqual(pad.decoded_return_sites(), ({site}, 1))
+        self.assertEqual(pad.target_blocks(), {site})
+
+    def test_every_mode_pads_return_sites(self):
+        # A return checks the marker pair in every mode, the combined one too
+        # (BTI does not check a return's target), so every return site needs
+        # a pad, made of the mode's own marker pair.
         _, section, _ = copy_module()
-        for arch in (AArch64Architecture(), X64Architecture(), RISCV64Architecture()):
-            with self.subTest(isa=arch.name):
-                self.assertTrue(arch.transient_pad_passes(section, None, RewriteState())[0].pad_return_sites)
-        self.assertFalse(AArch64BTIArchitecture().transient_pad_passes(section, None, RewriteState())[0].pad_return_sites)
+        for arch in (AArch64Architecture(), AArch64BTIArchitecture(), AArch64BTIPACArchitecture(),
+                     X64Architecture(), RISCV64Architecture()):
+            with self.subTest(arch=type(arch).__name__):
+                pad, = arch.transient_pad_passes(section, None, RewriteState())
+                self.assertTrue(pad.pad_return_sites)
+                self.assertEqual(pad.marker_words, tuple(arch.transient_pad_words()))
+        self.assertEqual(AArch64BTIPACArchitecture().transient_pad_words(), (0xd50324df, 0xd280a29f))
 
 
 if __name__ == "__main__":

@@ -158,10 +158,11 @@ class AArch64ControlFlowPatchesMixin:
         """Design step 5: marker pads at the copy's reachable indirect targets."""
         from teapot.passes.transient.pad_transient_targets_pass import PadTransientTargetsPass
 
-        # The combined mode keeps the copy's return range clause.
+        # Both modes pad the copy's return sites: a speculative return must
+        # land on the marker pair (BTI does not check return targets).
         return [PadTransientTargetsPass(
             transient_section, decoder, self.transient_pad_words(), arch=self,
-            pad_return_sites=not self.uses_bti_landing_checks, state=state)]
+            pad_return_sites=True, state=state)]
 
     def transient_anchor_passes(self, transient_section, state):
         """Design step 5: pads displaced by later passes move back to block starts."""
@@ -180,13 +181,12 @@ class AArch64ControlFlowPatchesMixin:
 
     def indirect_branch_check_options(self, instruction):
         options = {"strip_pac": True} if instruction.mnemonic in AARCH64_PAC_BRANCHES else {}
-        # Software mode checks the marker pair alone. The combined mode keeps
-        # the window, since BTI enforces landings only on guarded pages, and
-        # returns keep the copy sub-range clause there.
+        # Software mode checks the marker pair alone. The combined mode also
+        # checks the window, since BTI enforces landings only on guarded pages.
+        # Returns are checked like any other transfer: BTI does not check a
+        # return's target, so a return must find the marker pair too.
         if self.uses_bti_landing_checks:
             options["window"] = True
-            if instruction.mnemonic in ("ret", "retaa", "retab"):
-                options["ret_clause"] = True
         return options
 
     def instruction_must_rollback(self, instruction) -> bool:
@@ -195,6 +195,21 @@ class AArch64ControlFlowPatchesMixin:
             "svc", "hvc", "smc", "brk",
         } or (instruction.mnemonic == "dc" and
               instruction.op_str.split(",", 1)[0].strip() in {"zva", "gva", "gzva"}))
+
+    # Authenticated calls and returns the lift does not classify: DDisasm's
+    # AArch64 tables name only BL/BLR as calls and RET as the return, so the
+    # block after one of these gets no call edge, and its copy no marker pad.
+    UNCLASSIFIED_TRANSFERS = frozenset(("blraa", "blrab", "blraaz", "blrabz", "retaa", "retab"))
+
+    def unsupported_instructions(self, section, decoder) -> list:
+        found = []
+        for block in section.code_blocks:
+            if not block.size:
+                continue
+            for instruction in decoder.get_instructions(block):
+                if instruction.mnemonic in self.UNCLASSIFIED_TRANSFERS:
+                    found.append(f"{instruction.mnemonic} at {instruction.address:#x}")
+        return found
 
     def is_control_transfer_instruction(self, instruction) -> bool:
         return instruction.mnemonic in {"b", "bl", "blr", "br", "ret"} | AARCH64_PAC_BRANCHES
@@ -214,7 +229,7 @@ class AArch64ControlFlowPatchesMixin:
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,
                                     text_end_symbol: gtirb.Symbol, reads_registers=None, *, strip_pac=False,
-                                    window=False, ret_clause=False):
+                                    window=False):
         @self.constraints(scratch_registers=3,
                           clobbers_flags=True,
                           reads_registers=reads_registers or set())
@@ -227,15 +242,11 @@ class AArch64ControlFlowPatchesMixin:
             # globally for ordinary AArch64 input that contains no PAC forms.
             normalize = (f".inst {0xdac143e0 | aarch64_register_number(getattr(target_reg, 'name', target_reg)):#x}"
                          if strip_pac else "")
-            # Combined mode: one window, normal text immediately preceding the
-            # copy, and returns inside the copy accepted by range. Software
-            # mode: every target carries the marker pair, return sites
-            # included; a wild target faults on the load, which rolls back.
-            ret_accept = f"""
-                {self.load_address(temp_reg, transient_start_symbol.name)}
-                cmp {target_reg}, {temp_reg}
-                b.hs 1f
-            """ if ret_clause else ""
+            # Combined mode: an aligned target in one window, normal text
+            # immediately preceding the copy; a wild target fails the window
+            # before any load. Both modes: every target carries the marker
+            # pair, return sites included; in software mode a wild target
+            # faults on the load, which rolls back.
             window_test = f"""
                 {self.load_address(temp_reg, text_start_symbol.name)}
                 cmp {target_reg}, {temp_reg}
@@ -243,7 +254,8 @@ class AArch64ControlFlowPatchesMixin:
                 {self.load_address(temp_reg, transient_end_symbol.name)}
                 cmp {target_reg}, {temp_reg}
                 b.hs 2f
-                {ret_accept}
+                tst {target_reg}, #3
+                b.ne 2f
             """ if window else ""
             return f"""
                 mov {target_reg}, {operand_str}

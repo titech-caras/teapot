@@ -1,8 +1,8 @@
 """Opt-in BTI plus signed returns: --target-identification aarch64-bti-pac.
 
-AArch64 only. The BTI target policy is unchanged: range checks, the return
-predicate and the deferred transient-target decision stay as they are. The mode
-adds normal-path return signing and activates PAC after BTI, so an
+AArch64 only. The mode keeps the BTI target policy (the window, BTI landing
+checks for BR/BLR, and the marker pair for returns, whose return sites are
+padded in both copies) and adds normal-path return signing and activates PAC after BTI, so an
 authentication failure inside simulation rolls back through the runtime's
 malformed-target path and outside simulation is forwarded unchanged.
 """

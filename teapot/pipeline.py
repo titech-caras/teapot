@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import gtirb
+from capstone import CS_GRP_CALL
 from gtirb_rewriting.decoder import GtirbInstructionDecoder
 from gtirb_live_register_analysis import (
     LIVE_REGISTER_NAMES_AUXDATA,
@@ -182,6 +183,12 @@ class TeapotPipeline:
             _add_arch_feature(self.module, AARCH64_MTE_ARCH_FEATURE)
         self.text_section = [section for section in self.module.sections if section.name == ".text"][0]
         self.decoder = CachedGtirbInstructionDecoder(self.module.isa)
+        unsupported = self.arch.unsupported_instructions(self.text_section, self.decoder)
+        if unsupported:
+            raise ValueError(f"module {self.module.name!r} uses {len(unsupported)} pointer-authenticated calls or "
+                             f"returns the lift does not mark as such ({', '.join(unsupported[:5])}): their "
+                             "return sites would get no marker. Teapot supports the hint forms "
+                             "(PACIASP/AUTIASP, as -mbranch-protection emits them) and BL/BLR/RET")
         self.checkpoint_df_blocks, self.vector_state = set(), None
         if self.arch.name == 'x64':
             from teapot.arch.x64.checkpoint_state import df_checkpoint_blocks, vector_state
@@ -333,20 +340,66 @@ class TeapotPipeline:
                 missing.append(f"{symbol.name} at {block.address:#x}" if block.address is not None
                                else symbol.name)
         padded = self.state.pads.require("the target-marker check").padded_blocks
-        copied = 0
+        copied = calls = 0
         transient_section = self.transient_section
         if transient_section is not None:
-            for block in transient_section.code_blocks:
-                if block.uuid in padded and block.size:
-                    copied += 1
-                    if not starts_with_marker(block):
-                        missing.append(f"copy block at {block.address:#x}" if block.address is not None
-                                       else f"copy block {block.uuid}")
+            # Every recorded block, not only those still there: a pass that
+            # drops or empties one must not drop it from the check too.
+            blocks = {block.uuid: block for block in transient_section.code_blocks}
+            for uuid in sorted(padded, key=str):
+                block = blocks.get(uuid)
+                if block is None or not block.size:
+                    missing.append(f"copy block {uuid} (gone or empty)")
+                    continue
+                copied += 1
+                if not starts_with_marker(block):
+                    missing.append(f"copy block at {block.address:#x}" if block.address is not None
+                                   else f"copy block {block.uuid}")
+            calls, misplaced = self._verify_copy_return_sites(
+                transient_section, self.state.pads.require("the target-marker check").resumptions)
+            if misplaced:
+                raise ValueError(f"{len(misplaced)} calls in the copy do not end their block, so a return "
+                                 f"would miss its pad, e.g. {', '.join(misplaced[:5])}")
         if missing:
             raise ValueError(f"{len(missing)} padded targets do not start with the marker, "
                              f"e.g. {', '.join(missing[:5])}")
         print(f"[teapot] target markers verified: {len(symbols)} normal-text symbols, "
-              f"{copied} copy blocks", flush=True)
+              f"{copied} copy blocks, {calls} copy calls", flush=True)
+
+    def _verify_copy_return_sites(self, transient_section, resumptions):
+        """A return lands right after its call, so nothing may sit between them.
+
+        The pad pass recorded every return site of the copy's calls (from the
+        lift's call edges and by decoding); the check above proves each starts
+        with the marker. Here the block that ends where the return site starts
+        must end with that call, or a return would land on the code after it
+        and roll back. Returns the number of return sites checked and the
+        misplaced ones.
+        """
+        # The cached decoder may hold contents from before the last rewrite.
+        decoder = GtirbInstructionDecoder(transient_section.module.isa)
+        blocks = {block.uuid: block for block in transient_section.code_blocks}
+        ends_by_interval = {}
+        checked, misplaced = 0, []
+        for uuid in sorted(resumptions, key=str):
+            site = blocks.get(uuid)
+            if site is None or not site.size:
+                misplaced.append(f"the recorded return site {uuid} is gone or empty")
+                continue
+            checked += 1
+            interval = site.byte_interval
+            if interval not in ends_by_interval:
+                ends_by_interval[interval] = {block.offset + block.size: block for block in interval.blocks
+                                              if isinstance(block, gtirb.CodeBlock) and block.size}
+            where = f"{site.address:#x}" if site.address is not None else str(site.uuid)
+            call = ends_by_interval[interval].get(site.offset)
+            if call is None:
+                misplaced.append(f"nothing ends right before the return site at {where}")
+                continue
+            last = list(decoder.get_instructions(call))[-1]
+            if not (self.abi.is_call_instruction(last) or last.group(CS_GRP_CALL)):
+                misplaced.append(f"the return site at {where} follows {last.mnemonic} {last.op_str}".strip())
+        return checked, misplaced
 
     def _find_potential_indirect_targets(self):
         """Normal-text blocks to pad beyond the lift's indirect edges, on the original IR.

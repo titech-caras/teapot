@@ -74,6 +74,10 @@ class Architecture(
         """Finish architecture-specific branch relaxation after late layout."""
         return ()
 
+    def unsupported_instructions(self, section: gtirb.Section, decoder) -> list:
+        """Input instructions this ISA's rewrite cannot handle, as "mnemonic at address" strings."""
+        return []
+
     def relax_conditional_branches(self, module: gtirb.Module, *, direct_pads) -> None:
         """Relax out-of-range branches; ``direct_pads`` maps each direct-entry label to its pad."""
         return None

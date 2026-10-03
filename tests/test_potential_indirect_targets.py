@@ -351,6 +351,8 @@ class PotentialIndirectTargetTests(unittest.TestCase):
         state.pads.set(TransientPads(frozenset({copy_block.uuid}), frozenset({copy_block.uuid})))
         state.text_targets.set(marked)
         pipeline = SimpleNamespace(arch=arch, transient_section=copy, state=state)
+        pipeline._verify_copy_return_sites = (
+            lambda section, resumptions: TeapotPipeline._verify_copy_return_sites(pipeline, section, resumptions))
         with redirect_stdout(io.StringIO()) as output:
             TeapotPipeline._verify_target_markers(pipeline)
         self.assertIn("1 normal-text symbols, 1 copy blocks", output.getvalue())

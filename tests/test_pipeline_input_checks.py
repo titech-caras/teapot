@@ -47,6 +47,24 @@ class PipelineEndStateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "1 padded targets do not start with the marker"):
             pipeline._verify_target_markers()
 
+    def test_a_recorded_pad_whose_block_is_gone_fails_the_build(self):
+        from uuid import uuid4
+        from teapot.arch.aarch64.bti import AArch64BTIArchitecture
+
+        module = gtirb.Module(name="verify", isa=gtirb.Module.ISA.ARM64)
+        gtirb.IR(modules=[module])
+        section = gtirb.Section(name=".teapot_transient", module=module)
+        gtirb.ByteInterval(section=section, contents=b"\x1f\x20\x03\xd5", size=4)
+        pipeline = TeapotPipeline(gtirb.IR())
+        pipeline.arch = AArch64BTIArchitecture()
+        pipeline.transient_section = section
+        pipeline.state.text_targets.disable("this test")
+        gone = uuid4()
+        pipeline.state.pads.set(TransientPads(frozenset({gone}), frozenset({gone})))
+        with self.assertRaisesRegex(ValueError, f"1 padded targets do not start with the marker, "
+                                                f"e.g. copy block {gone} \\(gone or empty\\)"):
+            pipeline._verify_target_markers()
+
 
 class PipelineInputTests(unittest.TestCase):
     def test_unlabeled_cfg_edges_are_rejected(self):
