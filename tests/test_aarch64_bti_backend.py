@@ -116,7 +116,8 @@ class AArch64BTIBackendTests(unittest.TestCase):
         ir, _, _, _, _ = make_module(AArch64Architecture(), gtirb.Module.ISA.ARM64,
                                       bytes.fromhex('c0035fd6'))
         for flag in ('enable_checkpoints', 'enable_indirect_check', 'enable_indirect_transform'):
-            with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, 'requires target'):
+            with self.subTest(flag=flag), self.assertRaisesRegex(
+                    ValueError, 'aarch64-bti-pac requires .*drop --disable-'):
                 TeapotPipeline(ir, options=InstrumentationOptions(
                     target_identification='aarch64-bti-pac', **{flag: False})).run()
 

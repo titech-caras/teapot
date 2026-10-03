@@ -1,5 +1,5 @@
 import gc
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Optional
 
 import gtirb
@@ -41,6 +41,7 @@ from teapot.preprocess.copy_section import (
 )
 from teapot.preprocess.contract_record import add_contract_record
 from teapot.preprocess.create_guards import create_guards
+from teapot.modes import validate_options
 from teapot.rewrite_state import RewriteState
 
 ARCH_INFO_AUX_TYPE = "mapping<string,string>"
@@ -163,26 +164,12 @@ class TeapotPipeline:
                              "edge's type and directness")
         self.module = self.ir.modules[0]
         self.arch = get_arch(self.module)
-        if self.options.target_identification != "software":
-            if (self.options.target_identification != "aarch64-bti-pac" or
-                    self.arch.name != "aarch64"):
-                raise ValueError("the experimental BTI/PAC backend requires AArch64")
-            if not all((self.options.enable_indirect_transform, self.options.enable_indirect_check,
-                        self.options.enable_checkpoints)):
-                raise ValueError("BTI/PAC requires target transformation, checking and checkpoints")
-            from teapot.arch.aarch64.bti_pac import AArch64BTIPACArchitecture
-            self.arch = AArch64BTIPACArchitecture()
-        if self.linked_component is not None:
-            if len(self.ir.modules) != 1 or self.arch.name not in ("x64", "aarch64", "riscv64"):
-                raise ValueError("separate component rewriting requires one supported ELF64 module")
-            # Tag storage and validated target identification are link contracts;
-            # neither permits disabling passes or enabling nesting. Non-AArch64
-            # BTI was rejected above before relaxing this option comparison.
-            if replace(self.options, aarch64_tag_storage=ASAN_TAG_STORAGE_SHADOW,
-                       target_identification="software") != InstrumentationOptions():
-                raise ValueError("component prototype requires all default instrumentation, nesting off")
-        if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE and self.arch.name != "aarch64":
-            raise ValueError("--aarch64-tag-storage=mte is only valid for AArch64 modules")
+        if self.linked_component is not None and len(self.ir.modules) != 1:
+            raise ValueError("separate component rewriting requires one ELF module")
+        # The mode table (teapot/modes.py) checks the options once, here.
+        self.mode = validate_options(self.options, self.arch.name, component=self.linked_component is not None)
+        if self.mode.architecture is not None:
+            self.arch = self.mode.architecture()
         if self.runtime_contract is None:
             raise ValueError("select the runtime this rewrite will be linked with: the "
                              "lib<archive>.contract.json of its libcheckpoint archive (--runtime-contract)")

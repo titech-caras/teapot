@@ -121,7 +121,7 @@ class LinkedComponentTests(unittest.TestCase):
             with self.subTest(options=options):
                 ir = gtirb.IR(modules=[self.module()])
                 pipeline = TeapotPipeline(ir, "x64-la48-asan-new", options, linked_component=self.context())
-                with self.assertRaisesRegex(ValueError, "all default instrumentation"):
+                with self.assertRaisesRegex(ValueError, "requires the default instrumentation"):
                     pipeline.run()
 
     def liveness_module(self):
