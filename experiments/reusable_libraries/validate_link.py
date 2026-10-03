@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import struct
 import sys
 
 # The repository root holds the teapot, experiments and tools packages imported below. Put it
@@ -16,6 +17,13 @@ from elftools.dwarf.callframe import FDE
 from elftools.elf.elffile import ELFFile
 from experiments.reusable_libraries.targets import (
     TARGETS, MODES, TARGET_IDENTIFICATIONS, mode_for, mode_metadata, target_for)
+from teapot.preprocess.contract_record import RECORD_HEADER_SIZE, RECORD_KIND_MODULE, RECORD_MAGIC
+from teapot.runtime_contract import CAPABILITIES
+
+RUNTIME_RECORD_KIND = 1
+# libcheckpoint's runtime_contract.h: magic, version, kind, header size, JSON
+# size, fingerprint, capabilities, anchor.
+_RECORD = struct.Struct("<IHHIIQQQ")
 
 
 def require(condition, *message):
@@ -57,6 +65,78 @@ def validate_mode_contract(manifest, *, isa=None, mode=None, target_identificati
         if any(component.get(field) != expected[field] for field in fields):
             raise ValueError('component build mode mismatch: ' + component.get('component_id', '<unknown>'))
     return actual_isa, actual_mode
+
+
+def contract_records(elf, section_name, kind):
+    """Parse the contract records the link concatenated in one section."""
+    section = elf.get_section_by_name(section_name)
+    if section is None:
+        return []
+    data, base, records, offset = section.data(), section["sh_addr"], [], 0
+    # As the runtime's start-up walk does: from an 8-byte-aligned start, every
+    # record's extent rounded to 8 bytes must lie inside the section.
+    require(base % 8 == 0, ("misaligned contract record section", section_name, base))
+    while offset < len(data):
+        if data[offset:offset + 8] == bytes(8):
+            offset += 8  # alignment padding between two objects' records
+            continue
+        require(offset + RECORD_HEADER_SIZE <= len(data), ("truncated contract record", section_name, offset))
+        magic, version, record_kind, header_size, json_size, fingerprint, capabilities, anchor = \
+            _RECORD.unpack_from(data, offset)
+        require(magic == RECORD_MAGIC and record_kind == kind and header_size == RECORD_HEADER_SIZE,
+                ("malformed contract record", section_name, offset))
+        end = offset + header_size + json_size
+        size = (header_size + json_size + 7) & ~7
+        require(offset + size <= len(data), ("truncated contract record", section_name, offset))
+        try:
+            contract = json.loads(data[offset + header_size:end]) if json_size else {}
+        except ValueError as error:
+            raise ValueError(("unreadable contract record JSON", section_name, offset, str(error))) from None
+        records.append(dict(address=base + offset, version=version, fingerprint=f"{fingerprint:016x}",
+                            capabilities=capabilities, anchor=anchor, contract=contract))
+        offset += size
+    return records
+
+
+def capability_names(bits):
+    return [name for index, name in enumerate(CAPABILITIES) if bits >> index & 1] + (
+        [f"unknown 0x{bits >> len(CAPABILITIES) << len(CAPABILITIES):x}"] if bits >> len(CAPABILITIES) else [])
+
+
+def validate_contract_records(elf, address, manifest):
+    """Compare every component's record with the runtime record the link actually holds."""
+    runtimes = contract_records(elf, "libcheckpoint_contract", RUNTIME_RECORD_KIND)
+    require(len(runtimes) == 1, ("the link holds one libcheckpoint runtime record", len(runtimes)))
+    runtime = runtimes[0]
+    require(runtime["address"] == address("libcheckpoint_runtime_contract"),
+            "libcheckpoint_runtime_contract is not the runtime record")
+    abi = runtime["contract"].get("abi", {})
+    modules = contract_records(elf, "teapot_contract", RECORD_KIND_MODULE)
+    # Each component's record names it, so another object's record cannot
+    # stand in for a component that has none.
+    owners = sorted(str(record["contract"].get("component")) for record in modules)
+    require(owners == sorted(component["component_id"] for component in manifest["components"]),
+            ("one module contract record per component", owners,
+             sorted(component["component_id"] for component in manifest["components"])))
+    for record in modules:
+        module_abi = record["contract"].get("abi", {})
+        differences = [f"{key}: component {module_abi.get(key)!r}, runtime {abi.get(key)!r}"
+                       for key in sorted(set(module_abi) | set(abi)) if module_abi.get(key) != abi.get(key)]
+        require((record["version"], record["fingerprint"]) == (runtime["version"], runtime["fingerprint"])
+                and not differences,
+                ("a component was rewritten for a runtime with another ABI", record["fingerprint"],
+                 runtime["fingerprint"], differences))
+        require(record["anchor"] == runtime["address"], "a component record does not refer to the linked runtime")
+        missing = record["capabilities"] & ~runtime["capabilities"]
+        require(not missing, ("a component needs runtime capabilities the linked archive lacks",
+                              capability_names(missing)))
+    recorded = manifest.get("runtime_contract")
+    require(recorded is not None, "component manifest has no runtime contract; rebuild it with the current driver")
+    require((recorded["version"], recorded["fingerprint"]) == (runtime["version"], runtime["fingerprint"]),
+            ("the components were built for another runtime contract", recorded, runtime["fingerprint"]))
+    return {"version": runtime["version"], "fingerprint": runtime["fingerprint"],
+            "runtime_capabilities": capability_names(runtime["capabilities"]),
+            "module_records": len(modules)}
 
 
 def validate_bti_layout(elf, address, ranges, target_identification='aarch64-bti-pac'):
@@ -187,6 +267,7 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
                 require(all(end <= lower or start >= upper for lower, upper in ranges.values()), section.name)
         bti_guard = (validate_bti_layout(elf, address, ranges, target_identification)
                      if target_identification == 'aarch64-bti-pac' else None)
+        runtime_contract = validate_contract_records(elf, address, manifest)
         guard_section = elf.get_section_by_name(".teapot_component_guards")
         guard_start, guard_end = address("__guard_start__teapot__"), address("__guard_end__teapot__")
         require((guard_start, guard_end) ==
@@ -230,6 +311,7 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
                 'check failed: the link has fewer FDEs than its inputs')
     return {"status": "structural_checks_passed_behavior_still_required", "needed": needed, 'isa': isa,
             'mode': mode, 'target_identification': target_identification, 'bti_guard': bti_guard,
+            "runtime_contract": runtime_contract,
             "target_ranges": ranges, "guard_ranges": guard_ranges,
             "guard_slots_including_alignment": (guard_end - guard_start) // 4,
             "guard_slots_used": sum(c["guard_count"] for c in manifest["components"]),

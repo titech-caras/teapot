@@ -13,6 +13,7 @@ import gtirb_live_register_analysis
 import teapot
 
 from experiments.reusable_libraries import rewrite_components as driver
+from runtime_contract_support import runtime_contract
 
 
 class CacheIdentityTests(unittest.TestCase):
@@ -81,6 +82,16 @@ class CacheIdentityTests(unittest.TestCase):
         self.assertEqual(before['version'], after['version'])
         self.assertNotEqual(before['files'], after['files'])
         self.assertEqual(checkout, {'version': None, 'files': after['files']})
+
+    def test_runtime_abi_keys_components_but_capabilities_do_not(self):
+        # Components depend on the runtime's ABI, by its fingerprint. Archives
+        # with the same ABI (the nested one, a BTI build) share components:
+        # each module record lists what it needs, checked at link and start-up.
+        default = driver.contract_identity(runtime_contract("aarch64"))
+        self.assertEqual(default, driver.contract_identity(runtime_contract("aarch64", nested=True)))
+        self.assertEqual(default, driver.contract_identity(runtime_contract("aarch64-bti")))
+        self.assertNotEqual(default, driver.contract_identity(runtime_contract("aarch64-mte")))
+        self.assertNotEqual(default, driver.contract_identity(runtime_contract("x64")))
 
     def test_import_must_match_declared_source(self):
         with tempfile.TemporaryDirectory() as directory:

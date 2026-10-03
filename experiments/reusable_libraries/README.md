@@ -47,8 +47,10 @@ that the imported packages really come from those paths and hashes the imported 
 paths may be checkout roots or their installed `site-packages` package directories. The driver imports Teapot
 from its own checkout, so `--teapot` must name it; the other two come through `PYTHONPATH`.
 The runtime
-contract is the `libcheckpoint.contract.json` beside the libcheckpoint archive of the final link; it is
-stored in the key as given. The four opt-in flags are the converter's.
+contract is the `libcheckpoint.contract.json` beside the libcheckpoint archive of the final link. Its ABI
+fingerprint enters the key, so archives with the same ABI share components; each component's record lists
+the capabilities it needs, and `validate_link.py` compares every record with the runtime record the link
+holds. The four opt-in flags are the converter's.
 
 ### AArch64 BTI+PAC (opt-in)
 

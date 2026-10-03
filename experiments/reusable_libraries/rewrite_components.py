@@ -37,7 +37,7 @@ from elftools.elf.elffile import ELFFile
 from teapot.configs.blacklist import is_blacklisted_function_name
 from teapot.configs.runtime import ROB_LEN, SYMBOL_SUFFIX
 from teapot.datacls.linked_component import LinkedComponent
-from teapot.arch import module_isa_name
+from teapot.arch import get_arch, module_isa_name
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.runtime_contract import RuntimeContractError, load_runtime_contract
 from teapot.utils.serialization import compact_for_pprinter
@@ -154,6 +154,13 @@ def portable_identity(identity):
     return {"sha256": identity["sha256"],
             "libraries": sorted((Path(path).name, digest)
                                 for path, digest in identity["libraries"].items())}
+
+
+def contract_identity(contract):
+    # What a component's code and record depend on: the runtime's ABI, by its
+    # fingerprint. Archives that differ only in capabilities, provenance or the
+    # runtime's own facts get the same objects (each record lists what it needs).
+    return {"version": contract.version, "fingerprint": contract.fingerprint}
 
 
 def run(root, name, command):
@@ -451,6 +458,14 @@ def main():
     target_for(isa, args.target_identification)
     args.instrumentation_options = InstrumentationOptions(
         aarch64_tag_storage=mode['tag_storage'], target_identification=args.target_identification)
+    # Once, before any cache lookup: a cached component skips the pipeline and
+    # with it the rewrite-time check against this runtime.
+    from gtirb_rewriting.abi import _ABIS
+    probe = get_arch(gtirb.Module(name="contract-check", isa=getattr(gtirb.Module.ISA, isa)))
+    try:
+        args.contract.check(probe, probe.register_abi(_ABIS), args.instrumentation_options, args.mode_layout)
+    except RuntimeContractError as error:
+        parser.error(str(error))
     selected = [converter.inspect(path, "selected", **conversion_options) for path in args.select]
     external = [converter.inspect(path, "external") for path in args.external]
     order = converter.validate_closure(executable, selected, external)
@@ -465,7 +480,7 @@ def main():
                "selected_libraries": sorted((item["soname"], item["sha256"]) for item in selected),
                "external_libraries": sorted((item["soname"], item["sha256"]) for item in external),
                **tool_key,
-               "runtime_contract": json.loads(args.runtime_contract.read_text()),
+               "runtime_contract": contract_identity(args.contract),
                "options": asdict(args.instrumentation_options), "ROB_LEN": ROB_LEN,
                "mode": args.mode,
                "target_identification": args.target_identification,
@@ -494,6 +509,7 @@ def main():
                         args.out / ("component-{:03d}.o".format(index)))
     dump(args.out / "components.json", {"components": components, "total_guards": total_guards,
                                        **mode_metadata(isa, args.mode, args.target_identification),
+                                       "runtime_contract": contract_identity(args.contract),
                                        "link_support": link_support,
                                        "status": "objects_ready_final_link_and_behavior_not_yet_verified"})
     print(json.dumps({"components": len(components), "cache_hits": sum(c["cache_hit"] for c in components),
@@ -553,7 +569,10 @@ def component_layout(components, target_identification='software'):
                    "    KEEP(*(.teapot_component_guards." + key + "))"]
         total_guards += component["guard_count"]
     require(total_guards < 0x80000000, "coverage index relocation would overflow")
-    layout += ["    __guard_end__teapot__ = .; }", "} INSERT AFTER .data;"]
+    # Keep every component's contract record under --gc-sections too: only the
+    # runtime's __start_/__stop_ walk refers to them.
+    layout += ["    __guard_end__teapot__ = .; }",
+               "  teapot_contract : ALIGN(8) { KEEP(*(teapot_contract)) }", "} INSERT AFTER .data;"]
     return "\n".join(layout) + "\n"
 
 
