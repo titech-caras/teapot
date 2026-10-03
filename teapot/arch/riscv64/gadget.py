@@ -1,6 +1,6 @@
 from itertools import count
 
-from teapot.configs.runtime import SCRATCHPAD_SIZE, SYMBOL_SUFFIX
+from teapot.configs.runtime import GUARD_ENTRY_WIDTH, SCRATCHPAD_SIZE, SYMBOL_SUFFIX
 
 
 _REPORT_LABEL_COUNTER = count()
@@ -31,7 +31,7 @@ class RISCV64GadgetPatchesMixin:
                 ld {top_reg}, 0({top_addr_reg})
                 {index}
                 sw {top_addr_reg}, 0({top_reg})
-                addi {top_reg}, {top_reg}, 4
+                addi {top_reg}, {top_reg}, {GUARD_ENTRY_WIDTH}
                 {self.load_address(top_addr_reg, "guard_list_top")}
                 sd {top_reg}, 0({top_addr_reg})
             """

@@ -12,6 +12,7 @@ from teapot.arch.riscv64.operands import RISCV64OperandMixin
 from teapot.arch.riscv64.registers import RISCV64RegisterMixin
 from teapot.arch.riscv64.runtime import RISCV64RuntimeMixin
 from teapot.arch.riscv64.spill import RISCV64FirstSpillMixin
+from teapot.configs.runtime import CHECKPOINT_TARGET_SCRATCH_REG_OFFSET
 
 
 class RISCV64Architecture(
@@ -29,7 +30,7 @@ class RISCV64Architecture(
         RISCV64FirstSpillMixin,
         Architecture):
     MAGIC_WORDS = (0x11400013, 0x51400013)
-    CHECKPOINT_TARGET_SCRATCH_REG_ADDR = 24
+    CHECKPOINT_TARGET_SCRATCH_REG_ADDR = CHECKPOINT_TARGET_SCRATCH_REG_OFFSET
     MAX_BRANCH_RELAXATION_ITERATIONS = 8
 
     def __init__(self):

@@ -1,4 +1,9 @@
-from teapot.configs.runtime import MEMORY_HISTORY_ENTRY_SIZE, MEMORY_HISTORY_SIZE_OFFSET
+from teapot.configs.runtime import (
+    MEMORY_HISTORY_DATA_OFFSET,
+    MEMORY_HISTORY_DATA_WIDTH,
+    MEMORY_HISTORY_ENTRY_SIZE,
+    MEMORY_HISTORY_SIZE_OFFSET,
+)
 
 
 class AArch64MemlogPatchesMixin:
@@ -8,11 +13,13 @@ class AArch64MemlogPatchesMixin:
             {self.load_address(top_reg, "memory_history_top")}
             ldr {top_reg}, [{top_reg}]
         """
-        for idx in range(0, access_size, 8):
-            chunk_size = min(8, access_size - idx)
+        # Each entry holds the address at its start and at most
+        # MEMORY_HISTORY_DATA_WIDTH data bytes.
+        for idx in range(0, access_size, MEMORY_HISTORY_DATA_WIDTH):
+            chunk_size = min(MEMORY_HISTORY_DATA_WIDTH, access_size - idx)
             if idx:
                 assert not no_clobber_addr
-                asm += f"add {addr_reg}, {addr_reg}, #8\n"
+                asm += f"add {addr_reg}, {addr_reg}, #{MEMORY_HISTORY_DATA_WIDTH}\n"
             asm += f"""
                 str {addr_reg}, [{top_reg}]
             """
@@ -23,7 +30,7 @@ class AArch64MemlogPatchesMixin:
                     continue
                 asm += f"""
                     ldr{suffix} {data_reg:{register_size}}, [{addr_reg}, #{byte_idx}]
-                    str{suffix} {data_reg:{register_size}}, [{top_reg}, #{8 + byte_idx}]
+                    str{suffix} {data_reg:{register_size}}, [{top_reg}, #{MEMORY_HISTORY_DATA_OFFSET + byte_idx}]
                 """
                 byte_idx += width
             asm += f"""

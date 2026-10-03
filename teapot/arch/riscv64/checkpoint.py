@@ -3,8 +3,10 @@ from uuid import UUID
 from gtirb_rewriting import InsertionContext
 
 from teapot.configs.runtime import (
+    CHECKPOINT_TARGET_BRANCH_COUNTER_OFFSET,
     CHECKPOINT_TARGET_FIXED_REG_SOURCE_NONE,
     CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS,
+    CHECKPOINT_TARGET_RETURN_OFFSET,
     ROB_LEN,
     SYMBOL_SUFFIX,
 )
@@ -14,9 +16,14 @@ from teapot.utils.misc import generate_distinct_label_name
 class RISCV64CheckpointPatchesMixin:
     CHECKPOINT_FIXED_REGISTERS = ("t0", "t1")
 
+    @staticmethod
+    def checkpoint_register_state_offset(number: int) -> int:
+        """Where checkpoint metadata keeps xN: eight bytes each, from x1."""
+        return (number - 1) * 8
+
     def _checkpoint_source_offset(self, register: str) -> int:
         register_number = int(self.x_register_name(self.abi.get_register(register))[1:])
-        return (register_number - 1) * 8
+        return self.checkpoint_register_state_offset(register_number)
 
     def checkpoint_patch(self, block_uuid: UUID, spare_registers=()):
         spare_registers = tuple(spare_registers)
@@ -51,9 +58,9 @@ class RISCV64CheckpointPatchesMixin:
                 {self.load_address("t1", "checkpoint_target_metadata")}
                 sd t0, 0(t1)
                 {self.load_address("t0", return_landing)}
-                sd t0, 8(t1)
+                sd t0, {CHECKPOINT_TARGET_RETURN_OFFSET}(t1)
                 {self.load_address("t0", branch_counter)}
-                sd t0, 16(t1)
+                sd t0, {CHECKPOINT_TARGET_BRANCH_COUNTER_OFFSET}(t1)
                 li t0, {source_offsets[0]}
                 sd t0, {CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS[0]}(t1)
                 li t0, {source_offsets[1]}

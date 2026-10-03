@@ -1,6 +1,11 @@
 from gtirb_rewriting import Register
 
-from teapot.configs.runtime import MEMORY_HISTORY_ENTRY_SIZE, MEMORY_HISTORY_SIZE_OFFSET
+from teapot.configs.runtime import (
+    MEMORY_HISTORY_DATA_OFFSET,
+    MEMORY_HISTORY_DATA_WIDTH,
+    MEMORY_HISTORY_ENTRY_SIZE,
+    MEMORY_HISTORY_SIZE_OFFSET,
+)
 
 
 class X64MemlogPatchesMixin:
@@ -10,13 +15,15 @@ class X64MemlogPatchesMixin:
         asm = f"mov {top_reg}, [memory_history_top]\n"
 
         if no_clobber_addr:
-            assert access_size <= 8
+            assert access_size <= MEMORY_HISTORY_DATA_WIDTH
 
-        for offset in range(0, access_size, 8):
-            chunk_size = min(8, access_size - offset)
+        # Each entry holds the address at its start and at most
+        # MEMORY_HISTORY_DATA_WIDTH data bytes.
+        for offset in range(0, access_size, MEMORY_HISTORY_DATA_WIDTH):
+            chunk_size = min(MEMORY_HISTORY_DATA_WIDTH, access_size - offset)
             if offset:
                 assert not no_clobber_addr
-                asm += f"lea {addr_reg}, [{addr_reg} + 8]\n"
+                asm += f"lea {addr_reg}, [{addr_reg} + {MEMORY_HISTORY_DATA_WIDTH}]\n"
             asm += f"""
                 mov [{top_reg}], {addr_reg}
             """
@@ -28,7 +35,7 @@ class X64MemlogPatchesMixin:
                     continue
                 asm += f"""
                     mov {data_reg:{register_size}}, {operand_size} ptr [{addr_reg} + {byte_idx}]
-                    mov {operand_size} ptr [{top_reg} + {8 + byte_idx}], {data_reg:{register_size}}
+                    mov {operand_size} ptr [{top_reg} + {MEMORY_HISTORY_DATA_OFFSET + byte_idx}], {data_reg:{register_size}}
                 """
                 byte_idx += width
             asm += f"""

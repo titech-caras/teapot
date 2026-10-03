@@ -3,8 +3,10 @@ from uuid import UUID
 from gtirb_rewriting import InsertionContext
 
 from teapot.configs.runtime import (
+    CHECKPOINT_TARGET_BRANCH_COUNTER_OFFSET,
     CHECKPOINT_TARGET_FIXED_REG_SOURCE_NONE,
     CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS,
+    CHECKPOINT_TARGET_RETURN_OFFSET,
     ROB_LEN,
     SYMBOL_SUFFIX,
 )
@@ -16,8 +18,13 @@ class AArch64CheckpointPatchesMixin:
     CHECKPOINT_FIXED_REGISTERS = ("x16", "x17")
 
     @staticmethod
-    def _checkpoint_source_offset(register: str) -> int:
-        return int(register[1:]) * 8
+    def checkpoint_register_state_offset(number: int) -> int:
+        """Where checkpoint metadata keeps xN: eight bytes each, from x0."""
+        return number * 8
+
+    @classmethod
+    def _checkpoint_source_offset(cls, register: str) -> int:
+        return cls.checkpoint_register_state_offset(int(register[1:]))
 
     def checkpoint_patch(self, block_uuid: UUID, spare_registers=()):
         spare_registers = tuple(spare_registers)
@@ -53,9 +60,9 @@ class AArch64CheckpointPatchesMixin:
                 {self.load_address("x17", "checkpoint_target_metadata")}
                 str x16, [x17]
                 {self.load_address("x16", return_landing)}
-                str x16, [x17, #8]
+                str x16, [x17, #{CHECKPOINT_TARGET_RETURN_OFFSET}]
                 {self.load_address("x16", branch_counter)}
-                str x16, [x17, #16]
+                str x16, [x17, #{CHECKPOINT_TARGET_BRANCH_COUNTER_OFFSET}]
                 mov x16, #{source_offsets[0]}
                 str x16, [x17, #{CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS[0]}]
                 mov x16, #{source_offsets[1]}

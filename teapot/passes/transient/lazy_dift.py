@@ -10,7 +10,12 @@ import re
 from gtirb_rewriting import Patch
 
 from teapot.configs.blacklist import is_blacklisted_function
-from teapot.configs.runtime import MEMORY_HISTORY_ENTRY_SIZE, MEMORY_HISTORY_SIZE_OFFSET
+from teapot.configs.runtime import (
+    DIFT_REG_TAGS_SIZE,
+    MEMORY_HISTORY_DATA_OFFSET,
+    MEMORY_HISTORY_ENTRY_SIZE,
+    MEMORY_HISTORY_SIZE_OFFSET,
+)
 from teapot.configs.slots import ScratchpadSlots
 from teapot.passes.mixins import InstVisitorPassMixin, VisitorPassMixin
 from teapot.passes.text.dift.base import TextDiftLLVMBase
@@ -246,9 +251,9 @@ class TransientDiftReplayMixin:
 
     def _format_llvm_ir(self, body, *, target_triple=None):
         ir = super()._format_llvm_ir(body, target_triple=target_triple)
-        globals = """
+        globals = f"""
 @memory_history_top = external dso_local global ptr
-@dift_reg_queued_tags = external dso_local global [48 x i8]
+@dift_reg_queued_tags = external dso_local global [{DIFT_REG_TAGS_SIZE} x i8]
 @dift_reg_queue_pending = external dso_local global i8
 """
         return ir.replace("define dso_local void @func", globals + "\ndefine dso_local void @func")
@@ -263,7 +268,7 @@ class TransientDiftReplayMixin:
         self._br_cond(empty, f"%{label}_done", f"%{label}_apply")
         self._label(label + "_apply")
         self._store("i8", 0, "@dift_reg_queue_pending")
-        for offset in range(0, 48, 8):
+        for offset in range(0, DIFT_REG_TAGS_SIZE, 8):
             tags = self._build_gep("i8", "dift_reg_tags", offset, ptr_type=self.DIFT_REG_TAGS_TYPE)
             queued = self._build_gep("i8", "dift_reg_queued_tags", offset, ptr_type=self.DIFT_REG_TAGS_TYPE)
             merged = self._or("i64", self._load("i64", tags, align=8),
@@ -287,7 +292,7 @@ class TransientDiftReplayMixin:
                 if width != 8:
                     old = self._build_inst(f"zext {type} {old} to i64")
                 top = self._load("ptr", "@memory_history_top", volatile=True)
-                data = self._build_inst(f"getelementptr i8, ptr {top}, i64 8")
+                data = self._build_inst(f"getelementptr i8, ptr {top}, i64 {MEMORY_HISTORY_DATA_OFFSET}")
                 length = self._build_inst(f"getelementptr i8, ptr {top}, i64 {MEMORY_HISTORY_SIZE_OFFSET}")
                 self._store("ptr", address, top, volatile=True)
                 self._store("i64", old, data, volatile=True)

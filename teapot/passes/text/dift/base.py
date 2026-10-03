@@ -12,7 +12,12 @@ from gtirb_rewriting import Patch
 from gtirb_rewriting.assembly import Register
 
 from teapot.arch.architecture import Architecture
-from teapot.configs.runtime import SCRATCHPAD_SIZE
+from teapot.configs.runtime import (
+    DIFT_REG_TAGS_ALIGNMENT,
+    DIFT_REG_TAGS_SIZE,
+    SCRATCHPAD_ALIGNMENT,
+    SCRATCHPAD_SIZE,
+)
 from teapot.configs.slots import ScratchpadSlots
 from teapot.passes.common.dift.base import DiftPassBase
 
@@ -37,7 +42,7 @@ class TextDiftInstructionEffects:
 
 
 class TextDiftLLVMBase(DiftPassBase):
-    DIFT_REG_TAGS_TYPE = "[48 x i8]"
+    DIFT_REG_TAGS_TYPE = f"[{DIFT_REG_TAGS_SIZE} x i8]"
     SCRATCHPAD_ARR_TYPE = f"[{SCRATCHPAD_SIZE // 8} x i64]"
     TAG_TYPE = "i8"
     SCRATCHPAD_ELEM_TYPE = "i64"
@@ -80,8 +85,8 @@ class TextDiftLLVMBase(DiftPassBase):
     def _format_llvm_ir(self, body: str, *, target_triple=None) -> str:
         target = f'target triple = "{target_triple}"\n\n' if target_triple else ""
         return f"""
-{target}@dift_reg_tags = dso_local local_unnamed_addr global {self.DIFT_REG_TAGS_TYPE} zeroinitializer, align 16
-@scratchpad = dso_local local_unnamed_addr global {self.SCRATCHPAD_ARR_TYPE} zeroinitializer, align 16
+{target}@dift_reg_tags = dso_local local_unnamed_addr global {self.DIFT_REG_TAGS_TYPE} zeroinitializer, align {DIFT_REG_TAGS_ALIGNMENT}
+@scratchpad = dso_local local_unnamed_addr global {self.SCRATCHPAD_ARR_TYPE} zeroinitializer, align {SCRATCHPAD_ALIGNMENT}
 
 define dso_local void @func() local_unnamed_addr #0 {{
 {body}

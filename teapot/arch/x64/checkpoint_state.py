@@ -6,6 +6,8 @@ from capstone import CsError
 from gtirb_functions import Function
 from gtirb_live_register_analysis.vectors import checkpoint_case, extended_state_clobbers
 
+from teapot.configs.runtime import X64_VECTOR_STATE_ARGUMENTS
+
 
 def df_checkpoint_blocks(module, decoder, abi):
     """Return blocks whose final instruction may execute with DF set."""
@@ -102,4 +104,4 @@ def vector_checkpoint_cases(module, reg_manager, requested='auto', *, debug_cros
 
 def vector_state(requested='auto'):
     """The full entry's XSAVE mask; auto reduction is now selected per site."""
-    return {'auto': 4, 'xmm0-7': 1, 'sse': 2, 'avx': 3, 'full': 4}[requested]
+    return X64_VECTOR_STATE_ARGUMENTS['full' if requested == 'auto' else requested]

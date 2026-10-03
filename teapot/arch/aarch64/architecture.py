@@ -11,6 +11,7 @@ from teapot.arch.aarch64.registers import AArch64RegisterMixin
 from teapot.arch.aarch64.runtime import AArch64RuntimeMixin
 from teapot.arch.aarch64.spill import AArch64ShadowStackMixin
 from teapot.arch.architecture import Architecture
+from teapot.configs.runtime import CHECKPOINT_TARGET_SCRATCH_REG_OFFSET
 
 
 class AArch64Architecture(
@@ -27,7 +28,7 @@ class AArch64Architecture(
         AArch64ShadowStackMixin,
         Architecture):
     MAGIC_WORDS = (0xd280229f, 0xd280a29f)
-    CHECKPOINT_TARGET_SCRATCH_REG_ADDR = 24
+    CHECKPOINT_TARGET_SCRATCH_REG_ADDR = CHECKPOINT_TARGET_SCRATCH_REG_OFFSET
     MAX_BRANCH_RELAXATION_ITERATIONS = 8
     INVERSE_CONDITIONS = {
         "eq": "ne",

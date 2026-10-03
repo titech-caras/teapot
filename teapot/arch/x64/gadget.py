@@ -2,7 +2,7 @@ from typing import Optional
 
 from gtirb_rewriting import Register
 
-from teapot.configs.runtime import SCRATCHPAD_SIZE
+from teapot.configs.runtime import GUARD_ENTRY_WIDTH, X64_REPORT_STACK_OFFSET
 
 
 class X64GadgetPatchesMixin:
@@ -14,7 +14,7 @@ class X64GadgetPatchesMixin:
             return f"""
                 mov {r1}, guard_list_top
                 mov dword ptr [{r1}], {index}
-                lea {r1}, [{r1} + 4]
+                lea {r1}, [{r1} + {GUARD_ENTRY_WIDTH}]
                 mov guard_list_top, {r1}
             """
 
@@ -37,7 +37,7 @@ class X64GadgetPatchesMixin:
 
         return f"""
             mov old_rsp, rsp
-            lea rsp, scratchpad+{SCRATCHPAD_SIZE - 32}
+            lea rsp, scratchpad+{X64_REPORT_STACK_OFFSET}
             mov scratchpad+24, rax
             mov scratchpad+32, rcx
             mov scratchpad+40, r8

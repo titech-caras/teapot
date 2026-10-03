@@ -5,7 +5,7 @@ from gtirb_rewriting.abi import _PatchRegisterAllocation
 from gtirb_rewriting.assembly import Constraints, Register, _AsmSnippet
 
 from teapot.arch.abi import ConservativeRegisterAllocationMixin
-from teapot.configs.runtime import SCRATCHPAD_SIZE
+from teapot.configs.slots import SCRATCHPAD_FIRST_SPILL_OFFSET
 
 
 class _X86_64_ELF(ConservativeRegisterAllocationMixin, _X86_64_ELF_BASE):
@@ -24,7 +24,7 @@ class _X86_64_ELF(ConservativeRegisterAllocationMixin, _X86_64_ELF_BASE):
         prologue: List[_AsmSnippet] = []
         epilogue: List[_AsmSnippet] = []
 
-        scratchpad_offset = SCRATCHPAD_SIZE // 2
+        scratchpad_offset = SCRATCHPAD_FIRST_SPILL_OFFSET
         for reg in register_use.clobbered_registers:
             if reg.name == "rflags":
                 continue

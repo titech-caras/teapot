@@ -1,4 +1,9 @@
-from teapot.configs.runtime import MEMORY_HISTORY_ENTRY_SIZE, MEMORY_HISTORY_SIZE_OFFSET
+from teapot.configs.runtime import (
+    MEMORY_HISTORY_DATA_OFFSET,
+    MEMORY_HISTORY_DATA_WIDTH,
+    MEMORY_HISTORY_ENTRY_SIZE,
+    MEMORY_HISTORY_SIZE_OFFSET,
+)
 
 
 class RISCV64MemlogPatchesMixin:
@@ -8,11 +13,13 @@ class RISCV64MemlogPatchesMixin:
             {self.load_address(top_reg, "memory_history_top")}
             ld {top_reg}, 0({top_reg})
         """
-        for idx in range(0, access_size, 8):
-            chunk_size = min(8, access_size - idx)
+        # Each entry holds the address at its start and at most
+        # MEMORY_HISTORY_DATA_WIDTH data bytes.
+        for idx in range(0, access_size, MEMORY_HISTORY_DATA_WIDTH):
+            chunk_size = min(MEMORY_HISTORY_DATA_WIDTH, access_size - idx)
             if idx:
                 assert not no_clobber_addr
-                asm += f"addi {addr_reg}, {addr_reg}, 8\n"
+                asm += f"addi {addr_reg}, {addr_reg}, {MEMORY_HISTORY_DATA_WIDTH}\n"
             asm += f"""
                 sd {addr_reg}, 0({top_reg})
             """
@@ -27,13 +34,13 @@ class RISCV64MemlogPatchesMixin:
                     if not chunk_size & width:
                         continue
                     asm += f"{load} {data_reg}, {byte_idx}({addr_reg})\n"
-                    asm += f"{store} {data_reg}, {8 + byte_idx}({top_reg})\n"
+                    asm += f"{store} {data_reg}, {MEMORY_HISTORY_DATA_OFFSET + byte_idx}({top_reg})\n"
                     byte_idx += width
                 asm += "j 92f\n91:\n"
             for byte_idx in range(chunk_size):
                 asm += f"""
                     lbu {data_reg}, {byte_idx}({addr_reg})
-                    sb {data_reg}, {8 + byte_idx}({top_reg})
+                    sb {data_reg}, {MEMORY_HISTORY_DATA_OFFSET + byte_idx}({top_reg})
                 """
             if alignment > 1:
                 asm += "92:\n"

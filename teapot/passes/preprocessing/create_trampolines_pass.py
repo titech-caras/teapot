@@ -7,6 +7,7 @@ from capstone import CsInsn
 
 from teapot.arch.architecture import Architecture
 from teapot.configs.blacklist import is_blacklisted_function
+from teapot.configs.runtime import BRANCH_COUNTER_WIDTH
 from teapot.passes.mixins import VisitorPassMixin
 from teapot.datacls.copied_section_mapping import CopiedSectionMapping
 from teapot.utils.misc import conditional_branch_edge, distinguish_edges, generate_distinct_label_name
@@ -63,7 +64,7 @@ class CreateTrampolinesPass(VisitorPassMixin):
         return block
 
     def __initialize_empty_counter_data_block(self):
-        size = 4
+        size = BRANCH_COUNTER_WIDTH
 
         self.branch_counter_byte_interval.contents += bytes([0x00] * size)
         self.branch_counter_byte_interval.size += size

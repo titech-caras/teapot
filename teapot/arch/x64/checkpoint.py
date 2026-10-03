@@ -2,7 +2,12 @@ from uuid import UUID
 
 from gtirb_rewriting import InsertionContext
 
-from teapot.configs.runtime import ROB_LEN, SYMBOL_SUFFIX
+from teapot.configs.runtime import (
+    CHECKPOINT_TARGET_BRANCH_COUNTER_OFFSET,
+    CHECKPOINT_TARGET_RETURN_OFFSET,
+    ROB_LEN,
+    SYMBOL_SUFFIX,
+)
 from teapot.utils.misc import generate_distinct_label_name
 
 
@@ -29,9 +34,9 @@ class X64CheckpointPatchesMixin:
                 lea {r}, [rip+{generate_distinct_label_name(".__trampoline_", block_uuid)}]
                 mov checkpoint_target_metadata, {r}
                 lea {r}, [rip+.L__after_checkpoint{SYMBOL_SUFFIX}]
-                mov [checkpoint_target_metadata+8], {r}
+                mov [checkpoint_target_metadata+{CHECKPOINT_TARGET_RETURN_OFFSET}], {r}
                 lea {r}, [rip+{generate_distinct_label_name(".__branch_counter_", block_uuid)}]
-                mov [checkpoint_target_metadata+16], {r}
+                mov [checkpoint_target_metadata+{CHECKPOINT_TARGET_BRANCH_COUNTER_OFFSET}], {r}
                 {epilogue}
                 jmp {entry}
             .L__after_checkpoint{SYMBOL_SUFFIX}:
