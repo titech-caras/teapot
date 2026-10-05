@@ -77,16 +77,32 @@ class X64CheckpointPatchesMixin:
         """)
 
     def conditional_restore_point_patch(self, instruction_count: int):
-        @self.constraints(scratch_registers=1, clobbers_flags=True)
+        """Charge the code since the last point to the speculation window, or roll back.
+
+        The window rule is unchanged: with the 64-bit counter c, the point rolls
+        back when c + n >= ROB_LEN (signed) and otherwise stores c + n. It now
+        compares c with ROB_LEN - n before adding n in memory, so it needs no
+        scratch register. As before, a rejection leaves the counter unchanged;
+        the runtime replaces it with the checkpoint's value. The two compares
+        agree while c + n does not overflow: the counter only grows by checked
+        steps from a checkpoint's value below ROB_LEN, and n is a block's cost.
+        The flags still go through the allocator (clobbers_flags), which saves
+        them only where they are live.
+        """
+        threshold = ROB_LEN - instruction_count
+        if not (0 <= instruction_count < 2 ** 31 and -2 ** 31 <= threshold < 2 ** 31):
+            # Both are sign-extended 32-bit immediates.
+            raise ValueError(f"restore point cost {instruction_count} does not fit the counter's immediates")
+
+        @self.constraints(clobbers_flags=True)
         def patch(ctx: InsertionContext):
-            r = ctx.scratch_registers[0]
-            return f"""
-                mov {r}, instruction_cnt
-                add {r}, {instruction_count}
-                cmp {r}, {ROB_LEN}
+            asm = f"""
+                cmp qword ptr instruction_cnt, {threshold}
                 jge restore_checkpoint_ROB_LEN
-                mov instruction_cnt, {r}
             """
+            if instruction_count:
+                asm += f"add qword ptr instruction_cnt, {instruction_count}\n"
+            return asm
 
         return patch
 

@@ -53,8 +53,10 @@ class ImplicitLayoutTests(unittest.TestCase):
         x64, abi = arch_for(gtirb.Module.ISA.X64)
         registers = [abi.get_register(name) for name in ("rbx", "rcx")]
         self.assertRegex(render(x64.checkpoint_patch(block), registers), r"mov checkpoint_target_metadata, rbx")
-        # 64-bit register operands for instruction_cnt.
-        self.assertRegex(render(x64.conditional_restore_point_patch(3), registers), r"mov rbx, instruction_cnt")
+        # 64-bit memory operands for instruction_cnt.
+        text = render(x64.conditional_restore_point_patch(3), registers)
+        self.assertRegex(text, rf"cmp qword ptr instruction_cnt, {runtime.ROB_LEN - 3}\n")
+        self.assertRegex(text, r"add qword ptr instruction_cnt, 3\n")
         aarch64, abi = arch_for(gtirb.Module.ISA.ARM64)
         self.assertRegex(render(aarch64.checkpoint_patch(block), []), r"str x16, \[x17\]\n")
         riscv64, abi = arch_for(gtirb.Module.ISA.RISCV64)
