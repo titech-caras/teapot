@@ -133,6 +133,32 @@ archive of the same ABI and that the runtime checks again at start-up, from its
 `.preinit_array` entries of objects linked before it and after IFUNC resolvers.
 See `libcheckpoint/README.md` ("Runtime contract").
 
+The program must not use the names by which the rewrite refers to the runtime
+(`TeapotPipeline.runtime_names`): those `ImportSymbolsPass` imports for
+Teapot's code (the architecture's `checkpoint_lib_symbols`, from
+`teapot/configs/runtime.py`, and the contract anchor), such as `scratchpad` or
+`checkpoint_cnt`, and the wrappers that calls of `signal`, `sigaction` and,
+with DIFT, `memcpy` and others are redirected to (`wrapper_destinations` in
+`teapot/configs/blacklist.py`). The rewrite binds each name to the module's
+symbol of that name, so a program's own static `scratchpad` would take the
+runtime's place. Teapot refuses such a program before rewriting anything and
+names each symbol and where it is, whatever its binding, type or version;
+rename it in the program. Undefined references to these names are refused too,
+except plain imports of the Sanitizer Coverage hooks, which a program built with
+`-fsanitize-coverage` calls and the fuzzer's runtime provides: like Teapot's own
+import, GLOBAL, DEFAULT, a function (or NOTYPE), without a version or
+forwarding, and several of one hook only with the same ELF symbol entry. A
+COMMON symbol is a definition (`teapot/preprocess/runtime_names.py`). The names
+of the symbols Teapot generates are reserved too (`is_generated_name` in
+`teapot/configs/runtime.py`): names containing `__teapot__`; starting with
+`.L__teapot_`, `__teapot_bti_`, `__teapot_linked_`, `__teapot_component_` or
+`__libcheckpoint_contract_`; ending in `__teapot_wrapper__` or
+`__dift_wrapper__`; and the PAC marker `teapot_aarch64_bti_pac_rewrite_marker`.
+The component driver (`experiments/reusable_libraries/rewrite_components.py`)
+runs the same complete check (`refuse_reserved_names` in `teapot/pipeline.py`)
+on each component's untouched lift, before its converter localizes symbols and
+renames versioned ones.
+
 See [`libcheckpoint/README.md`](libcheckpoint/README.md) for runtime
 build options, shared AArch64 shadow-stack configuration, ASan/MTE tag-storage requirements, DIFT layout profiles,
 optional wrapper libraries, and architecture-specific qemu notes.

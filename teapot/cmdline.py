@@ -8,6 +8,7 @@ import gtirb
 
 from teapot.configs.runtime import ASAN_TAG_STORAGES, ASAN_TAG_STORAGE_SHADOW
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
+from teapot.preprocess.runtime_names import RuntimeNameError
 from teapot.runtime_contract import RuntimeContractError, load_runtime_contract
 from teapot.utils.serialization import compact_for_pprinter, save_protobuf_ordered
 
@@ -171,7 +172,7 @@ def main():
     pipeline = TeapotPipeline(ir, args.dift_layout, options, runtime_contract=runtime_contract)
     try:
         pipeline.run()
-    except RuntimeContractError as error:
+    except (RuntimeContractError, RuntimeNameError) as error:
         sys.exit(f"teapot: {error}")
     del pipeline
 

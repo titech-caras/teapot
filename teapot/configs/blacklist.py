@@ -119,3 +119,20 @@ DIFT_WRAPPER_FUNCTIONS = {
     "inflateReset", "inflateReset2", "inflateResetKeep", "inflateCopy",
     "inflateSetDictionary", "inflatePrime", "inflateSync",
 }
+
+# The runtime's DIFT wrapper of a function: its name with this suffix (DIFT_WRAPPER in
+# libcheckpoint/include/dift_support.h).
+DIFT_WRAPPER_SUFFIX = "__dift_wrapper__"
+
+
+def wrapper_destinations(wrap_dift_calls: bool) -> dict:
+    """The runtime wrappers DiftExtCallPass redirects external calls to: {callee: wrapper}.
+
+    The rewritten program imports them from the runtime, so the program must
+    not use their names (teapot/preprocess/runtime_names.py).
+    """
+    destinations = dict(RUNTIME_WRAPPER_FUNCTIONS)
+    if wrap_dift_calls:
+        for name in sorted(DIFT_WRAPPER_FUNCTIONS):
+            destinations.setdefault(name, name + DIFT_WRAPPER_SUFFIX)
+    return destinations

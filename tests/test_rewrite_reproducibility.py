@@ -47,6 +47,12 @@ def rewritten_code(path, variant, mode):
     section = next(s for s in module.sections if s.name == ".text")
     manager = LiveRegisterManager(module, abi)
     if mode == 2:
+        # The input stands in for the runtime symbols the single passes refer to.
+        # The pipeline imports them itself and refuses a program that uses
+        # their names (teapot/preprocess/runtime_names.py).
+        for symbol in [symbol for symbol in module.symbols if isinstance(symbol.referent, gtirb.ProxyBlock)]:
+            module.proxies.discard(symbol.referent)
+            module.symbols.discard(symbol)
         TeapotPipeline(ir, runtime_contract=fixture_contract(arch.name)).run()
     else:
         passes = PassManager()

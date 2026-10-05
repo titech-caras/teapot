@@ -1,5 +1,35 @@
 SYMBOL_SUFFIX = "__teapot__"
 
+# The names of the symbols Teapot generates, which the input must not use: it
+# finds its symbols and refers to them by these names. Whole programs are
+# refused in TeapotPipeline (teapot/preprocess/runtime_names.py), components in
+# their driver (experiments/reusable_libraries/rewrite_components.py), by the
+# same rule (is_generated_name).
+GENERATED_NAME_INFIXES = (
+    SYMBOL_SUFFIX,                # labels, copies, section and guard bounds, reference aliases
+)
+GENERATED_NAME_PREFIXES = (
+    ".L__teapot_",                # the contract record, source-line labels, direct entries, reference aliases
+    "__teapot_bti_",              # AArch64 BTI section bounds
+    "__teapot_linked_",           # the bounds of a separately rewritten component
+    "__teapot_component_",        # its guard base
+    "__libcheckpoint_contract_",  # contract anchors, of any fingerprint
+)
+GENERATED_NAME_SUFFIXES = (
+    "__teapot_wrapper__",         # the runtime's wrappers that external calls are redirected to
+    "__dift_wrapper__",
+)
+GENERATED_NAMES = (
+    "teapot_aarch64_bti_pac_rewrite_marker",
+)
+
+
+def is_generated_name(name: str) -> bool:
+    """Whether Teapot generates symbols called ``name`` (GENERATED_NAME_*)."""
+    return (any(infix in name for infix in GENERATED_NAME_INFIXES) or name.startswith(GENERATED_NAME_PREFIXES) or
+            name.endswith(GENERATED_NAME_SUFFIXES) or name in GENERATED_NAMES)
+
+
 # The speculation budget: Teapot's alone, recorded in each module's contract
 # record but never compared with the runtime, which does not read it.
 ROB_LEN = 250
@@ -67,6 +97,17 @@ ASAN_TAG_STORAGE_SHADOW = "shadow"
 ASAN_TAG_STORAGE_MTE = "mte"
 ASAN_TAG_STORAGES = (ASAN_TAG_STORAGE_SHADOW, ASAN_TAG_STORAGE_MTE)
 
+# The Sanitizer Coverage hooks. A coverage runtime calls them and the fuzzer's
+# runtime defines them; a program compiled with -fsanitize-coverage calls them
+# too, so a program may refer to them (teapot/preprocess/runtime_names.py).
+COVERAGE_HOOK_SYMBOLS = [
+    "__sanitizer_cov_trace_pc",
+    "__sanitizer_cov_trace_pc_guard",
+]
+
+# The runtime names Teapot's code refers to, with each architecture's additions
+# (Architecture.checkpoint_lib_symbols). The rewrite imports them, and a program
+# that uses one of them is refused (teapot/preprocess/runtime_names.py).
 COMMON_CHECKPOINT_LIB_SYMBOLS = [
     "scratchpad",
 
@@ -90,6 +131,5 @@ COMMON_CHECKPOINT_LIB_SYMBOLS = [
     "dift_reg_queued_tags",
     "dift_reg_queue_pending",
 
-    "__sanitizer_cov_trace_pc",
-    "__sanitizer_cov_trace_pc_guard",
+    *COVERAGE_HOOK_SYMBOLS,
 ]

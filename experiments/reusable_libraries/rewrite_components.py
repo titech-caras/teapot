@@ -38,7 +38,7 @@ from teapot.configs.blacklist import is_blacklisted_function_name
 from teapot.configs.runtime import ROB_LEN, SYMBOL_SUFFIX
 from teapot.datacls.linked_component import LinkedComponent
 from teapot.arch import get_arch, module_isa_name
-from teapot.pipeline import InstrumentationOptions, TeapotPipeline
+from teapot.pipeline import InstrumentationOptions, TeapotPipeline, refuse_reserved_names
 from teapot.runtime_contract import RuntimeContractError, load_runtime_contract
 from teapot.utils.serialization import compact_for_pprinter, save_protobuf_ordered
 from experiments.reusable_libraries.targets import (
@@ -260,10 +260,11 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
                   if any(directive[0] == ".cfi_startproc" for directive in directives)}
     for fde in item["application_fdes"]:
         require(fde["start"] in cfi_starts, ("unrecovered original unwind range", fde))
-    for symbol in module.symbols:
-        if SYMBOL_SUFFIX in symbol.name or symbol.name.startswith((
-                "__teapot_linked_", "__teapot_component_", "__teapot_bti_")):
-            raise RuntimeError("reserved instrumentation symbol in original input: " + symbol.name)
+    # The complete preflight of TeapotPipeline.run, on the untouched input: the runtime names of the selected mode,
+    # the coverage hooks' import rule and the generated-name rule (teapot/pipeline.py: refuse_reserved_names). The
+    # conversion below renames versioned symbols and imports from selected libraries to __teapot_selected_version_*
+    # and localizes others, which would hide a runtime name from the rewrite's own check (which stays as well).
+    refuse_reserved_names(ir, args.instrumentation_options, args.contract, component=True)
     if isa == 'ARM64':
         # Bind proved pointer returns directly to the untouched standalone IR.
         # No ordinary link/re-lift, origin records or UUID correspondence needed.

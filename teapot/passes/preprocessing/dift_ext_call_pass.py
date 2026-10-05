@@ -5,8 +5,7 @@ from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext
 
-from teapot.configs.blacklist import (
-    DIFT_WRAPPER_FUNCTIONS, RUNTIME_WRAPPER_FUNCTIONS, is_blacklisted_function)
+from teapot.configs.blacklist import DIFT_WRAPPER_FUNCTIONS, is_blacklisted_function, wrapper_destinations
 from teapot.passes.mixins import VisitorPassMixin
 
 
@@ -35,14 +34,12 @@ class DiftExtCallPass(VisitorPassMixin):
         forwarding = symbol_forwarding.data if symbol_forwarding is not None else {}
         symbol_versions = module.aux_data.get('elfSymbolVersions')
         version_entries = symbol_versions.data[2] if symbol_versions is not None else {}
+        destinations = wrapper_destinations(self.wrap_dift_calls)
         for forwarded_sym in {forwarding.get(sym, sym) for sym in self.symbols_to_rename}:
-            runtime_wrapper = RUNTIME_WRAPPER_FUNCTIONS.get(forwarded_sym.name)
-            if runtime_wrapper:
+            wrapper = destinations.get(forwarded_sym.name)
+            if wrapper:
                 version_entries.pop(forwarded_sym, None)
-                forwarded_sym.name = runtime_wrapper
-            elif self.wrap_dift_calls and not self.should_ignore_dift_wrapper(forwarded_sym.name):
-                version_entries.pop(forwarded_sym, None)
-                forwarded_sym.name += "__dift_wrapper__"
+                forwarded_sym.name = wrapper
         super().end_module(module, functions)
 
     def visit_function(self, function: Function):

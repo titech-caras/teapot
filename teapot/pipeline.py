@@ -10,7 +10,9 @@ from gtirb_rewriting import PassManager
 from gtirb_rewriting.abi import _ABIS
 
 from teapot.arch import get_arch
-from teapot.configs.runtime import ASAN_TAG_STORAGE_MTE, ASAN_TAG_STORAGE_SHADOW
+from teapot.configs.blacklist import wrapper_destinations
+from teapot.configs.runtime import (
+    ASAN_TAG_STORAGE_MTE, ASAN_TAG_STORAGE_SHADOW, COVERAGE_HOOK_SYMBOLS, is_generated_name)
 from teapot.passes.common.asan_stack_pass import AsanStackPass
 from teapot.passes.common.insert_checkpoints_pass import InsertCheckpointsPass
 from teapot.passes.preprocessing.create_trampolines_pass import CreateTrampolinesPass
@@ -37,6 +39,7 @@ from teapot.preprocess.copy_section import (
 )
 from teapot.preprocess.contract_record import add_contract_record
 from teapot.preprocess.create_guards import create_guards
+from teapot.preprocess.runtime_names import refuse_runtime_names
 from teapot.liveness import LivenessMetadataError, LiveRegisterManager
 from teapot.modes import validate_options
 from teapot.rewrite_state import RewriteState
@@ -120,6 +123,33 @@ class InstrumentationOptions:
     x64_vector_state: str = 'auto'
 
 
+def runtime_imports(arch, runtime_contract):
+    """The runtime names Teapot's code refers to, which ImportSymbolsPass imports."""
+    return [*arch.checkpoint_lib_symbols(), runtime_contract.anchor]
+
+
+def runtime_names(arch, runtime_contract, options):
+    """Every name by which the rewritten program refers to the runtime, which the program must not use: the
+    imports and the wrappers DiftExtCallPass redirects external calls to."""
+    return [*runtime_imports(arch, runtime_contract), *wrapper_destinations(options.enable_dift).values()]
+
+
+def refuse_reserved_names(ir: gtirb.IR, options: "InstrumentationOptions", runtime_contract,
+                          component: bool = False) -> None:
+    """Refuse an IR whose modules use the names by which the rewrite refers to the runtime, or those of the symbols
+    Teapot generates (teapot/preprocess/runtime_names.py): the runtime names of the mode the options select, the
+    coverage hooks' import rule and the generated-name rule. TeapotPipeline.run does this before anything else.
+    The component driver also does it on its untouched input, since its converter renames and localizes symbols
+    before the rewrite (experiments/reusable_libraries/rewrite_components.py)."""
+    arch = get_arch(ir.modules[0])
+    mode = validate_options(options, arch.name, component=component)
+    if mode.architecture is not None:
+        arch = mode.architecture()
+    names = runtime_names(arch, runtime_contract, options)
+    for module in ir.modules:
+        refuse_runtime_names(module, names, interfaces=COVERAGE_HOOK_SYMBOLS, generated=is_generated_name)
+
+
 class TeapotPipeline:
     def __init__(self, ir: gtirb.IR, dift_layout_name=None,
                  options: InstrumentationOptions = InstrumentationOptions(), *,
@@ -173,6 +203,11 @@ class TeapotPipeline:
         if self.runtime_contract is None:
             raise ValueError("select the runtime this rewrite will be linked with: the "
                              "lib<archive>.contract.json of its libcheckpoint archive (--runtime-contract)")
+        # Before anything is rewritten: the program must not use the names by
+        # which the rewrite refers to the runtime, or those of the symbols it
+        # generates (teapot/preprocess/runtime_names.py).
+        refuse_reserved_names(self.ir, self.options, self.runtime_contract,
+                              component=self.linked_component is not None)
         self.abi = self.arch.register_abi(_ABIS)
         # Before anything is rewritten: the runtime must match what Teapot emits
         # and provide what the options need. Its DIFT layout is the rewrite's.
@@ -285,6 +320,14 @@ class TeapotPipeline:
         # Last: a new section without addresses, after every rewrite.
         add_contract_record(self.module, self.runtime_contract, self.contract_requirements, self.options,
                             self.linked_component.component_id if self.linked_component is not None else None)
+
+    def runtime_imports(self):
+        """The runtime names Teapot's code refers to, which ImportSymbolsPass imports (runtime_imports)."""
+        return runtime_imports(self.arch, self.runtime_contract)
+
+    def runtime_names(self):
+        """The names the program must not use (runtime_names)."""
+        return runtime_names(self.arch, self.runtime_contract, self.options)
 
     def _count_liveness_coverage(self):
         """Count what stays all-live: instructions without a mask, discarded entries.
@@ -551,8 +594,7 @@ class TeapotPipeline:
 
     def _run_preprocess_passes(self):
         pass_manager = PassManager()
-        pass_manager.add(ImportSymbolsPass(
-            [*self.arch.checkpoint_lib_symbols(), self.runtime_contract.anchor]))
+        pass_manager.add(ImportSymbolsPass(self.runtime_imports()))
         trampolines = CreateTrampolinesPass(
             self.text_section,
             self.trampoline_section,
