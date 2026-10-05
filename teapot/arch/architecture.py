@@ -88,6 +88,13 @@ class Architecture(
     def transient_instruction_passes(self, reg_manager, section, decoder, dift_layout, options):
         return []
 
+    def mark_transient_input(self, section, decoder):
+        """Record which instructions of the just-made transient copy are input, for those passes."""
+
+    def transient_coalescing_passes(self, reg_manager, section, decoder):
+        """Passes of a round over the finished transient copy, which only remove instructions."""
+        return []
+
     def create_transient_dift_pass(self, reg_manager, section, decoder, dift_layout, *, insert_memlog=True):
         from teapot.passes.transient.lazy_dift import transient_replay_pass
         return transient_replay_pass(

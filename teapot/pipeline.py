@@ -293,6 +293,10 @@ class TeapotPipeline:
         # pads are anchored before it.
         if not self.arch.needs_late_text_checkpoints():
             self._run_anchor_passes()
+        # Once the copy is complete, and its pads are at its block starts: an
+        # unanchored pad sits between the patches at a block's start and the
+        # others. Before the relaxers, which must see the final layout.
+        self._run_transient_coalescing_passes()
 
         if self.options.target_identification == 'aarch64-bti-pac':
             # Outline before the in-place branch relaxer grows joined byte
@@ -532,6 +536,8 @@ class TeapotPipeline:
     def _create_instrumentation_sections(self):
         self.transient_section, self.transient_section_start_symbol, self.transient_section_end_symbol, \
             self.text_transient_mapping = copy_section(self.text_section, ".teapot_transient", self.decoder)
+        # Before any pass inserts code into the copy: all of it is input now.
+        self.arch.mark_transient_input(self.transient_section, self.decoder)
         self.text_section_start_symbol, self.text_section_end_symbol = create_section_bounds(
             self.text_section, "text")
         # The local bounds stay in the IR in component mode too, where the
@@ -763,6 +769,19 @@ class TeapotPipeline:
                 self.reg_manager, self.transient_section, self.decoder, self.dift_layout, self.options):
             pass_manager.add(arch_pass)
         self._run_pass_manager(pass_manager, "transient")
+
+    def _run_transient_coalescing_passes(self):
+        # A round of its own: it reads the patches the earlier rounds applied.
+        # Its refresh keeps the masks (_refresh_register_analysis): it removes
+        # only saves of a value the slot holds and restores nothing reads, so no
+        # application instruction sees another register value or dependency.
+        passes = self.arch.transient_coalescing_passes(self.reg_manager, self.transient_section, self.decoder)
+        if not passes:
+            return
+        pass_manager = PassManager()
+        for coalescing_pass in passes:
+            pass_manager.add(coalescing_pass)
+        self._run_pass_manager(pass_manager, "transient-coalescing")
 
     def _run_late_text_checkpoint_passes(self):
         pass_manager = PassManager()

@@ -5,7 +5,15 @@ from gtirb_rewriting.abi import _PatchRegisterAllocation
 from gtirb_rewriting.assembly import Constraints, Register, _AsmSnippet
 
 from teapot.arch.abi import ConservativeRegisterAllocationMixin
-from teapot.configs.slots import SCRATCHPAD_FIRST_SPILL_OFFSET
+from teapot.configs.slots import SCRATCHPAD_FIRST_SPILL_OFFSET, ScratchpadSlots
+
+# The area of the scratchpad that holds a patch's saved registers and flags:
+# the wrapper below writes and reads nothing else, and nothing else uses the
+# area, so its traffic is recognizable (teapot/passes/transient/x64_wrapper_coalescing.py).
+X64_WRAPPER_AREA = range(SCRATCHPAD_FIRST_SPILL_OFFSET, SCRATCHPAD_FIRST_SPILL_OFFSET + 4096)
+if any(isinstance(value, int) and value in X64_WRAPPER_AREA
+       for name, value in vars(ScratchpadSlots).items() if name != "FIRST_SPILL"):
+    raise AssertionError("a scratchpad slot lies in the x64 wrapper's spill area")
 
 
 class _X86_64_ELF(ConservativeRegisterAllocationMixin, _X86_64_ELF_BASE):
@@ -52,4 +60,5 @@ class _X86_64_ELF(ConservativeRegisterAllocationMixin, _X86_64_ELF_BASE):
             """))
             scratchpad_offset += 16
 
+        assert scratchpad_offset <= X64_WRAPPER_AREA.stop, "the wrapper's spills overflow its area"
         return prologue, reversed(epilogue), None

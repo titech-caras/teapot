@@ -70,6 +70,14 @@ class X64Architecture(
             enable_asan_check=options.enable_gadget_asan_check,
             enable_port_policy=options.enable_gadgets and options.enable_port_gadgets)]
 
+    def mark_transient_input(self, section, decoder):
+        from teapot.passes.transient.x64_wrapper_coalescing import mark_input_instructions
+        mark_input_instructions(section, decoder)
+
+    def transient_coalescing_passes(self, reg_manager, section, decoder):
+        from teapot.passes.transient.x64_wrapper_coalescing import X64WrapperCoalescingPass
+        return [X64WrapperCoalescingPass(reg_manager, section, decoder)]
+
     def create_transient_memlog_pass(self, reg_manager, section, decoder):
         from teapot.passes.transient.memlog.x64 import X64TransientMemlogPass
         return X64TransientMemlogPass(reg_manager, section, decoder, self)
