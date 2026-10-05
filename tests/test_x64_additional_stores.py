@@ -128,8 +128,9 @@ class X64AdditionalStoreTests(unittest.TestCase):
             with self.subTest(instruction=str(inst)), tempfile.TemporaryDirectory() as directory:
                 visitor, _ = self.visitor(inst)
                 self.assertEqual(visitor.insert_at.call_count, 1)
-                _, address, access_size = visitor._build_memlog_patch.call_args.args
-                patch = visitor._build_memlog_patch(inst, address, access_size)
+                # The patch the pass chose: two registers for one-entry scalar stores.
+                call = visitor._build_memlog_patch.call_args
+                patch = visitor._build_memlog_patch(*call.args, **call.kwargs)
                 allocation = self.arch.abi._allocate_patch_registers(patch.constraints)
                 prologue, epilogue, _ = self.arch.abi._create_prologue_and_epilogue(
                     patch.constraints, allocation, True)
@@ -195,12 +196,13 @@ int main(void) {
             inst = self.decode(encoded)
             with self.subTest(instruction=str(inst)), tempfile.TemporaryDirectory() as directory:
                 visitor, _ = self.visitor(inst)
-                _, address, access_size = visitor._build_memlog_patch.call_args.args
-                patch = visitor._build_memlog_patch(inst, address, access_size)
+                call = visitor._build_memlog_patch.call_args
+                patch = visitor._build_memlog_patch(*call.args, **call.kwargs)
                 # These are proven scratch registers in this small function;
                 # none aliases RAX, RDI, RSP or RBP used by the original store.
                 body = patch(SimpleNamespace(scratch_registers=tuple(
-                    self.arch.abi.get_register(name) for name in ("r8", "r9", "r10"))))
+                    self.arch.abi.get_register(name)
+                    for name in ("r8", "r9", "r10")[:patch.constraints.scratch_registers])))
                 assembly = ".intel_syntax noprefix\n.text\n"
                 for name, log in (("original", ""), ("rewritten", body)):
                     assembly += f"""

@@ -48,3 +48,27 @@ class X64MemlogPatchesMixin:
         """
 
         return asm
+
+    @staticmethod
+    def address_reusing_memlog_snippet(addr_reg: Register, top_reg: Register, access_size: int):
+        """memlog_snippet's entry for one 1-, 2-, 4- or 8-byte store, in two registers.
+
+        The entry, its contents and their order are memlog_snippet's: the
+        address at the entry's start, the old bytes (one load of the access's
+        width), the size, then the new top. The old bytes are loaded into the
+        address register only after the address is stored, so a faulting load
+        leaves the entry unpublished, as before.
+        """
+        widths = {8: ("qword", "64"), 4: ("dword", "32"), 2: ("word", "16"), 1: ("byte", "8l")}
+        if access_size not in widths:
+            raise ValueError(f"a {access_size}-byte store is not one load of one entry")
+        operand_size, register_size = widths[access_size]
+        return f"""
+            mov {top_reg}, [memory_history_top]
+            mov [{top_reg}], {addr_reg}
+            mov {addr_reg:{register_size}}, {operand_size} ptr [{addr_reg}]
+            mov {operand_size} ptr [{top_reg} + {MEMORY_HISTORY_DATA_OFFSET}], {addr_reg:{register_size}}
+            mov byte ptr [{top_reg} + {MEMORY_HISTORY_SIZE_OFFSET}], {access_size}
+            lea {top_reg}, [{top_reg} + {MEMORY_HISTORY_ENTRY_SIZE}]
+            mov memory_history_top, {top_reg}
+        """
