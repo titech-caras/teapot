@@ -1,9 +1,9 @@
 {
   "schema": "libcheckpoint-runtime-contract",
   "version": 1,
-  "archive": "libcheckpoint_nested.a",
-  "fingerprint": "78aa8164d2515b73",
-  "anchor": "__libcheckpoint_contract_v1_78aa8164d2515b73",
+  "archive": "libcheckpoint.a",
+  "fingerprint": "d087b7932eb6bc0e",
+  "anchor": "__libcheckpoint_contract_v1_d087b7932eb6bc0e",
   "abi": {
     "branch_counter.width": 4,
     "checkpoint.reg.x1": 0,
@@ -40,7 +40,7 @@
     "contract.version": 1,
     "counters.checkpoint_cnt_width": 8,
     "counters.instruction_cnt_width": 8,
-    "coverage": 0,
+    "coverage": 1,
     "dift.app_range0.end": 57266208768,
     "dift.app_range0.start": 0,
     "dift.app_range1.end": 412316860416,
@@ -127,26 +127,26 @@
     "target_metadata.trampoline": 0,
     "word_size": 8
   },
-  "capability_bits": 205,
+  "capability_bits": 252,
   "capabilities": {
-    "nested": true,
+    "nested": false,
     "aarch64_bti_pac": false,
     "dift_runtime": true,
     "x64_vector_full": true,
-    "coverage": false,
-    "riscv64_float_state": false,
+    "coverage": true,
+    "riscv64_float_state": true,
     "x64_vector_sse": true,
     "x64_vector_avx": true
   },
   "runtime": {
-    "max_checkpoints": 6,
+    "max_checkpoints": 1,
     "mem_history_len": 1048576,
     "guard_list_len": 1048576,
     "checkpoint_metadata_size": 512,
     "target_metadata_size": 48,
     "verbose": 0,
     "time": 0,
-    "branch_exec_count": 1
+    "branch_exec_count": 0
   },
   "provenance": {
     "compiler": "GNU 13.3.0",

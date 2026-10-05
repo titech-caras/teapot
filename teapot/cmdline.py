@@ -36,7 +36,9 @@ def main():
         "--runtime-contract", metavar="JSON", required=True,
         help=("The lib<archive>.contract.json beside the libcheckpoint archive this rewrite will be "
               "linked with (libcheckpoint_nested.contract.json for --enable-nested-speculation). "
-              "Teapot refuses a runtime whose layout it does not emit and takes the DIFT layout from it."),
+              "Teapot refuses a runtime whose layout it does not emit and takes the DIFT layout from it, "
+              "and its coverage mode: speculative coverage guards are pushed only for a runtime built "
+              "for a fuzzer (-DTEAPOT_ENABLE_COVERAGE=ON)."),
     )
     parser.add_argument(
         "--dift-layout",
@@ -68,7 +70,7 @@ def main():
     parser.add_argument(
         "--disable-gadgets",
         action="store_true",
-        help="Skip transient gadget detection policies and coverage guards.",
+        help="Skip transient gadget detection policies and coverage guards (even for a coverage runtime).",
     )
     parser.add_argument(
         "--disable-mem-operand-gadgets",

@@ -72,9 +72,12 @@ _X64_VECTOR_CAPABILITY = {"auto": "x64_vector_full", "full": "x64_vector_full", 
 # rewrite's options instead of a fixed value. The application ranges are the
 # runtime's (Teapot emits none of them) but belong to the fingerprint: the
 # archive linked must cover exactly the ranges the rewrite was checked against.
+# So does the coverage mode: a runtime built for a fuzzer (TEAPOT_ENABLE_COVERAGE)
+# replays the speculative coverage guards, and Teapot emits their pushes for
+# exactly such a runtime (RuntimeContract.emits_coverage).
 _DIFT_RANGE_SLOTS = 5
 _CONFIGURED = ("isa", "dift.layout", "dift.xor_mask", "dift.asan_shadow_offset", "tag_storage",
-               "dift.app_range_count",
+               "coverage", "dift.app_range_count",
                *(f"dift.app_range{index}.{end}" for index in range(_DIFT_RANGE_SLOTS)
                  for end in ("start", "end")))
 
@@ -132,6 +135,26 @@ class RuntimeContract:
     def tag_storage(self) -> str:
         return self.abi["tag_storage"]
 
+    @property
+    def coverage(self) -> bool:
+        """Whether this runtime replays speculative coverage into a fuzzer.
+
+        It is the archive's build option (TEAPOT_ENABLE_COVERAGE, the default
+        with hfuzz-clang or hfuzz-gcc), fixed when the runtime is configured and
+        part of its fingerprint; nothing at run time changes it.
+        """
+        return bool(self.abi["coverage"])
+
+    def emits_coverage(self, options) -> bool:
+        """Whether a rewrite with ``options`` for this runtime pushes coverage guards.
+
+        Only a runtime built for a fuzzer replays them; an ordinary one resets
+        the guard list at each rollback and would discard them, so a rewrite for
+        it has neither the pushes nor the register spills around them.
+        --disable-gadgets skips them in either case.
+        """
+        return options.enable_gadgets and self.coverage
+
     def dift_layout(self) -> DiftLayout:
         count = self.abi["dift.app_range_count"]
         ranges = tuple((self.abi[f"dift.app_range{index}.start"], self.abi[f"dift.app_range{index}.end"])
@@ -185,7 +208,11 @@ class RuntimeContract:
         # RISC-V rewrite with checkpoints needs it.
         if arch.name == "riscv64" and options.enable_checkpoints:
             required.add("riscv64_float_state")
+        if self.emits_coverage(options):
+            required.add("coverage")
         remedies = {
+            "coverage": ("the module pushes speculative coverage guards, which only a runtime built "
+                         "with -DTEAPOT_ENABLE_COVERAGE=ON replays"),
             "aarch64_bti_pac": "the BTI+PAC mode needs a runtime built with -DTEAPOT_EXPERIMENTAL_AARCH64_BTI=ON",
             "nested": ("nested speculation needs the nested runtime: libcheckpoint_nested.contract.json "
                        "(build it with -DTEAPOT_BUILD_NESTED_RUNTIME=ON)"),
@@ -319,6 +346,8 @@ def load_runtime_contract(path) -> RuntimeContract:
                       ("dift.asan_shadow_offset", int)):
         _require(isinstance(abi.get(key), kind) and not isinstance(abi.get(key), bool), path,
                  f"missing or malformed ABI field {key}")
+    _require(abi.get("coverage") in (0, 1) and type(abi.get("coverage")) is int, path,
+             "missing or malformed ABI field coverage (0 or 1)")
     _require(all(isinstance(value, int) and not isinstance(value, bool) for value in data["runtime"].values()),
              path, "runtime values must be integers")
     # The application ranges: a count of 1 to the number of slots, every slot
@@ -345,6 +374,9 @@ def load_runtime_contract(path) -> RuntimeContract:
     capabilities = frozenset(name for name, present in data["capabilities"].items() if present is True)
     _require(capability_bits(capabilities) == data["capability_bits"], path,
              "capability_bits disagrees with the named capabilities")
+    # Both come from the archive's COVERAGE switch.
+    _require(("coverage" in capabilities) == bool(abi["coverage"]), path,
+             "the coverage capability disagrees with ABI field coverage")
     return RuntimeContract(
         path=str(path), archive=data["archive"], version=version, fingerprint=fingerprint,
         abi=MappingProxyType(dict(abi)), capabilities=capabilities,

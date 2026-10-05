@@ -160,7 +160,10 @@ def contract_identity(contract):
     # What a component's code and record depend on: the runtime's ABI, by its
     # fingerprint. Archives that differ only in capabilities, provenance or the
     # runtime's own facts get the same objects (each record lists what it needs).
-    return {"version": contract.version, "fingerprint": contract.fingerprint}
+    # The coverage mode is in the fingerprint too, since it decides whether the
+    # components push coverage guards (components always enable gadgets); it is
+    # spelled out so that keys and manifests show it.
+    return {"version": contract.version, "fingerprint": contract.fingerprint, "coverage": contract.coverage}
 
 
 def run(root, name, command):
@@ -303,6 +306,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     pipeline.text_section.name = target_for(isa, args.target_identification)['text_section']
     pipeline.guard_section.name = ".teapot_component_guards." + component_id
     guard_count = sum(interval.size for interval in pipeline.guard_section.byte_intervals) // 4
+    coverage = args.contract.emits_coverage(args.instrumentation_options)
+    require(coverage or guard_count == 0, "coverage guards for a runtime without speculative coverage")
     for label in ("__guard_start" + SYMBOL_SUFFIX, "__guard_end" + SYMBOL_SUFFIX):
         matches = list(module.symbols_named(label))
         require(len(matches) == 1, 'check failed: len(matches) == 1')
@@ -344,7 +349,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"],
               **mode_metadata(isa, args.mode, args.target_identification),
               "exports": sorted(own_exports), "linked_exports": sorted(exports(item, converter, False)),
-              "guard_count": guard_count,
+              "guard_count": guard_count, "coverage": coverage,
               "rewrite_seconds": rewrite_seconds, "liveness": "ddisasm",
               "liveness_contract": "standalone-ddisasm-abi-v1; missing instruction masks all-live",
               "files": {name: sha(directory / name) for name in recorded}}
@@ -383,6 +388,9 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
             fcntl.flock(lock, fcntl.LOCK_SH)
         require(json.loads((entry / "key.json").read_text()) == key_data, "cache key mismatch")
         result = json.loads((entry / "component.json").read_text())
+        # Covered and uncovered objects are never interchangeable.
+        require(result.get("coverage") == context["runtime_contract"]["coverage"],
+                "cached component has another speculative coverage mode", result.get("coverage"))
         for name, expected in result["files"].items():
             require(sha(entry / name) == expected, "cached artifact hash mismatch: " + name)
         validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]),

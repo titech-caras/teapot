@@ -2,14 +2,14 @@
   "schema": "libcheckpoint-runtime-contract",
   "version": 1,
   "archive": "libcheckpoint.a",
-  "fingerprint": "553d746b4fe635c0",
-  "anchor": "__libcheckpoint_contract_v1_553d746b4fe635c0",
+  "fingerprint": "bdc158e1f3124230",
+  "anchor": "__libcheckpoint_contract_v1_bdc158e1f3124230",
   "abi": {
     "branch_counter.width": 4,
     "contract.version": 1,
     "counters.checkpoint_cnt_width": 8,
     "counters.instruction_cnt_width": 8,
-    "coverage": 0,
+    "coverage": 1,
     "dift.app_range0.end": 2147450880,
     "dift.app_range0.start": 0,
     "dift.app_range1.end": 2415882240,
@@ -81,13 +81,13 @@
     "x64.vector_state.sse": 2,
     "x64.vector_state.xmm0-7": 1
   },
-  "capability_bits": 204,
+  "capability_bits": 220,
   "capabilities": {
     "nested": false,
     "aarch64_bti_pac": false,
     "dift_runtime": true,
     "x64_vector_full": true,
-    "coverage": false,
+    "coverage": true,
     "riscv64_float_state": false,
     "x64_vector_sse": true,
     "x64_vector_avx": true

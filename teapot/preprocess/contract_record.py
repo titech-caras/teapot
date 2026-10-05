@@ -3,12 +3,13 @@
 Every rewritten module carries one record in section teapot_contract: the
 runtime's contract version and ABI fingerprint, the capabilities the rewrite
 needs and the address of the runtime record's anchor symbol, followed by a
-JSON copy of the ABI, the requirements, the rewrite's policy and, for a
-component, its identity. The anchor reference makes linking an archive with
-another ABI fail and pulls the runtime record into every link; the runtime
-checks the records at start-up. A note in .note.teapot.contract refers to the
-record: linkers keep allocated notes under --gc-sections, and with it the
-record, which nothing else refers to but the runtime's __start_/__stop_ walk.
+JSON copy of the ABI, the requirements, the rewrite's policy (with whether it
+pushes speculative coverage) and, for a component, its identity. The anchor
+reference makes linking an archive with another ABI fail and pulls the runtime
+record into every link; the runtime checks the records at start-up. A note in
+.note.teapot.contract refers to the record: linkers keep allocated notes under
+--gc-sections, and with it the record, which nothing else refers to but the
+runtime's __start_/__stop_ walk.
 """
 from dataclasses import asdict
 import json
@@ -44,7 +45,8 @@ def module_contract(contract, required_bits: int, options, component_id=None) ->
         "anchor": contract.anchor,
         "requirements": [name for bit, name in enumerate(CAPABILITIES) if required_bits >> bit & 1],
         "abi": dict(contract.abi),
-        "policy": {"rob_len": ROB_LEN, "options": asdict(options)},
+        # coverage: whether this module pushes the speculative coverage guards.
+        "policy": {"rob_len": ROB_LEN, "options": asdict(options), "coverage": contract.emits_coverage(options)},
     }
     if component_id is not None:
         record["component"] = component_id

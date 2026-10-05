@@ -213,6 +213,9 @@ class TeapotPipeline:
         # and provide what the options need. Its DIFT layout is the rewrite's.
         self.contract_requirements, self.dift_layout = self.runtime_contract.check(
             self.arch, self.abi, self.options, self.dift_layout_name)
+        print(f"[teapot] speculative coverage: "
+              f"{'pushed' if self.runtime_contract.emits_coverage(self.options) else 'none'} "
+              f"(runtime coverage mode {int(self.runtime_contract.coverage)})", flush=True)
         if self.options.aarch64_tag_storage == ASAN_TAG_STORAGE_MTE:
             _add_arch_feature(self.module, AARCH64_MTE_ARCH_FEATURE)
         self.text_section = [section for section in self.module.sections if section.name == ".text"][0]
@@ -691,10 +694,16 @@ class TeapotPipeline:
             pass_manager.add(AsanStackPass(
                 self.reg_manager, self.transient_section, self.decoder, self.arch, self.options.enable_memlog,
                 dift_layout=self.dift_layout, tag_storage=self.options.aarch64_tag_storage, transient=True))
-        if self.options.enable_gadgets:
+        # Speculative coverage only for a runtime that replays it into a fuzzer
+        # (the contract's coverage mode); any other runtime discards the pushes.
+        # Without them the guard section stays empty.
+        if self.runtime_contract.emits_coverage(self.options):
             pass_manager.add(TransientCoveragePass(
                 self.reg_manager, self.transient_section, self.decoder, self.guard_section, self.arch,
                 index_base_symbol=self.component_guard_base))
+        else:
+            create_guards(self.guard_section, 0)
+        if self.options.enable_gadgets:
             if self.options.enable_mem_operand_gadgets:
                 memory_policy = self.arch.create_transient_mem_operand_policy_pass(
                     self.reg_manager,
@@ -709,8 +718,6 @@ class TeapotPipeline:
                     self.transient_section,
                     self.decoder,
                     dift_layout=self.dift_layout)
-        else:
-            create_guards(self.guard_section, 0)
         if self.options.enable_dift:
             from teapot.passes.transient.lazy_dift import transient_replay_pass
             pass_manager.add(transient_replay_pass(

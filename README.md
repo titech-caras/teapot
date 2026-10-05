@@ -50,7 +50,15 @@ Report callbacks always preserve full supported vector/x87 state.
 Coverage callbacks are off in ordinary runtime builds. Build the runtime with
 `-DTEAPOT_ENABLE_COVERAGE=ON` when linking honggfuzz; using `hfuzz-clang` or
 `hfuzz-gcc` as the CMake compiler selects that default automatically. This does
-not disable gadget reports or their DIFT instrumentation.
+not disable gadget reports or their DIFT instrumentation. The coverage mode is
+part of the runtime contract (its ABI key `coverage`, in the fingerprint), and
+Teapot takes it from `--runtime-contract`: it pushes the speculative coverage
+guards only for a runtime built for a fuzzer, which replays them at each
+rollback, and leaves out both the pushes and their register spills for an
+ordinary runtime, which would discard them. A module rewritten for either mode
+does not link with, or start on, an archive of the other. The mode is fixed when
+the runtime is configured; no environment variable changes it.
+`--disable-gadgets` skips the pushes for either runtime.
 
 ## Requirements
 
@@ -287,14 +295,22 @@ alike, so an ordinary link works.
 ```shell
 gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint -lasan
 ```
-For a fuzzing build, configure the runtime with `TEAPOT_ENABLE_COVERAGE=ON` (see above). Its
-coverage callbacks are weak no-ops, so an archive listed after it, such as `-lhfuzz`, is never
-pulled in. Force honggfuzz's members instead, as `hfuzz-cc` does:
+For a fuzzing build, configure the runtime with `TEAPOT_ENABLE_COVERAGE=ON` (see above) and
+rewrite with that build's `libcheckpoint.contract.json`, so that the program pushes the guards
+the runtime replays. Such a runtime requires the fuzzer: it refers to honggfuzz's `hfuzz_trace_pc`
+and to `__sanitizer_cov_trace_pc_guard_init` and `__sanitizer_cov_trace_pc_guard` as ordinary
+undefined symbols, with no fallback, so a link without `libhfuzz` fails. One module of
+`libhfuzz.a` defines all three. With GNU ld, list `libhfuzz.a` and then `libhfcommon.a` after
+`-lcheckpoint`, and that module is extracted for them; listed before it, it is not, and the link
+fails (`ld.lld` extracts it in either order). ASan's runtime has weak Sanitizer Coverage callbacks
+of its own, which lose to libhfuzz's, but no `hfuzz_trace_pc`. `hfuzz-cc` forces honggfuzz's
+modules in as well, which its `memcmp` hooks need:
 ```shell
 gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint -lasan \
     -Wl,-u,LIBHFUZZ_module_instrument -Wl,-u,LIBHFUZZ_module_memorycmp \
     honggfuzz/libhfuzz/libhfuzz.a honggfuzz/libhfcommon/libhfcommon.a -ldl -pthread -lrt -lm
 ```
+An ordinary runtime refers to none of these and links without a fuzzer.
 `make -C honggfuzz` in this checkout's `honggfuzz` submodule builds both archives.
 For AArch64 MTE tag storage, compile with an MTE-capable target and omit
 `-lasan`:

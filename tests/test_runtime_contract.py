@@ -62,6 +62,16 @@ class RuntimeContractLoadTests(unittest.TestCase):
                 ("unknown or missing capabilities", lambda data: data["capabilities"].update(future=True), True),
                 ("ABI values must be integers or strings",
                  lambda data: data["abi"].update({"little_endian": True}), True),
+                ("missing or malformed ABI field coverage", lambda data: data["abi"].pop("coverage"), True),
+                ("missing or malformed ABI field coverage", lambda data: data["abi"].update(coverage=2), True),
+                ("missing or malformed ABI field coverage", lambda data: data["abi"].update(coverage="1"), True),
+                # The mode is the archive's COVERAGE switch, which sets both.
+                ("the coverage capability disagrees with ABI field coverage",
+                 lambda data: data["abi"].update(coverage=1), True),
+                ("the coverage capability disagrees with ABI field coverage",
+                 lambda data: data.update(capabilities=dict(data["capabilities"], coverage=True),
+                                          capability_bits=data["capability_bits"] | capability_bits({"coverage"})),
+                 True),
             )
             for message, edit, refingerprint in cases:
                 with self.subTest(message=message):
@@ -79,7 +89,10 @@ class RuntimeContractCheckTests(unittest.TestCase):
                 ("aarch64", "aarch64", InstrumentationOptions()),
                 ("aarch64-bti", "aarch64", InstrumentationOptions(target_identification="aarch64-bti-pac")),
                 ("aarch64-mte", "aarch64", InstrumentationOptions(aarch64_tag_storage="mte")),
-                ("riscv64", "riscv64", InstrumentationOptions())):
+                ("riscv64", "riscv64", InstrumentationOptions()),
+                ("x64-coverage", "x64", InstrumentationOptions()),
+                ("aarch64-coverage", "aarch64", InstrumentationOptions()),
+                ("riscv64-coverage", "riscv64", InstrumentationOptions())):
             for nested in (False, True):
                 with self.subTest(runtime=name, nested=nested):
                     arch, abi = arch_and_abi(isa)
@@ -93,6 +106,7 @@ class RuntimeContractCheckTests(unittest.TestCase):
                     expected |= ({"aarch64_bti_pac"} if options.target_identification == "aarch64-bti-pac"
                                  else set())
                     expected |= {"riscv64_float_state"} if isa == "riscv64" else set()
+                    expected |= {"coverage"} if name.endswith("-coverage") else set()
                     self.assertEqual(bits, capability_bits(expected))
 
     def assertRefused(self, name, options, pattern, *, edit=None, isa=None, dift_layout_name=None):
@@ -235,6 +249,78 @@ class RuntimeContractCheckTests(unittest.TestCase):
                                 contract.check(arch, abi, options)
 
 
+class CoverageModeTests(unittest.TestCase):
+    """Speculative coverage only for a runtime built for a fuzzer, fixed by its contract."""
+
+    def test_the_runtime_decides_the_coverage_pushes(self):
+        for isa in ("x64", "aarch64", "riscv64"):
+            arch, abi = arch_and_abi(isa)
+            for nested in (False, True):
+                with self.subTest(isa=isa, nested=nested):
+                    plain = fixture_contract(isa, nested=nested)
+                    covered = fixture_contract(isa, nested=nested, coverage=True)
+                    options = InstrumentationOptions(enable_nested_speculation=nested)
+                    self.assertFalse(plain.coverage)
+                    self.assertTrue(covered.coverage)
+                    self.assertFalse(plain.emits_coverage(options))
+                    self.assertTrue(covered.emits_coverage(options))
+                    # A rewrite that pushes guards requires the runtime that replays them.
+                    plain_bits, _ = plain.check(arch, abi, options)
+                    covered_bits, _ = covered.check(arch, abi, options)
+                    self.assertEqual(covered_bits, plain_bits | capability_bits({"coverage"}))
+                    self.assertFalse(plain_bits & capability_bits({"coverage"}))
+                    # --disable-gadgets skips them, even for a fuzzer's runtime.
+                    no_gadgets = InstrumentationOptions(enable_gadgets=False, enable_nested_speculation=nested)
+                    self.assertFalse(covered.emits_coverage(no_gadgets))
+                    bits, _ = covered.check(arch, abi, no_gadgets)
+                    self.assertFalse(bits & capability_bits({"coverage"}))
+
+    def test_the_mode_is_part_of_the_fingerprint(self):
+        # The two builds differ in the coverage mode alone, and their anchors
+        # differ: a module rewritten for one does not link with the other.
+        for isa in ("x64", "aarch64", "riscv64"):
+            with self.subTest(isa=isa):
+                plain, covered = fixture_contract(isa), fixture_contract(isa, coverage=True)
+                self.assertEqual({key for key in set(plain.abi) | set(covered.abi)
+                                  if plain.abi.get(key) != covered.abi.get(key)}, {"coverage"})
+                self.assertEqual(plain.capabilities ^ covered.capabilities, {"coverage"})
+                self.assertNotEqual(plain.fingerprint, covered.fingerprint)
+                self.assertNotEqual(plain.anchor, covered.anchor)
+        with tempfile.TemporaryDirectory() as directory:
+            def enable(data):
+                data["abi"]["coverage"] = 1
+                data["capabilities"]["coverage"] = True
+                data["capability_bits"] |= capability_bits({"coverage"})
+            edited = load_runtime_contract(edited_contract(directory, "x64", enable))
+            self.assertEqual(edited.anchor, fixture_contract("x64", coverage=True).anchor)
+            with self.assertRaisesRegex(RuntimeContractError, "not the hash of its ABI section"):
+                load_runtime_contract(edited_contract(directory, "x64", enable, refingerprint=False))
+
+    @unittest.skipUnless(shutil.which("cc"), "requires an ELF compiler and linker")
+    def test_a_module_for_the_other_mode_does_not_link(self):
+        # The module record refers to its runtime's anchor, which only an archive
+        # of the same coverage mode defines (libcheckpoint's runtime record).
+        plain, covered = fixture_contract("x64"), fixture_contract("x64", coverage=True)
+        for module_contract, runtime in ((plain, covered), (covered, plain), (plain, plain)):
+            with self.subTest(module=module_contract.coverage, runtime=runtime.coverage), \
+                    tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "runtime.S").write_text(
+                    f".text\n.global _start\n_start: ret\n.section libcheckpoint_contract,\"a\"\n"
+                    f".global {runtime.anchor}\n{runtime.anchor}: .8byte 0\n"
+                    '.section .note.GNU-stack,"",@progbits\n')
+                (root / "module.S").write_text(
+                    f'.section {RECORD_SECTION},"a"\n.balign 8\n.8byte {module_contract.anchor}\n'
+                    '.section .note.GNU-stack,"",@progbits\n')
+                result = subprocess.run(["cc", "-nostdlib", "-no-pie", "-Wl,-e,_start", "runtime.S", "module.S",
+                                         "-o", "linked"], cwd=root, capture_output=True, text=True)
+                if module_contract is runtime:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(module_contract.anchor, result.stderr)
+
+
 class ContractRecordTests(unittest.TestCase):
     def test_module_record_layout(self):
         contract = fixture_contract("aarch64")
@@ -275,6 +361,24 @@ class ContractRecordTests(unittest.TestCase):
         self.assertEqual(offset, 12 + 12)
         self.assertIs(expression.symbol.referent, block)
 
+    def test_record_states_the_coverage_mode(self):
+        for coverage in (False, True):
+            with self.subTest(coverage=coverage):
+                contract = fixture_contract("x64", coverage=coverage)
+                module = gtirb.Module(name="probe", isa=gtirb.Module.ISA.X64)
+                gtirb.Symbol(name=contract.anchor, payload=gtirb.ProxyBlock(module=module), module=module)
+                arch, abi = arch_and_abi("x64")
+                options = InstrumentationOptions()
+                bits, _ = contract.check(arch, abi, options)
+                block = add_contract_record(module, contract, bits, options)
+                contents = bytes(block.byte_interval.contents)
+                _, _, _, header_size, json_size, _, required = struct.unpack_from("<IHHIIQQ", contents)
+                record = json.loads(contents[header_size:header_size + json_size])
+                self.assertIs(record["policy"]["coverage"], coverage)
+                self.assertEqual("coverage" in record["requirements"], coverage)
+                self.assertEqual(bool(required & capability_bits({"coverage"})), coverage)
+                self.assertEqual(record["abi"]["coverage"], int(coverage))
+
     def test_component_record_names_its_component(self):
         contract = fixture_contract("x64")
         module = gtirb.Module(name="probe", isa=gtirb.Module.ISA.X64)
@@ -304,6 +408,12 @@ class FixtureRegenerationTests(unittest.TestCase):
                         ["-DTEAPOT_DIFT_LAYOUT=aarch64-vma42", "-DTEAPOT_AARCH64_TAG_STORAGE=mte"]),
         "riscv64": ("riscv64-linux-gnu-gcc", "riscv64", ["-DTEAPOT_ENABLE_RISCV_FLOAT_STATE=ON"]),
         "riscv64-nofp": ("riscv64-linux-gnu-gcc", "riscv64", []),
+        # The runtimes built for a fuzzer.
+        "x64-coverage": ("gcc", "x86_64", ["-DTEAPOT_ENABLE_COVERAGE=ON"]),
+        "aarch64-coverage": ("aarch64-linux-gnu-gcc", "aarch64",
+                             ["-DTEAPOT_DIFT_LAYOUT=aarch64-vma42", "-DTEAPOT_ENABLE_COVERAGE=ON"]),
+        "riscv64-coverage": ("riscv64-linux-gnu-gcc", "riscv64",
+                             ["-DTEAPOT_ENABLE_RISCV_FLOAT_STATE=ON", "-DTEAPOT_ENABLE_COVERAGE=ON"]),
     }
 
     def test_fixtures_match_the_runtime(self):

@@ -18,6 +18,7 @@ from teapot.arch.x64.architecture import X64Architecture
 from teapot.arch.decoders import x64_decoder
 from teapot.configs.runtime import ROB_LEN, SCRATCHPAD_SIZE
 from teapot.passes.transient.x64_rep import X64TransientRepPass
+from teapot.passes.transient.transient_coverage import TransientCoveragePass
 from teapot.passes.transient.transient_insert_restore_points_pass import TransientInsertRestorePointsPass
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 import test_x64_rep_dift as rep_tests
@@ -147,18 +148,20 @@ class X64TransientRepTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_pipeline_registers_rep_after_all_same_round_insertions(self):
-        for nested in (False, True):
-            with self.subTest(nested=nested):
+        for nested, coverage in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(nested=nested, coverage=coverage):
                 ir, module, block, abi, _ = make_module(
                     self.arch, gtirb.Module.ISA.X64, b"\xf3\xa4\xc3")
                 pipeline = TeapotPipeline(ir, options=InstrumentationOptions(enable_nested_speculation=nested),
-                                          runtime_contract=fixture_contract('x64', nested=nested))
+                                          runtime_contract=fixture_contract('x64', nested=nested,
+                                                                            coverage=coverage))
                 pipeline.arch = self.arch
                 pipeline.reg_manager = LiveRegisterManager(module, abi)
                 pipeline.decoder = pipeline.reg_manager.decoder
                 pipeline.dift_layout = SimpleNamespace(xor_mask=1 << 32, asan_shadow_offset=0x10000000)
                 pipeline.text_section = pipeline.transient_section = block.section
                 pipeline.guard_section = gtirb.Section(name=".guards", module=module)
+                gtirb.ByteInterval(section=pipeline.guard_section)
                 for name in ("text_section_start_symbol", "text_section_end_symbol",
                              "transient_section_start_symbol", "transient_section_end_symbol"):
                     setattr(pipeline, name, gtirb.Symbol(name=name, payload=block, module=module))
@@ -171,7 +174,10 @@ class X64TransientRepTests(unittest.TestCase):
                 manager, phase = pipeline._run_pass_manager.call_args.args
                 self.assertEqual(phase, "transient")
                 self.assertIsInstance(manager._passes[-1], X64TransientRepPass)
-                self.assertGreater(len(manager._passes), 6)
+                # The coverage pass only for the runtime built for a fuzzer.
+                self.assertEqual(sum(isinstance(p, TransientCoveragePass) for p in manager._passes),
+                                 int(coverage))
+                self.assertGreater(len(manager._passes), 5 + coverage)
 
     @unittest.skipUnless(platform.machine() == "x86_64" and shutil.which("cc")
                          and shutil.which(os.environ.get("PPRINTER_PATH", "gtirb-pprinter")),

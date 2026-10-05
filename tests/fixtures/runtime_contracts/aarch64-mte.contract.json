@@ -2,8 +2,8 @@
   "schema": "libcheckpoint-runtime-contract",
   "version": 1,
   "archive": "libcheckpoint.a",
-  "fingerprint": "b37da76b904a1c2f",
-  "anchor": "__libcheckpoint_contract_v1_b37da76b904a1c2f",
+  "fingerprint": "802d28ec395a6d20",
+  "anchor": "__libcheckpoint_contract_v1_802d28ec395a6d20",
   "abi": {
     "aarch64.shadow_stack.abi_offset": 448,
     "aarch64.shadow_stack.asan_offset": 128,
@@ -54,6 +54,7 @@
     "contract.version": 1,
     "counters.checkpoint_cnt_width": 8,
     "counters.instruction_cnt_width": 8,
+    "coverage": 0,
     "dift.app_range0.end": 68719476736,
     "dift.app_range0.start": 0,
     "dift.app_range1.end": 2198754820096,

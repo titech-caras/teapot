@@ -137,7 +137,8 @@ class RewriteReproducibilityTests(unittest.TestCase):
         # The printed assembly must not change: section order and alignment
         # (layout), coverage indices and trampoline order (block visits),
         # copies' label names (their UUIDs), alias label order (symbols) and
-        # the labels of relaxed jrcxz branches.
+        # the labels of relaxed jrcxz branches. The runtime is the one built
+        # for a fuzzer, so that the rewrite numbers coverage guards.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "probe.c").write_text(LIFTED_PROBE)
@@ -150,7 +151,7 @@ class RewriteReproducibilityTests(unittest.TestCase):
             for index, (nodes, seed) in enumerate(((0, 0), (997, 0), (3001, 42))):
                 commands = (
                     [sys.executable, "-B", "-c", HEAP_SHIFTED_REWRITE, str(nodes), "lift.gtirb",
-                     f"out{index}.gtirb", "--runtime-contract", str(fixture_contract_path("x64")),
+                     f"out{index}.gtirb", "--runtime-contract", str(fixture_contract_path("x64-coverage")),
                      "--compact-output"],
                     ["gtirb-pprinter", "--ir", f"out{index}.gtirb", "--asm", f"out{index}.S",
                      "--policy", "complete", "--shared", "no"])
@@ -162,6 +163,7 @@ class RewriteReproducibilityTests(unittest.TestCase):
             self.assertIn("step_alias", printed[0])
             self.assertIn(".teapot_trampolines", printed[0])
             self.assertIn(".L__x64_jcxz_taken", printed[0])
+            self.assertIn("guard_list_top", printed[0])
             self.assertEqual(printed[0], printed[1])
             self.assertEqual(printed[0], printed[2])
 

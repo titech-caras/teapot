@@ -111,6 +111,9 @@ def validate_contract_records(elf, address, manifest):
     require(runtime["address"] == address("libcheckpoint_runtime_contract"),
             "libcheckpoint_runtime_contract is not the runtime record")
     abi = runtime["contract"].get("abi", {})
+    # Whether the linked runtime replays speculative coverage into a fuzzer.
+    require(abi.get("coverage") in (0, 1), ("the runtime record has no coverage mode", abi.get("coverage")))
+    coverage = bool(abi["coverage"])
     modules = contract_records(elf, "teapot_contract", RECORD_KIND_MODULE)
     # Each component's record names it, so another object's record cannot
     # stand in for a component that has none.
@@ -130,13 +133,26 @@ def validate_contract_records(elf, address, manifest):
         missing = record["capabilities"] & ~runtime["capabilities"]
         require(not missing, ("a component needs runtime capabilities the linked archive lacks",
                               capability_names(missing)))
+        # A fuzzer's runtime needs every component's coverage pushes; another
+        # runtime would discard them.
+        pushed = record["contract"].get("policy", {}).get("coverage")
+        require(isinstance(pushed, bool) and pushed == coverage,
+                ("a component's speculative coverage does not match the linked runtime's",
+                 record["contract"].get("component"), pushed, coverage))
     recorded = manifest.get("runtime_contract")
     require(recorded is not None, "component manifest has no runtime contract; rebuild it with the current driver")
     require((recorded["version"], recorded["fingerprint"]) == (runtime["version"], runtime["fingerprint"]),
             ("the components were built for another runtime contract", recorded, runtime["fingerprint"]))
+    require(isinstance(recorded.get("coverage"), bool) and recorded["coverage"] == coverage,
+            ("the components were built for another coverage mode", recorded.get("coverage"), coverage))
+    for component in manifest["components"]:
+        require(isinstance(component.get("coverage"), bool) and component["coverage"] == coverage and
+                (coverage or component["guard_count"] == 0),
+                ("a component's recorded coverage does not match the linked runtime's",
+                 component.get("component_id"), component.get("coverage"), component.get("guard_count")))
     return {"version": runtime["version"], "fingerprint": runtime["fingerprint"],
             "runtime_capabilities": capability_names(runtime["capabilities"]),
-            "module_records": len(modules)}
+            "coverage": coverage, "module_records": len(modules)}
 
 
 def validate_bti_layout(elf, address, ranges, target_identification='aarch64-bti-pac'):

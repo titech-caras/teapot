@@ -91,9 +91,10 @@ the linker script `layout.ld`, and the `components.json` and `inputs.json` manif
 
 Link `component-000.o`, the library objects (or an archive of them) and the support objects as a non-PIE executable
 without start files, using `OUT/layout.ld`, one runtime built for the same mode (libcheckpoint with its DIFT
-wrapper archives, and honggfuzz's libhfuzz) and the mode's ASan runtime. The script gathers every component's
-normal and transient code into two application-wide ranges and gives each component its own coverage-guard
-storage, based on the guard-start symbol after input-section alignment.
+wrapper archives, and after them honggfuzz's libhfuzz, which a coverage runtime requires) and the mode's ASan
+runtime. The script gathers every component's normal and transient code into two application-wide ranges and
+gives each component its own coverage-guard storage, based on the guard-start symbol after input-section
+alignment.
 
 ```
 python3 experiments/reusable_libraries/validate_link.py --binary APP.instrumented --objects OUT \
@@ -103,7 +104,9 @@ python3 experiments/reusable_libraries/validate_link.py --binary APP.instrumente
 The validator derives ISA, mode, DIFT layout and tag storage from the manifests and checks every component agrees.
 Optional `--isa` and `--mode` arguments assert the requested contract; a mismatch is an error, not a mode override.
 Older manifests without this contract must be rebuilt. It checks the two ranges and that no other code falls inside them, every exported entry and its marker,
-the coverage-guard bases and that no two components' guards overlap, the selected definitions, the reconstructed
+the coverage-guard bases and that no two components' guards overlap, that every component pushes speculative
+coverage exactly when the linked runtime replays it (the contract's coverage mode; otherwise no component has
+guards), the selected definitions, the reconstructed
 FDEs, and the ASan runtime's place in `DT_NEEDED` (or its absence in MTE modes), with no selected SONAME still
 needed. Passing it is a structural
 result, not behavior verification.
@@ -117,7 +120,8 @@ Each cache entry is immutable and content-addressed. It holds the original and i
 assembly, the object, the command logs and SHA-256 manifests, and every file is re-hashed on a hit. The key covers
 the input ELF bytes, its role and initializer priority, the selected and external libraries' bytes and binding
 names, the Teapot, gtirb-rewriting and live-register-analysis sources, the converter, the driver, the runtime
-contract, the pass options, the ROB length, the mode and its layout. It also covers the bytes of every tool that
+contract (its ABI fingerprint and coverage mode, so objects with and without coverage pushes never share an entry),
+the pass options, the ROB length, the mode and its layout. It also covers the bytes of every tool that
 shapes the output, with its shared libraries: DDisasm, gtirb-pprinter, the compiler driver and the `as` and `cc1` it
 runs (clang has no separate `cc1`). The Python side enters as the interpreter; the `.py` and `.so` files of gtirb,
 pyelftools and protobuf; every file of llvmlite and its LLVM, mcasm, capstone, gtirb-capstone, gtirb-functions,

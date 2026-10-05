@@ -31,13 +31,14 @@ class LibraryBindingTests(unittest.TestCase):
                     symbols=[dict(base, name='api'), dict(base, name='callback', section='SHN_UNDEF')])
         context = dict(selected_libraries=[('libtest.so', 'same-library')],
                        bindings=[('api', 'libtest.so'), ('callback', 'executable'),
-                                 ('unrelated_A', 'executable')])
+                                 ('unrelated_A', 'executable')],
+                       runtime_contract=dict(version=1, fingerprint='0' * 16, coverage=False))
 
         def build(args, converter, item, key, identity, selected, priority, directory):
             self.assertEqual(selected, {'api', 'callback'})
             driver.dump(directory / 'key.json', key)
             (directory / 'component.o').write_bytes(b'one instrumented library object')
-            result = {'component_id': identity,
+            result = {'component_id': identity, 'coverage': False,
                       'files': {'component.o': driver.sha(directory / 'component.o')}}
             driver.dump(directory / 'component.json', result)
             return result
