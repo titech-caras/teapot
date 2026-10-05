@@ -184,6 +184,15 @@ sysroot is left unchanged.
   frontend to obtain this check; an absent table is not an empty checked table.
   Unwinding through the temporary spill window is not supported. This does not
   fix raw printer-only GP relayout or add Teapot RV32 support.
+- Inserted code names the program's symbols in assembly text, which the
+  rewriter resolves by name. Where symbols that resolve differently share a
+  name (each translation unit's `.LC0`, its statics; or one place with another
+  ELF symbol entry, version or forwarding target), a LOCAL symbol referred to
+  by its address gets an alias at its place
+  (`teapot/utils/symbol_references.py`). Naming an external, GLOBAL, WEAK,
+  versioned, forwarded, thread-local or GNU_IFUNC symbol of a shared name, or
+  any symbol of a shared name through a GOT, PLT or TLS relocation, stops the
+  rewrite with an error.
 - The allocation-free reporting runtime passes all 120 AArch64 MTE `test_fuzz`
   inputs and all 341 `test_all` cases under QEMU. Native MTE remains separate;
   see [runtime tests](libcheckpoint/README.md).

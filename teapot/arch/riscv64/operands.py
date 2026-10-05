@@ -7,6 +7,7 @@ from gtirb_rewriting.assembly import Register
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.utils.registers import get_register, register_from_name
+from teapot.utils.symbol_references import reference_name
 from teapot.datacls.stack_access import StackAccess
 
 
@@ -140,7 +141,9 @@ class RISCV64OperandMixin:
 
     @staticmethod
     def _symbolic_reference(symexpr: gtirb.SymAddrConst) -> str:
-        symbol = symexpr.symbol.name
+        # The expression's own symbol, by a name the patch assembler resolves
+        # to it alone (teapot/utils/symbol_references.py).
+        symbol = reference_name(symexpr.symbol, symexpr.attributes)
         if symexpr.offset > 0:
             return f"{symbol}+{symexpr.offset}"
         if symexpr.offset < 0:

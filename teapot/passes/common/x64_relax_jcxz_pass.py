@@ -3,6 +3,7 @@ from gtirb_rewriting import Pass, Patch
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.passes.mixins.visitor_pass_mixin import block_order
+from teapot.utils.symbol_references import reference_name
 from teapot.utils.misc import (
     distinguish_edges,
     get_or_insert_symbol,
@@ -71,7 +72,8 @@ class X64RelaxJcxzPass(Pass):
                 def relaxed_branch(
                     ctx,
                     mnemonic=instruction.mnemonic,
-                    target_name=target_symbol.name,
+                    # An existing label may share its name with another place.
+                    target_name=reference_name(target_symbol),
                     taken=taken_label,
                     done=done_label,
                 ):

@@ -6,6 +6,7 @@ from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_IMM, CS_OP_MEM, CS_OP_REG, C
 from capstone.aarch64 import AARCH64_EXT_SXTW, AARCH64_EXT_UXTW, AARCH64_SFT_LSL
 
 from teapot.utils.registers import get_register
+from teapot.utils.symbol_references import reference_expression
 from teapot.datacls.stack_access import StackAccess
 
 
@@ -177,6 +178,9 @@ class AArch64OperandMixin:
 
     @staticmethod
     def aarch64_symbolic_disp(symexpr: Optional[gtirb.SymbolicExpression]) -> Optional[str]:
+        # The operand's own symbols, by names the patch assembler resolves to
+        # them alone (teapot/utils/symbol_references.py).
+        symexpr = reference_expression(symexpr)
         if isinstance(symexpr, gtirb.SymAddrAddr):
             if symexpr.scale < 1:
                 raise ValueError("AArch64 symbolic displacement scale must be positive")

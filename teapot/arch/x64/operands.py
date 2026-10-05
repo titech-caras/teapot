@@ -6,6 +6,8 @@ from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM, CS_OP_REG
 from capstone.x86 import X86_REG_INVALID, X86_REG_RIP
 from gtirb_capstone.x86 import mem_access_to_str, operand_symbolic_expression
 
+from teapot.utils.symbol_references import reference_expression
+
 
 class X64OperandMixin:
     @staticmethod
@@ -82,7 +84,11 @@ class X64OperandMixin:
 
     def mem_operand_to_str(self, block: gtirb.CodeBlock, inst, mem_operand) -> str:
         try:
+            # The operand's own symbol, by a name the patch assembler resolves
+            # to it alone (teapot/utils/symbol_references.py).
             symexpr = self.operand_symbolic_expression(block, inst, mem_operand)
+            if isinstance(symexpr, gtirb.SymAddrConst):
+                symexpr = reference_expression(symexpr)
             operand_str = mem_access_to_str(inst, mem_operand.mem, symexpr)
             return self._disambiguate_register_named_symbols(operand_str, symexpr)
         except NotImplementedError:
