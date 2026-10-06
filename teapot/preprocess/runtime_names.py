@@ -29,6 +29,14 @@ a hook only with the same ELF symbol entry. A COMMON symbol is a definition,
 although DDisasm gives it a proxy block like an import. A program that defines
 the hooks, carrying its own fuzzer runtime, is refused.
 
+The four public DIFT annotation functions also permit an ordinary WEAK function
+definition: programs such as kocher15_dift.c supply a no-op fallback, overridden
+by the runtime's strong definition at the final link. This is a definition-only
+exception, not permission to define other runtime names weakly or to import
+these four names. Hidden/protected, versioned, forwarded, non-function and
+absolute symbols are not overridable fallback functions and stay refused.
+The archive-derived manifest remains unchanged.
+
 The names of the symbols Teapot generates are reserved too (``generated``;
 is_generated_name in teapot/configs/runtime.py): its labels and copies, section
 and guard bounds, the aliases by which patch text refers to a symbol of a
@@ -47,6 +55,9 @@ SHN_UNDEF, SHN_COMMON = 0, 0xfff2
 # The types of a plain import of an interface: Teapot's own is a FUNC (gtirb-rewriting's
 # get_or_insert_extern_symbol); an undefined reference compiled from C may be NOTYPE.
 INTERFACE_IMPORT_TYPES = ("FUNC", "NOTYPE")
+WEAK_ANNOTATION_FUNCTIONS = frozenset((
+    "dift_set_mem_tags", "dift_copy_mem_tags", "dift_move_mem_tags", "dift_taint_args",
+))
 
 
 class RuntimeNameError(ValueError):
@@ -107,6 +118,21 @@ def _noncanonical(module: gtirb.Module, symbol: gtirb.Symbol) -> str:
     return ""
 
 
+def _weak_annotation_definition(module: gtirb.Module, symbol: gtirb.Symbol) -> bool:
+    """A public, unversioned weak function that the runtime's strong symbol can override.
+
+    Binding alone is insufficient: non-default visibility would bind calls
+    locally, and a proxy/COMMON/value or forwarded symbol is not this fallback.
+    Both input preflights use this predicate before conversion or rewriting.
+    """
+    entry = _entry(module, symbol)
+    return (symbol.name in WEAK_ANNOTATION_FUNCTIONS
+            and isinstance(symbol.referent, gtirb.CodeBlock) and not symbol.at_end
+            and entry is not None and entry[1:4] == ("FUNC", "WEAK", "DEFAULT")
+            and entry[4] not in (SHN_UNDEF, SHN_COMMON)
+            and _version(module, symbol) is None and _forwarded_to(module, symbol) is None)
+
+
 def _describe(module: gtirb.Module, symbol: gtirb.Symbol, runtime: bool = True) -> str:
     version = _version(module, symbol)
     versioned = f" of version {version}" if version is not None else ""
@@ -136,13 +162,15 @@ def runtime_name_uses(module: gtirb.Module, names: Iterable[str],
                       interfaces: Iterable[str] = ()) -> List[Tuple[gtirb.Symbol, str]]:
     """The module's symbols that use the runtime ``names``, with where they are.
 
-    Every symbol of those names counts, defined or undefined, except plain imports of one of ``interfaces``: each
-    like Teapot's own (_noncanonical), and all imports of the name with the same ELF symbol entry.
+    Every symbol of those names counts, defined or undefined, except the four public weak annotation fallbacks
+    (_weak_annotation_definition), and plain imports of one of ``interfaces``: each like Teapot's own
+    (_noncanonical), and all imports of the name with the same ELF symbol entry.
     """
     interfaces = frozenset(interfaces)
     uses = []
     for name in dict.fromkeys(names):
-        symbols = sorted(module.symbols_named(name), key=lambda symbol: symbol.uuid.bytes)
+        symbols = sorted((symbol for symbol in module.symbols_named(name)
+                          if not _weak_annotation_definition(module, symbol)), key=lambda symbol: symbol.uuid.bytes)
         if name not in interfaces:
             uses += [(symbol, _describe(module, symbol)) for symbol in symbols]
             continue

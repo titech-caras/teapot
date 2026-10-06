@@ -147,7 +147,8 @@ def refuse_reserved_names(ir: gtirb.IR, options: "InstrumentationOptions", runti
                           component: bool = False) -> None:
     """Refuse an IR whose modules use the names by which the rewrite refers to the runtime, or those of the symbols
     Teapot generates (teapot/preprocess/runtime_names.py): the runtime names of the mode the options select, the
-    coverage hooks' import rule and the generated-name rule. TeapotPipeline.run does this before anything else.
+    coverage hooks' import rule, the four public weak annotation fallbacks and the generated-name rule.
+    TeapotPipeline.run does this before anything else.
     The component driver also does it on its untouched input, since its converter renames and localizes symbols
     before the rewrite (experiments/reusable_libraries/rewrite_components.py)."""
     arch = get_arch(ir.modules[0])

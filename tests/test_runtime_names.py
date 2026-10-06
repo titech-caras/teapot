@@ -24,7 +24,7 @@ from teapot.datacls.linked_component import LinkedComponent
 from teapot.liveness import LiveRegisterManager
 from teapot.passes.preprocessing import import_symbols_pass
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
-from teapot.preprocess.runtime_names import RuntimeNameError, refuse_runtime_names
+from teapot.preprocess.runtime_names import RuntimeNameError, WEAK_ANNOTATION_FUNCTIONS, refuse_runtime_names
 from tools.sharedlib import convert as converter
 from test_live_register_preservation import make_module
 from test_rewrite_reproducibility import VARIANTS
@@ -68,7 +68,8 @@ def add_symbol(module, name, kind="static", version=None):
     """Add a symbol called name to the module, of one kind:
 
     static: a LOCAL OBJECT in .bss; function: a LOCAL FUNC in .text; global: a GLOBAL FUNC in .text; weak: a WEAK
-    OBJECT in .data; tls: a GLOBAL TLS in .tbss; value: an absolute LOCAL NOTYPE; bare: a LOCAL OBJECT in .bss
+    OBJECT in .data; weak_function: a WEAK DEFAULT FUNC in .text; tls: a GLOBAL TLS in .tbss;
+    value: an absolute LOCAL NOTYPE; bare: a LOCAL OBJECT in .bss
     without an elfSymbolInfo entry; common: a COMMON definition, which DDisasm gives a proxy block; undefined: an
     import. version: the version (needed or defined) it carries.
     """
@@ -77,9 +78,10 @@ def add_symbol(module, name, kind="static", version=None):
     if kind in ("static", "bare"):
         payload, entry = gtirb.DataBlock(size=8, byte_interval=section(module, ".bss", 0x404040, 8)), \
             (8, "OBJECT", "LOCAL", "DEFAULT", 0)
-    elif kind in ("function", "global"):
+    elif kind in ("function", "global", "weak_function"):
+        binding = {"function": "LOCAL", "global": "GLOBAL", "weak_function": "WEAK"}[kind]
         payload, entry = gtirb.CodeBlock(size=0, byte_interval=text), \
-            (0, "FUNC", "LOCAL" if kind == "function" else "GLOBAL", "DEFAULT", 0)
+            (0, "FUNC", binding, "DEFAULT", 1 if kind == "weak_function" else 0)
     elif kind == "weak":
         payload, entry = gtirb.DataBlock(size=8, byte_interval=section(module, ".data", 0x405000, 8)), \
             (8, "OBJECT", "WEAK", "DEFAULT", 0)
@@ -158,6 +160,62 @@ PATCH_LOCAL = re.compile(r"^\.L(tmp|func_end|BB|gtirb_riscv_|_gtirb_pcrel_)")
 
 
 class RuntimeNameTests(unittest.TestCase):
+    def test_only_the_four_public_weak_annotation_functions_are_accepted(self):
+        self.assertEqual(WEAK_ANNOTATION_FUNCTIONS, {
+            "dift_set_mem_tags", "dift_copy_mem_tags", "dift_move_mem_tags", "dift_taint_args"})
+        for isa in ARCHITECTURES:
+            for name in sorted(WEAK_ANNOTATION_FUNCTIONS):
+                with self.subTest(isa=isa, name=name):
+                    ir, module = program(isa, name, "weak_function")
+                    with redirect_stdout(io.StringIO()):
+                        rewrite(ir, isa).run()
+                    symbol, = module.symbols_named(name)
+                    self.assertEqual(module.aux_data["elfSymbolInfo"].data[symbol][1:4],
+                                     ("FUNC", "WEAK", "DEFAULT"))
+
+    def test_nonweak_annotation_definitions_and_other_weak_runtime_names_are_refused(self):
+        for isa in ARCHITECTURES:
+            for name in sorted(WEAK_ANNOTATION_FUNCTIONS):
+                for kind in ("global", "function"):
+                    with self.subTest(isa=isa, name=name, kind=kind):
+                        ir, _ = program(isa, name, kind)
+                        with self.assertRaisesRegex(RuntimeNameError, name):
+                            rewrite(ir, isa).run()
+            for name in ("scratchpad", "teapot_fault_low_bound"):
+                with self.subTest(isa=isa, name=name):
+                    ir, _ = program(isa, name, "weak_function")
+                    with self.assertRaisesRegex(RuntimeNameError, name):
+                        rewrite(ir, isa).run()
+
+    def test_weak_annotation_near_misses_remain_ordinary_names(self):
+        for name in ("dift_set_mem_tags_extra", "my_dift_taint_args", "dift_move_mem_tag"):
+            with self.subTest(name=name):
+                ir, _ = program("x64", name, "weak_function")
+                with redirect_stdout(io.StringIO()):
+                    rewrite(ir, "x64").run()
+
+    def test_annotation_exception_requires_an_overridable_function_definition(self):
+        for name in sorted(WEAK_ANNOTATION_FUNCTIONS):
+            for case in ("weak object", "undefined", "HIDDEN", "PROTECTED", "version", "forwarded", "no entry"):
+                with self.subTest(name=name, case=case):
+                    ir, module = program("x64")
+                    kind = "weak" if case == "weak object" else "undefined" if case == "undefined" else "weak_function"
+                    symbol = add_symbol(module, name, kind, version="ANNOTATION_1" if case == "version" else None)
+                    if case in ("HIDDEN", "PROTECTED"):
+                        row = module.aux_data["elfSymbolInfo"].data[symbol]
+                        module.aux_data["elfSymbolInfo"].data[symbol] = (*row[:3], case, row[4])
+                    elif case == "forwarded":
+                        other = add_symbol(module, "ordinary_function", "global")
+                        module.aux_data["symbolForwarding"] = gtirb.AuxData({symbol: other}, "mapping<UUID,UUID>")
+                    elif case == "no entry":
+                        del module.aux_data["elfSymbolInfo"].data[symbol]
+                    with self.assertRaisesRegex(RuntimeNameError, name):
+                        rewrite(ir, "x64").run()
+            ir, module = program("x64", name, "weak_function")
+            add_symbol(module, name, "global")
+            with self.assertRaisesRegex(RuntimeNameError, name):
+                rewrite(ir, "x64").run()
+
     def test_a_static_scratchpad_is_refused_before_rewriting(self):
         for isa in ARCHITECTURES:
             with self.subTest(isa=isa):
@@ -479,6 +537,30 @@ def build_component(ir, role):
 class ComponentPreflightTests(unittest.TestCase):
     """The component driver runs the rewrite's complete preflight on the untouched lift, before its converter
     renames and localizes symbols (experiments/reusable_libraries/rewrite_components.py)."""
+
+    def test_public_weak_annotation_functions_pass_the_untouched_input_preflight(self):
+        for name in sorted(WEAK_ANNOTATION_FUNCTIONS):
+            with self.subTest(name=name):
+                ir, _ = program("x64", name, "weak_function")
+                output = build_component(ir, "executable")
+                symbol, = output.modules[0].symbols_named(name)
+                self.assertEqual(output.modules[0].aux_data["elfSymbolInfo"].data[symbol][1:4],
+                                 ("FUNC", "WEAK", "DEFAULT"))
+
+    def test_nonweak_annotations_and_other_weak_runtime_names_fail_before_conversion(self):
+        cases = [(name, kind) for name in sorted(WEAK_ANNOTATION_FUNCTIONS) for kind in ("global", "function")]
+        cases += [(name, "weak_function") for name in ("scratchpad", "teapot_fault_low_bound")]
+        for name, kind in cases:
+            with self.subTest(name=name, kind=kind):
+                ir, _ = program("x64", name, kind)
+                with self.assertRaisesRegex(RuntimeNameError, name):
+                    build_component(ir, "executable")
+
+    def test_unrelated_and_near_miss_weak_functions_remain_accepted(self):
+        for name in ("ordinary_function", "dift_copy_mem_tags_extra", "my_dift_taint_args"):
+            with self.subTest(name=name):
+                ir, _ = program("x64", name, "weak_function")
+                self.assertIs(build_component(ir, "executable"), ir)
 
     def test_versioned_runtime_names_are_refused_before_the_converter_renames_them(self):
         for role, description in (("selected", "scratchpad: a GLOBAL FUNC symbol of version LIBTEST_1 in .text"),
