@@ -138,7 +138,7 @@ def _symbol_order(symbol: gtirb.Symbol):
 
 
 def save_protobuf_ordered(ir: gtirb.IR, path: Union[str, "os.PathLike[str]"]) -> None:
-    """IR.save_protobuf, with each module's symbols in a fixed order.
+    """IR.save_protobuf, with each module's sections and symbols in a fixed order.
 
     gtirb writes a module's symbols in the order of a set hashed by identity,
     which changes from process to process. The printer prints the labels of
@@ -146,11 +146,22 @@ def save_protobuf_ordered(ir: gtirb.IR, path: Union[str, "os.PathLike[str]"]) ->
     the assembly. Order by name, then position; only the order differs from
     IR.save_protobuf, whose private message builder and header this repeats
     (checked: teapot/utils/dependencies.py).
+
+    Sections are also an identity-hashed set. Their serialized insertion order
+    affects the C++ loader's allocation order and the printer's referent-index
+    enumeration after relayout, even with name-sorted symbols. Keep that input
+    order fixed too; this does not change section addresses, contents or UUIDs.
+    Teapot-generated sections have unique names. Position and UUID break ties
+    for same-named input sections, whose input UUIDs are preserved.
     """
     require_inspected("gtirb")
     message = ir._to_protobuf()
     keys = {symbol.uuid.bytes: _symbol_order(symbol) for module in ir.modules for symbol in module.symbols}
+    section_keys = {section.uuid.bytes: (
+        section.name, section.address is None, section.address or 0, section.uuid.bytes)
+        for module in ir.modules for section in module.sections}
     for module in message.modules:
+        module.sections.sort(key=lambda section: section_keys[section.uuid])
         module.symbols.sort(key=lambda symbol: keys[symbol.uuid])
     with open(path, "wb") as stream:
         stream.write(GTIRB_MAGIC_CHARS + b"\0\0" + PROTOBUF_VERSION.to_bytes(1, byteorder="little"))
