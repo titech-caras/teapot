@@ -46,11 +46,18 @@ class AArch64BTIPACArchitecture(AArch64BTIArchitecture):
         name = "teapot_aarch64_bti_pac_rewrite_marker"
         if next(module.symbols_named(name), None) is not None:
             raise ValueError("input collides with reserved PAC marker symbol")
-        blocks = sorted(pipeline.text_section.code_blocks,
-                        key=lambda block: (block.address is None, block.address or 0, block.offset))
-        if not blocks:
-            raise ValueError("PAC mode requires at least one text block")
-        marker = gtirb.Symbol(name=name, payload=blocks[0], at_end=False, module=module)
+        # Use the explicit local bound, not the first address-sorted block.
+        # The empty start bound and the first instruction can share an
+        # address/offset: sorting that tie preserves GTIRB's identity-hashed
+        # set order, moving the marker across the printer's entry alignment.
+        # This local anchor also exists in component mode, whose active
+        # bounds are external ProxyBlocks, and follows final bound pinning.
+        source = pipeline.local_section_bounds[0]
+        anchor = source.referent
+        if (not isinstance(anchor, gtirb.CodeBlock) or anchor.size or source.at_end or
+                anchor.section is not pipeline.text_section):
+            raise ValueError("PAC mode requires a local text-start anchor")
+        marker = gtirb.Symbol(name=name, payload=anchor, at_end=False, module=module)
         info = module.aux_data.setdefault(
             "elfSymbolInfo",
             gtirb.AuxData({}, "mapping<UUID,tuple<uint64_t,string,string,string,uint64_t>>"))
