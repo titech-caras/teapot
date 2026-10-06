@@ -40,6 +40,7 @@ from teapot.preprocess.copy_section import (
 from teapot.preprocess.contract_record import add_contract_record
 from teapot.preprocess.create_guards import create_guards
 from teapot.preprocess.runtime_names import refuse_runtime_names
+from teapot.runtime_exports import runtime_owned_names
 from teapot.liveness import LivenessMetadataError, LiveRegisterManager
 from teapot.modes import validate_options
 from teapot.rewrite_state import RewriteState
@@ -148,7 +149,11 @@ def refuse_reserved_names(ir: gtirb.IR, options: "InstrumentationOptions", runti
     mode = validate_options(options, arch.name, component=component)
     if mode.architecture is not None:
         arch = mode.architecture()
-    names = runtime_names(arch, runtime_contract, options)
+    # The import list is not the runtime's full namespace: internal/hidden and
+    # optional-mode globals are owned too. Preserve the established diagnostics
+    # for generated names, which the same refusal call already checks below.
+    names = [*runtime_names(arch, runtime_contract, options),
+             *(name for name in runtime_owned_names() if not is_generated_name(name))]
     for module in ir.modules:
         refuse_runtime_names(module, names, interfaces=COVERAGE_HOOK_SYMBOLS, generated=is_generated_name)
 

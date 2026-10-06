@@ -15,7 +15,11 @@ A program that only refers to such a name (an undefined, imported symbol) is
 refused too: after the final link its references would reach the runtime's
 object, whichever library it expected the name from. No supported program
 imports the runtime, which is a static archive linked into the rewritten
-program. The Sanitizer Coverage hooks are the exception (COVERAGE_HOOK_SYMBOLS):
+program. The archive-derived manifest (teapot/runtime_exports.json) also reserves
+defined globals that emitted instrumentation never imports, including hidden
+helpers and names of other supported runtime modes and ISAs. It is loaded by
+the shared whole-program/component preflight, with no missing-file fallback.
+The Sanitizer Coverage hooks are the exception (COVERAGE_HOOK_SYMBOLS):
 a program compiled with -fsanitize-coverage calls them, and the fuzzer runtime
 linked at the end provides them, as the coverage runtime expects. Teapot's code
 then calls them through the program's import, which gtirb-rewriting reuses, so
