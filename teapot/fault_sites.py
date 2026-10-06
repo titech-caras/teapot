@@ -40,12 +40,32 @@ def extent(elf, start, end, flags, *, nobits=False):
 
 
 def access_bytes(elf, pc, length):
-    section = extent(elf, pc, pc + length, 6)
-    require(section["sh_type"] == "SHT_PROGBITS", "access is not file-backed code")
-    offset = pc - section["sh_addr"]
-    code = section.data()[offset:offset + length]
-    require(len(code) == length, "truncated access")
-    return code
+    return access_reader(elf)(pc, length)
+
+
+def access_reader(elf):
+    """Cache code bytes for one validation of an immutable ELF, not globally.
+
+    pyelftools Section.data() reads the entire section. Re-reading it for every
+    small instruction window makes large publishers perform terabytes of I/O.
+    Keep its byte/decompression semantics, but read each executable section
+    once. Every request still checks its section, load permissions and extent.
+    """
+    contents = {}
+
+    def read(pc, length):
+        section = extent(elf, pc, pc + length, 6)
+        require(section["sh_type"] == "SHT_PROGBITS", "access is not file-backed code")
+        key = (section.name, section["sh_addr"], section["sh_size"],
+               section["sh_flags"], section["sh_type"])
+        if key not in contents:
+            contents[key] = section.data()
+        offset = pc - section["sh_addr"]
+        code = contents[key][offset:offset + length]
+        require(len(code) == length, "truncated access")
+        return code
+
+    return read
 
 
 def validate_access(machine, pc, code):

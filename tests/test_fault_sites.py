@@ -15,7 +15,7 @@ from teapot.pipeline import InstrumentationOptions
 from teapot.preprocess.contract_record import add_contract_record, FAULT_SITES_OFFSET
 from teapot.preprocess.fault_sites import add_fault_site_table, HEADER_SIZE, ENTRY_SIZE
 from teapot.preprocess.copy_section import set_elf_section_properties
-from teapot.fault_sites import resolve, validate_table, validate_module_tables
+from teapot.fault_sites import access_reader, access_bytes, resolve, validate_table, validate_module_tables
 from teapot.runtime_contract import capability_bits, RuntimeContractError
 from runtime_contract_support import fixture_contract
 from test_runtime_contract import edited_contract
@@ -52,6 +52,71 @@ class Elf(dict):
                          for s, f in zip(self.sections, (5, 4, 6))]
     def iter_sections(self): return iter(self.sections)
     def iter_segments(self): return iter(self.segments)
+
+
+class FaultAccessReaderTests(unittest.TestCase):
+    def test_recreated_sections_are_read_once_per_validation(self):
+        elf = Elf()
+        original_sections = tuple(elf.sections)
+        reads = []
+
+        def sections():
+            for original in original_sections:
+                copy = Section(original.name, original["sh_addr"], original["sh_size"],
+                               original["sh_flags"], original.contents, original["sh_type"])
+                def data(original=original):
+                    reads.append(original.name)
+                    return original.data()
+                copy.data = data
+                yield copy
+
+        elf.iter_sections = sections
+        reader = access_reader(elf)
+        for offset, length in ((0, 7), (0x20, 7), (0x40, 5), (0x7f, 1), (0, 0x80)):
+            self.assertEqual(reader(0x1000 + offset, length),
+                             original_sections[0].contents[offset:offset + length])
+        self.assertEqual(reads, [".text"])
+        self.assertEqual(access_reader(elf)(0x1000, 7), reader(0x1000, 7))
+        self.assertEqual(reads, [".text", ".text"])
+
+    def test_cached_bytes_do_not_bypass_extent_permissions_or_storage(self):
+        edits = (
+            lambda elf: elf.sections[0].__setitem__("sh_flags", 7),
+            lambda elf: elf.segments[0].__setitem__("p_flags", 7),
+            lambda elf: elf.sections[0].__setitem__("sh_type", "SHT_NOBITS"),
+            lambda elf: elf.sections.append(elf.sections[0]),
+        )
+        for edit in edits:
+            with self.subTest(edit=edit):
+                elf = Elf(); reader = access_reader(elf)
+                reader(0x1000, 7)
+                edit(elf)
+                with self.assertRaises(ValueError):
+                    reader(0x1000, 7)
+        elf = Elf(); reader = access_reader(elf)
+        reader(0x1000, 7)
+        for address, length in ((0xfff, 7), (0x107f, 2), (0x1080, 1), (0x1000, 0)):
+            with self.subTest(address=address, length=length), self.assertRaises(ValueError):
+                reader(address, length)
+
+    def test_truncated_access_is_not_padded_by_the_cache(self):
+        elf = Elf(); elf.sections[0].contents = b"\x90" * 3
+        reader = access_reader(elf)
+        self.assertEqual(reader(0x1000, 3), b"\x90" * 3)
+        for read in (reader, lambda pc, size: access_bytes(elf, pc, size)):
+            with self.assertRaisesRegex(ValueError, "truncated access"):
+                read(0x1000, 7)
+
+    def test_separate_sections_and_elves_do_not_share_bytes(self):
+        elf = Elf()
+        elf.sections.append(Section(".trampolines", 0x4000, 7, 6, b"\x91" * 7))
+        elf.segments.append(dict(p_type="PT_LOAD", p_vaddr=0x4000, p_memsz=7, p_flags=5))
+        reader = access_reader(elf)
+        self.assertEqual(reader(0x4000, 7), b"\x91" * 7)
+        self.assertEqual(reader(0x1000, 7), elf.sections[0].contents[:7])
+        other = Elf(); other.sections[0].contents = b"\x92" * 0x80
+        self.assertEqual(access_reader(other)(0x1000, 7), b"\x92" * 7)
+        self.assertEqual(reader(0x1000, 7), elf.sections[0].contents[:7])
 
 
 class FaultElfTests(unittest.TestCase):

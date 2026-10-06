@@ -24,7 +24,8 @@ def require_isolated_copy_pages(elf, start, end):
 
 
 def validate_windows(elf, address):
-    from teapot.fault_sites import require, resolve, extent, access_bytes
+    from teapot.fault_sites import require, resolve, extent, access_reader
+    read_access = access_reader(elf)
     require(elf["e_machine"] == "EM_X86_64" and elf.elfclass == 64 and elf.little_endian,
             "window publisher requires little-endian x64")
     require(address % 8 == 0, "misaligned window table")
@@ -85,7 +86,7 @@ def validate_windows(elf, address):
             struct.pack_into("<i",recorded,rip_offset,rip_target - pc - rip_end)
         else:
             require(not rip_target_relative, "unexpected RIP target")
-        original = access_bytes(elf, pc, length)
+        original = read_access(pc, length)
         require(original == recorded, "window differs from recorded original bytes")
         instructions = list(dec.disasm(original, pc))
         require(instructions and sum(insn.size for insn in instructions) == length,
@@ -109,7 +110,7 @@ def validate_windows(elf, address):
         expected, copy_offset = instantiate_guard(addr, bytes(copied), stub,
             dict(spill=spill, low=low, rollback=rollback, **{"return": ret}))
         require(copy == stub + copy_offset and stub + len(expected) <= se and
-                access_bytes(elf, stub, len(expected)) == expected, "guard/copy/continuation template differs")
+                read_access(stub, len(expected)) == expected, "guard/copy/continuation template differs")
         entries.append((pc, stub, copy, length))
         block_extents.add((bs,be))
         previous_end, previous_spill = ret, spill + 24
@@ -134,7 +135,7 @@ def validate_windows(elf, address):
     import capstone as cap
     def check_incoming(begin, finish):
         if begin == finish: return
-        instructions = list(dec.disasm(access_bytes(elf, begin, finish - begin), begin))
+        instructions = list(dec.disasm(read_access(begin, finish - begin), begin))
         require(sum(insn.size for insn in instructions) == finish - begin, "final block not completely decoded")
         for insn in instructions:
             if cap.CS_GRP_JUMP in insn.groups or cap.CS_GRP_CALL in insn.groups:
