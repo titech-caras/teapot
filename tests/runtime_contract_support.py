@@ -1,7 +1,8 @@
-"""Runtime contracts for tests: libcheckpoint's generated files, checked in.
+"""Archived pre-enforcement runtime contracts, retained for eager fallback.
 
-tests/test_runtime_contract.py regenerates them from the libcheckpoint tree
-when one is available and fails when they differ."""
+test_runtime_contract.py validates the current runtime's exact ABI extension
+of these legacy fixtures and separately tests enforcing/capability=0 modes.
+"""
 from pathlib import Path
 
 from teapot.runtime_contract import load_runtime_contract

@@ -183,6 +183,18 @@ sysroot is left unchanged.
 
 ## Current Analysis Limits
 
+- Programs must not change Teapot-owned shadow/protected mappings or their
+  accessibility. The default enforcing runtime contract mediates whole-module
+  imported mapping-API identities, including constructor and function-pointer
+  uses, and enables exact per-write software-shadow no-op elision. Raw syscalls,
+  dlsym pointers, unrewritten DSOs/loader internals and other unmediated owned-page
+  accessibility changes remain outside enforcement; they are not permitted
+  ways to mutate those ranges. See the runtime's
+  [owned-mapping contract](libcheckpoint/README.md#owned-mappings-and-unchanged-software-tag-stores)
+  for the precise APIs, huge-page/address rules, post-startup address-mode
+  stability requirement and unsupported routes. Legacy
+  or explicit non-enforcing contracts retain eager logging/stores; they never
+  receive elided code built for an enforcing runtime.
 - AArch64/RV64 saved-return poisoning tracks one decoded LR/RA save and its
   matching reloads through the CFG, independently of unwind metadata. It
   poisons after the store and clears before each reload. Unsupported lifetimes

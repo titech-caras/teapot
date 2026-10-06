@@ -129,13 +129,18 @@ class InstrumentationOptions:
 
 def runtime_imports(arch, runtime_contract):
     """The runtime names Teapot's code refers to, which ImportSymbolsPass imports."""
-    return [*arch.checkpoint_lib_symbols(), runtime_contract.anchor]
+    symbols = [*arch.checkpoint_lib_symbols(), runtime_contract.anchor]
+    if runtime_contract.shadow_mapping_enforcement:
+        symbols += ["teapot_shadow_registry", "teapot_shadow_registry_count",
+                    "teapot_shadow_mapping_ready", "teapot_shadow_register_owned", "memory_history"]
+    return symbols
 
 
 def runtime_names(arch, runtime_contract, options):
     """Every name by which the rewritten program refers to the runtime, which the program must not use: the
     imports and the wrappers DiftExtCallPass redirects external calls to."""
-    return [*runtime_imports(arch, runtime_contract), *wrapper_destinations(options.enable_dift).values()]
+    return [*runtime_imports(arch, runtime_contract),
+            *wrapper_destinations(options.enable_dift, runtime_contract.shadow_mapping_enforcement).values()]
 
 
 def refuse_reserved_names(ir: gtirb.IR, options: "InstrumentationOptions", runtime_contract,
@@ -683,7 +688,8 @@ class TeapotPipeline:
         pass_manager = PassManager()
         pass_manager.add(DiftExtCallPass(
             self.text_section, self.decoder,
-            wrap_dift_calls=self.options.enable_dift))
+            wrap_dift_calls=self.options.enable_dift,
+            enforce_mappings=self.runtime_contract.shadow_mapping_enforcement))
         self._run_pass_manager(pass_manager, "dift-ext-calls")
 
     def _run_text_passes(self):
@@ -770,6 +776,7 @@ class TeapotPipeline:
                 self.arch, self.reg_manager, self.transient_section, self.decoder,
                 dift_layout=self.dift_layout, insert_memlog=self.options.enable_memlog,
                 memory_policy=memory_policy, port_policy=port_policy,
+                shadow_mapping_enforcement=self.runtime_contract.shadow_mapping_enforcement,
                 immediate=self.options.eager_transient_dift))
         else:
             for policy in (memory_policy, port_policy):

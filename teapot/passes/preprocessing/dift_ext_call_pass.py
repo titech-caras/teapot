@@ -5,8 +5,9 @@ from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_functions import Function
 from gtirb_rewriting import RewritingContext
 
-from teapot.configs.blacklist import DIFT_WRAPPER_FUNCTIONS, is_blacklisted_function, wrapper_destinations
+from teapot.configs.blacklist import DIFT_WRAPPER_FUNCTIONS, MAPPING_WRAPPER_FUNCTIONS, is_blacklisted_function, wrapper_destinations
 from teapot.passes.mixins import VisitorPassMixin
+from teapot.preprocess.runtime_names import _undefined
 
 
 class DiftExtCallPass(VisitorPassMixin):
@@ -14,10 +15,11 @@ class DiftExtCallPass(VisitorPassMixin):
     symbols_to_rename: Set[gtirb.Symbol]
 
     def __init__(self, section: gtirb.Section, decoder: GtirbInstructionDecoder,
-                 wrap_dift_calls: bool = True):
+                 wrap_dift_calls: bool = True, enforce_mappings: bool = False):
         self.section = section
         self.decoder = decoder
         self.wrap_dift_calls = wrap_dift_calls
+        self.enforce_mappings = enforce_mappings
         self.symbols_to_rename = set()
 
     @staticmethod
@@ -27,6 +29,15 @@ class DiftExtCallPass(VisitorPassMixin):
     def begin_module(self, module: gtirb.Module, functions, rewriting_ctx: RewritingContext) -> None:
         super().begin_module(module, functions, rewriting_ctx)
 
+        if self.enforce_mappings:
+            # Bind import identities, not only direct-call instructions. This
+            # includes constructor/blacklist references and data-held function
+            # pointers. Runtime objects are not rewritten, so their original
+            # libc binding is distinct from these renamed application imports.
+            for symbol in module.symbols:
+                if symbol.name in MAPPING_WRAPPER_FUNCTIONS and _undefined(module, symbol):
+                    self.symbols_to_rename.add(symbol)
+
         self.visit_functions(functions, self.section)
 
     def end_module(self, module: gtirb.Module, functions) -> None:
@@ -34,8 +45,10 @@ class DiftExtCallPass(VisitorPassMixin):
         forwarding = symbol_forwarding.data if symbol_forwarding is not None else {}
         symbol_versions = module.aux_data.get('elfSymbolVersions')
         version_entries = symbol_versions.data[2] if symbol_versions is not None else {}
-        destinations = wrapper_destinations(self.wrap_dift_calls)
+        destinations = wrapper_destinations(self.wrap_dift_calls, self.enforce_mappings)
         for forwarded_sym in {forwarding.get(sym, sym) for sym in self.symbols_to_rename}:
+            if forwarded_sym.name in MAPPING_WRAPPER_FUNCTIONS and not _undefined(module, forwarded_sym):
+                continue
             wrapper = destinations.get(forwarded_sym.name)
             if wrapper:
                 version_entries.pop(forwarded_sym, None)

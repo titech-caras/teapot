@@ -365,7 +365,8 @@ attributes #0 = {{ "no-builtins" }}
     def _build_dift_patch(self, block: gtirb.CodeBlock, inst: CsInsn, inst_offset: int,
                           regs_read: Set[Register], regs_write: Set[Register], *,
                           clear_dest_tags: bool, mem_read, mem_write, mem_write_size: int,
-                          conditional: Optional[str] = None, scratch_plan=None):
+                          conditional: Optional[str] = None, scratch_plan=None,
+                          emit_capture: bool = True):
         capture_operands = []
         label_id = self.scratchpad_offset
         if conditional:
@@ -394,7 +395,8 @@ attributes #0 = {{ "no-builtins" }}
                     self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand)))
             # Snapshot before any destination tag can overwrite an address tag.
             address_tag = self._load(self.TAG_TYPE, tag)
-            mem_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_operand)
+            mem_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_operand,
+                                                capture_metadata=emit_capture)
             for element in read_elements or write_elements:
                 self._store(self.TAG_TYPE, address_tag, tag)
                 if read_elements:
@@ -422,7 +424,8 @@ attributes #0 = {{ "no-builtins" }}
                 self._or_register_tags_into_tag(tag, regs_read)
 
                 if mem_read is not None:
-                    mem_read_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_read)
+                    mem_read_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_read,
+                                                             capture_metadata=emit_capture)
                     self._or_shadow_mem_tag_into_tag(tag, mem_read_addr)
 
             loaded_tag = self._load(self.TAG_TYPE, tag)
@@ -435,7 +438,8 @@ attributes #0 = {{ "no-builtins" }}
             if mem_write is not None:
                 mem_addr = mem_read_addr
                 if mem_addr is None or mem_read is None or mem_write != mem_read:
-                    mem_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_write)
+                    mem_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_write,
+                                                        capture_metadata=emit_capture)
                 self._store_shadow_mem_tags(loaded_tag, mem_addr, 0, mem_write_size)
 
         self._after_instruction_effects(mem_read)
@@ -444,6 +448,11 @@ attributes #0 = {{ "no-builtins" }}
             self._br(f"%dift_skip_{label_id}")
             self._label(f"dift_skip_{label_id}")
 
+        if not emit_capture:
+            # A transient replay can rebuild the selected LLVM prefix from its
+            # original capture slots. It must not create a second capture patch
+            # or re-resolve input relocations after scheduling has selected it.
+            return None
         return self._build_store_values_patch(
             inst, capture_operands, scratch_plan=scratch_plan,
             conditional=conditional, conditional_slot=label_id)
@@ -451,9 +460,11 @@ attributes #0 = {{ "no-builtins" }}
     def _after_instruction_effects(self, mem_read):
         """Transient replays apply queued load tags inside the same condition."""
 
-    def _load_scratchpad_addr(self, capture_operands, block, inst, inst_offset, mem_operand):
+    def _load_scratchpad_addr(self, capture_operands, block, inst, inst_offset, mem_operand, *,
+                              capture_metadata=True):
         scratchpad_idx = self.scratchpad_offset
-        mem_symexpr = self.arch.mem_operand_address_expression(block, inst, mem_operand, inst_offset)
+        mem_symexpr = (self.arch.mem_operand_address_expression(block, inst, mem_operand, inst_offset)
+                      if capture_metadata else None)
         capture_operands.append((scratchpad_idx, mem_operand, mem_symexpr))
         mem_addr = self._load(self.SCRATCHPAD_ELEM_TYPE, self._build_gep(
             self.SCRATCHPAD_ELEM_TYPE, "scratchpad", scratchpad_idx, ptr_type=self.SCRATCHPAD_ARR_TYPE))

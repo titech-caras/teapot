@@ -172,6 +172,7 @@ def contract_identity(contract):
     # components push coverage guards (components always enable gadgets); it is
     # spelled out so that keys and manifests show it.
     return {"version": contract.version, "fingerprint": contract.fingerprint, "coverage": contract.coverage,
+            "shadow_mapping_enforcement": contract.shadow_mapping_enforcement,
             "fault_sites_version": contract.abi["fault_sites.version"],
             "fault_training_capable": "fault_training" in contract.capabilities,
             "fault_publishing_capable": "fault_publishing" in contract.capabilities,
@@ -370,6 +371,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
               **mode_metadata(isa, args.mode, args.target_identification),
               "exports": sorted(own_exports), "linked_exports": sorted(exports(item, converter, False)),
               "guard_count": guard_count, "coverage": coverage,
+              "shadow_mapping_enforcement": args.contract.shadow_mapping_enforcement,
               "rewrite_seconds": rewrite_seconds, "liveness": "ddisasm",
               "liveness_contract": "standalone-ddisasm-abi-v1; missing instruction masks all-live",
               "files": {name: sha(directory / name) for name in recorded}}
@@ -411,6 +413,10 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
         # Covered and uncovered objects are never interchangeable.
         require(result.get("coverage") == context["runtime_contract"]["coverage"],
                 "cached component has another speculative coverage mode", result.get("coverage"))
+        require(result.get("shadow_mapping_enforcement", False) ==
+                context["runtime_contract"].get("shadow_mapping_enforcement", False),
+                "cached component has another shadow mapping enforcement mode",
+                result.get("shadow_mapping_enforcement"))
         for name, expected in result["files"].items():
             require(sha(entry / name) == expected, "cached artifact hash mismatch: " + name)
         validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]),

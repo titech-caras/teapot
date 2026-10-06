@@ -15,7 +15,7 @@ from teapot.preprocess.contract_record import (
     ANCHOR_OFFSET, NOTE_OWNER, NOTE_SECTION, NOTE_TYPE_RECORD, RECORD_AUX_DATA, RECORD_HEADER_SIZE,
     RECORD_KIND_MODULE, RECORD_MAGIC, RECORD_SECTION, add_contract_record)
 from teapot.runtime_contract import (
-    RuntimeContractError, abi_fingerprint, capability_bits, contract_anchor, load_runtime_contract)
+    RuntimeContractError, SHADOW_MAPPING_ABI, abi_fingerprint, capability_bits, contract_anchor, load_runtime_contract)
 from runtime_contract_support import FIXTURES, fixture_contract, fixture_contract_path, runtime_contract
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +39,88 @@ def edited_contract(directory, name, edit, *, refingerprint=True):
     return path
 
 
+def with_shadow_enforcement(data, mode):
+    data["abi"].update(SHADOW_MAPPING_ABI, shadow_mapping_enforcement=mode)
+    data["capabilities"].update(shadow_mapping_enforcement=bool(mode))
+    data["capability_bits"] = capability_bits(name for name, enabled in data["capabilities"].items() if enabled)
+
+
 class RuntimeContractLoadTests(unittest.TestCase):
+    def test_enforcement_preserves_fault_modes_and_only_current_v2_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("x64", "aarch64", "riscv64"):
+                arch, abi = arch_and_abi(name)
+                for mode in (None, 0, 1):
+                    for training, publishing in ((0, 0), (1, 0), (1, 1)):
+                        def combined(data):
+                            data["abi"].update(fault_training=training, fault_publishing=publishing)
+                            data["capabilities"].update(fault_training=bool(training), fault_publishing=bool(publishing))
+                            if mode is not None:
+                                with_shadow_enforcement(data, mode)
+                            data["capability_bits"] = capability_bits(
+                                key for key, present in data["capabilities"].items() if present)
+                        with self.subTest(isa=name, mode=mode, training=training, publishing=publishing):
+                            contract = load_runtime_contract(edited_contract(directory, name, combined))
+                            self.assertEqual(len(contract.capabilities & {"fault_training", "fault_publishing"}),
+                                             training + publishing)
+                            bits, _ = contract.check(arch, abi, InstrumentationOptions(
+                                enable_fault_training=bool(training), enable_fault_publishing=bool(publishing)))
+                            self.assertEqual(bits & 0x700, (training << 8) | (publishing << 9) | (bool(mode) << 10))
+                for change in (
+                    lambda data: data["abi"].update({"fault_windows.version": 0}),
+                    lambda data: data["abi"].update({"fault_sites.header_size": 0}),
+                    lambda data: data["abi"].update({"shadow_registry.capacity": 64}),
+                ):
+                    with self.subTest(isa=name, malformed=True):
+                        contract = load_runtime_contract(edited_contract(directory, name, change))
+                        with self.assertRaises(RuntimeContractError):
+                            contract.check(arch, abi, InstrumentationOptions())
+                for change in (
+                    lambda data: data.update(version=1),
+                    lambda data: data["capabilities"].pop("fault_training"),
+                    lambda data: data["capabilities"].update(shadow_mapping_enforcement=False),
+                    lambda data: data["abi"].update(fault_publishing=1),
+                ):
+                    with self.subTest(isa=name, incompatible=True), self.assertRaises(RuntimeContractError):
+                        load_runtime_contract(edited_contract(directory, name, change))
+
+    def test_enforcement_mode_requires_matching_capability_and_complete_abi(self):
+        arch, abi = arch_and_abi("x64")
+        options = InstrumentationOptions()
+        legacy = fixture_contract("x64")
+        self.assertFalse(legacy.shadow_mapping_enforcement)
+        with tempfile.TemporaryDirectory() as directory:
+            modes = []
+            for mode in (0, 1):
+                contract = load_runtime_contract(edited_contract(directory, "x64",
+                    lambda data: with_shadow_enforcement(data, mode)))
+                modes.append(contract)
+                bits, _ = contract.check(arch, abi, options)
+                self.assertEqual(contract.shadow_mapping_enforcement, bool(mode))
+                self.assertEqual(bool(bits & 0x400), bool(mode))
+            self.assertNotEqual(modes[0].fingerprint, modes[1].fingerprint)
+            self.assertNotEqual(legacy.fingerprint, modes[1].fingerprint)
+            for edit in (lambda data: data["abi"].update(shadow_mapping_enforcement=2),
+                         lambda data: data["abi"].update(shadow_mapping_enforcement=0)):
+                def mismatch(data):
+                    with_shadow_enforcement(data, 1)
+                    edit(data)
+                with self.assertRaisesRegex(RuntimeContractError, "shadow_mapping_enforcement"):
+                    load_runtime_contract(edited_contract(directory, "x64", mismatch))
+            for key in SHADOW_MAPPING_ABI:
+                def mismatch(data):
+                    with_shadow_enforcement(data, 1)
+                    data["abi"][key] += 1
+                contract = load_runtime_contract(edited_contract(directory, "x64", mismatch))
+                with self.assertRaisesRegex(RuntimeContractError, key.replace(".", r"\.")):
+                    contract.check(arch, abi, options)
+            def incomplete(data):
+                with_shadow_enforcement(data, 1)
+                data["abi"].pop("shadow_registry.capacity")
+            contract = load_runtime_contract(edited_contract(directory, "x64", incomplete))
+            with self.assertRaisesRegex(RuntimeContractError, "shadow_registry.capacity"):
+                contract.check(arch, abi, options)
+
     def test_fixtures_load_with_their_fingerprints(self):
         for path in sorted(FIXTURES.glob("*.contract.json")):
             with self.subTest(path=path.name):
@@ -397,7 +478,7 @@ class ContractRecordTests(unittest.TestCase):
 @unittest.skipUnless(shutil.which("cmake") and (ROOT / "libcheckpoint/CMakeLists.txt").is_file(),
                      "requires CMake and the libcheckpoint checkout")
 class FixtureRegenerationTests(unittest.TestCase):
-    """The checked-in contracts are what the pinned runtime generates."""
+    """Keep legacy fixtures frozen; validate the current extension of each ABI."""
 
     CONFIGURATIONS = {
         "x64": ("gcc", "x86_64", []),
@@ -432,12 +513,18 @@ class FixtureRegenerationTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     # Editing a probed header must configure again.
                     depends = (Path(directory) / "CMakeFiles/Makefile.cmake").read_text()
-                    for header in ("checkpoint.h", "config.h", "dift_support.h", "runtime_contract.h"):
+                    for header in ("checkpoint.h", "config.h", "dift_support.h", "runtime_contract.h", "shadow_mapping.h"):
                         self.assertIn(f"libcheckpoint/include/{header}", depends)
                     for nested in (False, True):
                         archive = "libcheckpoint_nested" if nested else "libcheckpoint"
                         generated = json.loads((Path(directory) / f"{archive}.contract.json").read_text())
                         fixture = json.loads(fixture_contract_path(name, nested=nested).read_text())
+                        # These archived fixtures deliberately exercise old-runtime
+                        # eager fallback. Current builds add exactly this extension.
+                        fixture["abi"].update(SHADOW_MAPPING_ABI, shadow_mapping_enforcement=1)
+                        fixture["capabilities"].update(fault_training=False, fault_publishing=False,
+                                                       shadow_mapping_enforcement=True)
+                        fixture["fingerprint"] = abi_fingerprint(fixture["abi"])
                         for field in ("version", "fingerprint", "abi", "capabilities", "runtime"):
                             self.assertEqual(generated[field], fixture[field],
                                              f"{name}{' nested' if nested else ''}: {field}; regenerate "

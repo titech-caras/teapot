@@ -62,7 +62,13 @@ SCHEMA = "libcheckpoint-runtime-contract"
 
 # Capability names in the bit order of runtime_contract.h.
 CAPABILITIES = ("nested", "aarch64_bti_pac", "dift_runtime", "x64_vector_full", "coverage",
-                "riscv64_float_state", "x64_vector_sse", "x64_vector_avx", "fault_training", "fault_publishing")
+                "riscv64_float_state", "x64_vector_sse", "x64_vector_avx", "fault_training", "fault_publishing",
+                "shadow_mapping_enforcement")
+# A compatible pre-enforcement v2 contract remains eager. These facts are
+# required only when the new mode key is present; all fault ABI checks remain.
+SHADOW_MAPPING_ABI = {"shadow_registry.capacity": 64, "shadow_registry.entry_size": 24,
+                      "shadow_registry.start_offset": 0, "shadow_registry.end_offset": 8,
+                      "shadow_registry.rw_offset": 16, "memlog.capacity": 1048576}
 # The capability each x64 vector state needs: a runtime with a forced, smaller
 # TEAPOT_X64_VECTOR_STATE ignores the state the rewrite asks for.
 _X64_VECTOR_CAPABILITY = {"auto": "x64_vector_full", "full": "x64_vector_full", "avx": "x64_vector_avx",
@@ -77,7 +83,7 @@ _X64_VECTOR_CAPABILITY = {"auto": "x64_vector_full", "full": "x64_vector_full", 
 # exactly such a runtime (RuntimeContract.emits_coverage).
 _DIFT_RANGE_SLOTS = 5
 _CONFIGURED = ("isa", "dift.layout", "dift.xor_mask", "dift.asan_shadow_offset", "tag_storage",
-               "coverage", "fault_training", "fault_publishing", "dift.app_range_count",
+               "coverage", "fault_training", "fault_publishing", "shadow_mapping_enforcement", "dift.app_range_count",
                *(f"dift.app_range{index}.{end}" for index in range(_DIFT_RANGE_SLOTS)
                  for end in ("start", "end")))
 
@@ -145,6 +151,10 @@ class RuntimeContract:
         """
         return bool(self.abi["coverage"])
 
+    @property
+    def shadow_mapping_enforcement(self) -> bool:
+        return bool(self.abi.get("shadow_mapping_enforcement", 0))
+
     def emits_coverage(self, options) -> bool:
         """Whether a rewrite with ``options`` for this runtime pushes coverage guards.
 
@@ -173,6 +183,8 @@ class RuntimeContract:
             raise RuntimeContractError(
                 f"{self.path} describes a {self.isa} runtime; this module is {arch.name}")
         expected = expected_abi(arch, abi)
+        if "shadow_mapping_enforcement" in self.abi:
+            expected.update(SHADOW_MAPPING_ABI)
         expected.update({key: self.abi[key] for key in _CONFIGURED if key in self.abi})
         problems = []
         for key in sorted(set(expected) | set(self.abi)):
@@ -192,6 +204,8 @@ class RuntimeContract:
                             f"--dift-layout asks for {dift_layout_name}")
 
         required = set()
+        if self.shadow_mapping_enforcement:
+            required.add("shadow_mapping_enforcement")
         if options.enable_fault_training:
             required.add("fault_training")
         if options.enable_fault_publishing:
@@ -215,6 +229,7 @@ class RuntimeContract:
         if self.emits_coverage(options):
             required.add("coverage")
         remedies = {
+            "shadow_mapping_enforcement": "unchanged-tag elision needs -DTEAPOT_SHADOW_MAPPING_ENFORCEMENT=ON",
             "fault_training": "training metadata needs -DTEAPOT_ENABLE_FAULT_TRAINING=ON (no text patching yet)",
             "fault_publishing": "adaptive prechecks need -DTEAPOT_ENABLE_FAULT_PUBLISHING=ON and fault training",
             "coverage": ("the module pushes speculative coverage guards, which only a runtime built "
@@ -400,14 +415,20 @@ def load_runtime_contract(path) -> RuntimeContract:
              "regenerate the file by configuring libcheckpoint, do not edit it")
     _require(data.get("anchor", contract_anchor(version, fingerprint)) == contract_anchor(version, fingerprint),
              path, "the anchor symbol does not match the fingerprint")
-    _require(set(data["capabilities"]) == set(CAPABILITIES), path,
-             "unknown or missing capabilities: " + ", ".join(sorted(set(data["capabilities"]) ^ set(CAPABILITIES))))
+    names = CAPABILITIES if "shadow_mapping_enforcement" in abi else CAPABILITIES[:10]
+    _require(set(data["capabilities"]) == set(names), path,
+             "unknown or missing capabilities: " + ", ".join(sorted(set(data["capabilities"]) ^ set(names))))
     capabilities = frozenset(name for name, present in data["capabilities"].items() if present is True)
     _require(capability_bits(capabilities) == data["capability_bits"], path,
              "capability_bits disagrees with the named capabilities")
     # Both come from the archive's COVERAGE switch.
     _require(("coverage" in capabilities) == bool(abi["coverage"]), path,
              "the coverage capability disagrees with ABI field coverage")
+    if "shadow_mapping_enforcement" in abi:
+        _require(type(abi["shadow_mapping_enforcement"]) is int and abi["shadow_mapping_enforcement"] in (0, 1),
+                 path, "malformed ABI field shadow_mapping_enforcement (0 or 1)")
+        _require(("shadow_mapping_enforcement" in capabilities) == bool(abi["shadow_mapping_enforcement"]),
+                 path, "shadow mapping capability disagrees with ABI field shadow_mapping_enforcement")
     return RuntimeContract(
         path=str(path), archive=data["archive"], version=version, fingerprint=fingerprint,
         abi=MappingProxyType(dict(abi)), capabilities=capabilities,

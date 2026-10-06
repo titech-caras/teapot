@@ -18,6 +18,37 @@ from runtime_contract_support import runtime_contract
 
 
 class CacheIdentityTests(unittest.TestCase):
+    def test_enforcing_components_cannot_reuse_eager_or_mislabelled_entries(self):
+        item = {"sha256": "0" * 64, "role": "selected", "symbols": [], "application_fdes": [],
+                "machine": "EM_X86_64", "path": "unused"}
+        def build(args, converter, item, key_data, key, selected, priority, directory):
+            driver.dump(directory / "key.json", key_data)
+            result = {"component_id": key, "files": {}, "coverage": False,
+                      "shadow_mapping_enforcement": key_data["context"]["runtime_contract"]["shadow_mapping_enforcement"]}
+            driver.dump(directory / "component.json", result)
+            return result
+        with tempfile.TemporaryDirectory() as directory, patch.object(driver, "build_component", build), \
+                patch.object(driver, "validate_object", lambda *args, **kwargs: None):
+            args = SimpleNamespace(cache=Path(directory))
+            converter = SimpleNamespace(eh_cfi_entries=None)
+            paths = []
+            for enabled in (False, True):
+                # Even a falsely reused fingerprint cannot erase the explicit
+                # mode from the cache key; real ABI fingerprints also differ.
+                identity = driver.contract_identity(SimpleNamespace(version=2, fingerprint="a" * 16,
+                    coverage=False, shadow_mapping_enforcement=enabled, capabilities=frozenset(),
+                    abi={"fault_sites.version": 2, "fault_windows.version": 3}))
+                context = {"selected_libraries": [], "bindings": [], "runtime_contract": identity}
+                built = driver.cached_component(args, converter, item, context, frozenset(), 100)
+                paths.append(Path(built["cache_path"]))
+                self.assertTrue(driver.cached_component(args, converter, item, context, frozenset(), 100)["cache_hit"])
+                result = json.loads((paths[-1] / "component.json").read_text())
+                result["shadow_mapping_enforcement"] = not enabled
+                driver.dump(paths[-1] / "component.json", result)
+                with self.assertRaisesRegex(ValueError, "another shadow mapping enforcement mode"):
+                    driver.cached_component(args, converter, item, context, frozenset(), 100)
+            self.assertNotEqual(*paths)
+
     def test_toolchain_identity_skips_programs_the_driver_does_not_run(self):
         # clang prints a bare cc1: its compiler is built in, not a separate file.
         printed = {'-print-prog-name=as': '/usr/bin/as\n', '-print-prog-name=cc1': 'cc1\n'}

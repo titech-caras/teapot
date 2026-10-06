@@ -24,7 +24,6 @@ GENERATED_NAME_SUFFIXES = (
 GENERATED_NAMES = (
     "teapot_aarch64_bti_pac_rewrite_marker",
 )
-
 # RISC-V publisher-owned assembly-scope anchors, not runtime archive exports.
 # Keep the precise emitted shape; do not reserve every application fault_* name.
 _FAULT_RV_SCOPE_NAME = re.compile(r"__teapot_fault_rv_scope_(?:begin|end)_[0-9a-f]{32}\Z")

@@ -6,9 +6,49 @@ from gtirb_rewriting import _auxdata
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture
 from teapot.passes.preprocessing.dift_ext_call_pass import DiftExtCallPass
+from teapot.configs.blacklist import MAPPING_WRAPPER_FUNCTIONS
 
 
 class DiftExtCallVersionTests(unittest.TestCase):
+    def test_mapping_import_identities_cover_data_and_constructor_references(self):
+        for enabled in (False, True):
+            for proxy in (False, True):
+                module = gtirb.Module(name="mapping-imports")
+                text = gtirb.Section(name=".text", module=module)
+                constructors = gtirb.Section(name=".init_array", module=module)
+                interval = gtirb.ByteInterval(contents=b"\0" * 64, section=constructors)
+                imports = [gtirb.Symbol(name=name, module=module,
+                           payload=gtirb.ProxyBlock(module=module) if proxy else None)
+                           for name in MAPPING_WRAPPER_FUNCTIONS]
+                versions = {symbol: (2, False) for symbol in imports}
+                _auxdata.elf_symbol_versions.set(module, ({}, {}, versions))
+                for i, symbol in enumerate(imports):
+                    interval.symbolic_expressions[i*8] = gtirb.SymAddrConst(0, symbol)
+                transform = DiftExtCallPass(text, None, wrap_dift_calls=False, enforce_mappings=enabled)
+                transform.begin_module(module, [], None)  # no direct-call/CFG traversal
+                transform.end_module(module, [])
+                for i, (name, symbol) in enumerate(zip(MAPPING_WRAPPER_FUNCTIONS, imports)):
+                    self.assertIs(interval.symbolic_expressions[i*8].symbol, symbol)
+                    self.assertEqual(symbol.name, MAPPING_WRAPPER_FUNCTIONS[name] if enabled else name)
+                    self.assertEqual(symbol in versions, not enabled)
+
+    def test_mapping_definitions_common_and_unrelated_vm_imports_are_unchanged(self):
+        module = gtirb.Module(name="mapping-definitions")
+        text = gtirb.Section(name=".text", module=module)
+        defined = gtirb.Symbol(name="mprotect", payload=0x1234, module=module)
+        common = gtirb.Symbol(name="munmap", payload=gtirb.ProxyBlock(module=module), module=module)
+        unrelated_names = ("madvise", "shmat", "shmdt", "remap_file_pages", "syscall",
+                           "dlsym", "dlopen", "userfaultfd", "pkey_set")
+        unrelated = [gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
+                     for name in unrelated_names]
+        _auxdata.elf_symbol_info.set(module, {common: (8, "OBJECT", "GLOBAL", "DEFAULT", 0xfff2)})
+        transform = DiftExtCallPass(text, None, enforce_mappings=True)
+        transform.begin_module(module, [], None)
+        transform.symbols_to_rename.update((defined, common, *unrelated))
+        transform.end_module(module, [])
+        self.assertEqual([defined.name, common.name], ["mprotect", "munmap"])
+        self.assertEqual([symbol.name for symbol in unrelated], list(unrelated_names))
+
     def test_signal_runtime_wrappers_do_not_depend_on_dift(self):
         for wrap_dift in (False, True):
             for name in ("signal", "sigaction"):

@@ -132,7 +132,7 @@ class CoverageExecutionTests(unittest.TestCase):
                 assembly.write_text(program(arch))
                 executable = root / "probes"
                 command = [compiler, "-O2", "-no-pie", "-DENABLE_NESTED_SPECULATION", "-DDISABLE_DIFT_RUNTIME",
-                           "-DDIFT_XOR_MASK=0", "-fno-stack-protector",
+                           "-DDIFT_XOR_MASK=0", "-fno-stack-protector", "-DTEAPOT_SHADOW_MAPPING_ENFORCEMENT=1",
                            "-DCOVERAGE" if coverage else "-DEXPECT_NO_COVERAGE",
                            "-I", str(RUNTIME / "include"), "-I", str(contract / "include"),
                            str(Path(__file__).with_name("fixtures") / "coverage_checkpoint.c"),
@@ -140,7 +140,7 @@ class CoverageExecutionTests(unittest.TestCase):
                            str(RUNTIME / "asm/storage.S"), str(contract / "contract/runtime_contract_record.S"),
                            str(RUNTIME / "tests/contract_module_record.c")]
                 command += [str(RUNTIME / "src" / source) for source in (
-                    "checkpoint.c", "signal_handler.c", "fault_sites.c", "dift_support.c", "report_gadget.c",
+                    "checkpoint.c", "signal_handler.c", "fault_sites.c", "dift_support.c", "shadow_mapping.c", "report_gadget.c",
                     "dift_wrappers/dift_wrappers.c")]
                 if arch.name == "riscv64":
                     command += ["-Wl,--no-relax"]

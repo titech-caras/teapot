@@ -82,6 +82,10 @@ RUNTIME_WRAPPER_FUNCTIONS = {
     "signal": "signal__teapot_wrapper__",
     "sigaction": "sigaction__teapot_wrapper__",
 }
+MAPPING_WRAPPER_FUNCTIONS = {
+    name: name + "__teapot_wrapper__"
+    for name in ("mprotect", "pkey_mprotect", "munmap", "mremap", "mmap", "mmap64")
+}
 
 # DIFT wraps only these external calls. Known gaps, whose results should carry taint: sprintf,
 # __isoc99_sscanf and __isoc23_strtol.
@@ -125,13 +129,15 @@ DIFT_WRAPPER_FUNCTIONS = {
 DIFT_WRAPPER_SUFFIX = "__dift_wrapper__"
 
 
-def wrapper_destinations(wrap_dift_calls: bool) -> dict:
+def wrapper_destinations(wrap_dift_calls: bool, enforce_mappings: bool = False) -> dict:
     """The runtime wrappers DiftExtCallPass redirects external calls to: {callee: wrapper}.
 
     The rewritten program imports them from the runtime, so the program must
     not use their names (teapot/preprocess/runtime_names.py).
     """
     destinations = dict(RUNTIME_WRAPPER_FUNCTIONS)
+    if enforce_mappings:
+        destinations.update(MAPPING_WRAPPER_FUNCTIONS)
     if wrap_dift_calls:
         for name in sorted(DIFT_WRAPPER_FUNCTIONS):
             destinations.setdefault(name, name + DIFT_WRAPPER_SUFFIX)

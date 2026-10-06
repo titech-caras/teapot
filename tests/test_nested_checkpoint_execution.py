@@ -170,13 +170,14 @@ class NestedCheckpointExecutionTests(unittest.TestCase):
             executable = root / "probe"
             command = [compiler, "-O2", "-no-pie", "-DENABLE_NESTED_SPECULATION",
                        "-DDISABLE_DIFT_RUNTIME", "-DDIFT_XOR_MASK=0", "-fno-stack-protector",
+                       "-DTEAPOT_SHADOW_MAPPING_ENFORCEMENT=1",
                        "-I", str(runtime / "include"), "-I", str(contract / "include"),
                        str(Path(__file__).with_name("fixtures") / "nested_checkpoint.c"),
                        str(assembly), str(runtime / f"asm/checkpoint_{arch.name}.S"),
                        str(runtime / "asm/storage.S"), str(contract / "contract/runtime_contract_record.S"),
                        str(runtime / "tests/contract_module_record.c")]
             command += [str(runtime / "src" / source) for source in (
-                "checkpoint.c", "signal_handler.c", "fault_sites.c", "dift_support.c", "report_gadget.c",
+                "checkpoint.c", "signal_handler.c", "fault_sites.c", "dift_support.c", "shadow_mapping.c", "report_gadget.c",
                 "dift_wrappers/dift_wrappers.c")]
             if arch.name == "riscv64":
                 command += ["-Wl,--no-relax"]
