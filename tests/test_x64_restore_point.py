@@ -352,7 +352,7 @@ def run_with_x64_runtime(test, root, fixture, probes, header, name):
                str(runtime / "asm/storage.S"), str(contract / "contract/runtime_contract_record.S"),
                str(runtime / "tests/contract_module_record.c")]
     command += [str(runtime / "src" / source) for source in (
-        "checkpoint.c", "signal_handler.c", "dift_support.c", "report_gadget.c",
+        "checkpoint.c", "signal_handler.c", "fault_sites.c", "fault_x64.c", "dift_support.c", "report_gadget.c",
         "dift_wrappers/dift_wrappers.c")]
     build = subprocess.run(command + ["-o", str(root / name), "-lm"], text=True, capture_output=True)
     test.assertEqual(build.returncode, 0, build.stderr[-4000:])

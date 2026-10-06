@@ -121,6 +121,9 @@ class InstrumentationOptions:
     conservative_flags: bool = False
     force_checkpoint_df: bool = False
     x64_vector_state: str = 'auto'
+    # Internal, training-only API. No CLI/backend activation in this stage.
+    enable_fault_training: bool = False
+    enable_fault_publishing: bool = False
 
 
 def runtime_imports(arch, runtime_contract):
@@ -153,11 +156,13 @@ def refuse_reserved_names(ir: gtirb.IR, options: "InstrumentationOptions", runti
 class TeapotPipeline:
     def __init__(self, ir: gtirb.IR, dift_layout_name=None,
                  options: InstrumentationOptions = InstrumentationOptions(), *,
-                 linked_component=None, runtime_contract=None):
+                 linked_component=None, runtime_contract=None, fault_training_sites=(), fault_training_threshold=2):
         self.ir = ir
         self.dift_layout_name = dift_layout_name
         self.options = options
         self.linked_component = linked_component
+        self.fault_training_sites = tuple(fault_training_sites)
+        self.fault_training_threshold = fault_training_threshold
         # The libcheckpoint archive this rewrite will be linked with, as
         # teapot.runtime_contract.load_runtime_contract read it.
         self.runtime_contract = runtime_contract
@@ -174,6 +179,10 @@ class TeapotPipeline:
         self.state = RewriteState()
 
     def run(self):
+        if not self.options.enable_fault_publishing and self.options.enable_fault_training != bool(self.fault_training_sites):
+            raise ValueError("training-only mode requires explicit fault/stub symbol pairs; no backend yet")
+        if self.options.enable_fault_publishing and (not self.options.enable_fault_training or self.fault_training_sites):
+            raise ValueError("publisher mode owns its sites and requires fault training")
         self.state = RewriteState()
         # Decoded instructions are cached by block UUID, which survives loading
         # the same IR again: start each rewrite without another one's entries.
@@ -320,13 +329,28 @@ class TeapotPipeline:
         # the marker pair, so the linker may place the copy anywhere.
         if self.options.target_identification == "aarch64-bti-pac":
             self.arch.finalize_bti_layout(self)
+        fault_sites = None
+        if self.options.enable_fault_publishing:
+            from teapot.preprocess.fault_windows import add_fault_windows
+            fault_sites = add_fault_windows(self.module, self.transient_section, self.local_section_bounds[2:],
+                                           threshold=self.fault_training_threshold, marker=self.arch.nop_bytes)
         self._pin_section_bounds()
         self._verify_target_markers()
         if source_lines is not None:
             source_lines.finish(GtirbInstructionDecoder(self.module.isa))
         # Last: a new section without addresses, after every rewrite.
+        if self.options.enable_fault_training and not self.options.enable_fault_publishing:
+            from teapot.preprocess.fault_sites import add_fault_site_table
+            # The internal API accepts input symbols: resolve their derived
+            # copy symbols only now, after all instruction motion. Component
+            # metadata uses LOCAL bounds, never the link-wide external bounds.
+            pairs = tuple((*(self.text_transient_mapping.symbols_map.get(symbol.uuid, symbol)
+                             for symbol in site[:3]), site[3]) for site in self.fault_training_sites)
+            fault_sites = add_fault_site_table(
+                self.module, pairs, self.fault_training_threshold, *self.local_section_bounds[2:])
         add_contract_record(self.module, self.runtime_contract, self.contract_requirements, self.options,
-                            self.linked_component.component_id if self.linked_component is not None else None)
+                            self.linked_component.component_id if self.linked_component is not None else None,
+                            fault_sites=fault_sites)
 
     def runtime_imports(self):
         """The runtime names Teapot's code refers to, which ImportSymbolsPass imports (runtime_imports)."""
@@ -545,6 +569,12 @@ class TeapotPipeline:
         self.local_section_bounds = (
             self.text_section_start_symbol, self.text_section_end_symbol,
             self.transient_section_start_symbol, self.transient_section_end_symbol)
+        if self.options.enable_fault_publishing:
+            from teapot.fault_x64 import mark_input
+            mark_input(self.transient_section, self.decoder)
+            # Only known old-value loads receive MEMLOG labels; ordinary
+            # generated instructions are never inferred to be memlog accesses.
+            object.__setattr__(self.arch, "fault_memlog_markers", True)
         self.component_guard_base = None
         if self.linked_component is not None:
             (self.text_section_start_symbol, self.text_section_end_symbol,

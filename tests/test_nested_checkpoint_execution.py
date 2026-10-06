@@ -176,7 +176,7 @@ class NestedCheckpointExecutionTests(unittest.TestCase):
                        str(runtime / "asm/storage.S"), str(contract / "contract/runtime_contract_record.S"),
                        str(runtime / "tests/contract_module_record.c")]
             command += [str(runtime / "src" / source) for source in (
-                "checkpoint.c", "signal_handler.c", "dift_support.c", "report_gadget.c",
+                "checkpoint.c", "signal_handler.c", "fault_sites.c", "dift_support.c", "report_gadget.c",
                 "dift_wrappers/dift_wrappers.c")]
             if arch.name == "riscv64":
                 command += ["-Wl,--no-relax"]

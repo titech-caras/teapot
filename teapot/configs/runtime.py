@@ -37,7 +37,7 @@ ROB_LEN = 250
 # The layout Teapot's emitted code assumes. teapot/runtime_contract.py compares
 # each value with the selected runtime's contract (libcheckpoint's
 # lib<archive>.contract.json), so change one only together with the runtime.
-RUNTIME_CONTRACT_VERSION = 1
+RUNTIME_CONTRACT_VERSION = 2
 SCRATCHPAD_SIZE = 1048576
 SCRATCHPAD_ALIGNMENT = 16
 # A memory-history entry: the address at offset 0 (the emitters store it at the

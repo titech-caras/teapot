@@ -34,7 +34,8 @@ RECORD_KIND_MODULE = 2
 # the anchor's address at ANCHOR_OFFSET.
 _HEADER = struct.Struct("<IHHIIQQ")
 ANCHOR_OFFSET = _HEADER.size
-RECORD_HEADER_SIZE = ANCHOR_OFFSET + 8
+FAULT_SITES_OFFSET = ANCHOR_OFFSET + 8
+RECORD_HEADER_SIZE = FAULT_SITES_OFFSET + 8
 
 
 def module_contract(contract, required_bits: int, options, component_id=None) -> dict:
@@ -46,7 +47,8 @@ def module_contract(contract, required_bits: int, options, component_id=None) ->
         "requirements": [name for bit, name in enumerate(CAPABILITIES) if required_bits >> bit & 1],
         "abi": dict(contract.abi),
         # coverage: whether this module pushes the speculative coverage guards.
-        "policy": {"rob_len": ROB_LEN, "options": asdict(options), "coverage": contract.emits_coverage(options)},
+        "policy": {"rob_len": ROB_LEN, "options": asdict(options), "coverage": contract.emits_coverage(options),
+                   "fault_training": options.enable_fault_training, "fault_publishing": options.enable_fault_publishing},
     }
     if component_id is not None:
         record["component"] = component_id
@@ -63,7 +65,10 @@ def _new_interval(module, section, contents):
 
 
 def add_contract_record(module: gtirb.Module, contract, required_bits: int, options,
-                        component_id=None) -> gtirb.DataBlock:
+                        component_id=None, *, fault_sites=None) -> gtirb.DataBlock:
+    required = bool(required_bits & (1 << CAPABILITIES.index("fault_training")))
+    if required != (fault_sites is not None) or required != options.enable_fault_training:
+        raise ValueError("fault table, option and runtime capability disagree")
     anchor = next(module.symbols_named(contract.anchor), None)
     if anchor is None:
         raise ValueError(f"the runtime anchor {contract.anchor} was not imported")
@@ -72,7 +77,7 @@ def add_contract_record(module: gtirb.Module, contract, required_bits: int, opti
     payload = text.encode()
     header = _HEADER.pack(RECORD_MAGIC, contract.version, RECORD_KIND_MODULE, RECORD_HEADER_SIZE,
                           len(payload), int(contract.fingerprint, 16), required_bits)
-    contents = header + bytes(8) + payload
+    contents = header + bytes(16) + payload
     contents += bytes(-len(contents) % 8)
 
     section = gtirb.Section(
@@ -82,6 +87,8 @@ def add_contract_record(module: gtirb.Module, contract, required_bits: int, opti
     interval = _new_interval(module, section, contents)
     block = gtirb.DataBlock(offset=0, size=len(contents), byte_interval=interval)
     interval.symbolic_expressions[ANCHOR_OFFSET] = gtirb.SymAddrConst(0, anchor)
+    if fault_sites is not None:
+        interval.symbolic_expressions[FAULT_SITES_OFFSET] = gtirb.SymAddrConst(0, fault_sites)
     record = gtirb.Symbol(name=".L__teapot_contract_record", payload=block, module=module)
 
     # The assembler types a .note section as a note from its name.
@@ -96,6 +103,8 @@ def add_contract_record(module: gtirb.Module, contract, required_bits: int, opti
     sizes = module.aux_data.setdefault(
         "symbolicExpressionSizes", gtirb.AuxData(type_name="mapping<Offset,uint64_t>", data={}))
     sizes.data[gtirb.Offset(interval, ANCHOR_OFFSET)] = 8
+    if fault_sites is not None:
+        sizes.data[gtirb.Offset(interval, FAULT_SITES_OFFSET)] = 8
     sizes.data[gtirb.Offset(note_interval, len(note_header))] = 8
     alignment = module.aux_data.setdefault(
         "alignment", gtirb.AuxData(type_name="mapping<UUID,uint64_t>", data={}))

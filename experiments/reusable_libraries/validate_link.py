@@ -19,11 +19,12 @@ from experiments.reusable_libraries.targets import (
     TARGETS, MODES, TARGET_IDENTIFICATIONS, mode_for, mode_metadata, target_for)
 from teapot.preprocess.contract_record import RECORD_HEADER_SIZE, RECORD_KIND_MODULE, RECORD_MAGIC
 from teapot.runtime_contract import CAPABILITIES
+from teapot.configs.runtime import RUNTIME_CONTRACT_VERSION
 
 RUNTIME_RECORD_KIND = 1
 # libcheckpoint's runtime_contract.h: magic, version, kind, header size, JSON
 # size, fingerprint, capabilities, anchor.
-_RECORD = struct.Struct("<IHHIIQQQ")
+_RECORD = struct.Struct("<IHHIIQQQQ")
 
 
 def require(condition, *message):
@@ -81,7 +82,7 @@ def contract_records(elf, section_name, kind):
             offset += 8  # alignment padding between two objects' records
             continue
         require(offset + RECORD_HEADER_SIZE <= len(data), ("truncated contract record", section_name, offset))
-        magic, version, record_kind, header_size, json_size, fingerprint, capabilities, anchor = \
+        magic, version, record_kind, header_size, json_size, fingerprint, capabilities, anchor, fault_sites = \
             _RECORD.unpack_from(data, offset)
         require(magic == RECORD_MAGIC and record_kind == kind and header_size == RECORD_HEADER_SIZE,
                 ("malformed contract record", section_name, offset))
@@ -93,7 +94,7 @@ def contract_records(elf, section_name, kind):
         except ValueError as error:
             raise ValueError(("unreadable contract record JSON", section_name, offset, str(error))) from None
         records.append(dict(address=base + offset, version=version, fingerprint=f"{fingerprint:016x}",
-                            capabilities=capabilities, anchor=anchor, contract=contract))
+                            capabilities=capabilities, anchor=anchor, fault_sites=fault_sites, contract=contract))
         offset += size
     return records
 
@@ -108,6 +109,8 @@ def validate_contract_records(elf, address, manifest):
     runtimes = contract_records(elf, "libcheckpoint_contract", RUNTIME_RECORD_KIND)
     require(len(runtimes) == 1, ("the link holds one libcheckpoint runtime record", len(runtimes)))
     runtime = runtimes[0]
+    require(runtime["version"] == RUNTIME_CONTRACT_VERSION, "unsupported runtime contract version")
+    require(runtime["fault_sites"] == 0, "runtime record must not carry a fault table")
     require(runtime["address"] == address("libcheckpoint_runtime_contract"),
             "libcheckpoint_runtime_contract is not the runtime record")
     abi = runtime["contract"].get("abi", {})
@@ -115,6 +118,8 @@ def validate_contract_records(elf, address, manifest):
     require(abi.get("coverage") in (0, 1), ("the runtime record has no coverage mode", abi.get("coverage")))
     coverage = bool(abi["coverage"])
     modules = contract_records(elf, "teapot_contract", RECORD_KIND_MODULE)
+    from teapot.fault_sites import validate_module_tables
+    fault_tables = validate_module_tables(elf, modules)
     # Each component's record names it, so another object's record cannot
     # stand in for a component that has none.
     owners = sorted(str(record["contract"].get("component")) for record in modules)
@@ -152,7 +157,7 @@ def validate_contract_records(elf, address, manifest):
                  component.get("component_id"), component.get("coverage"), component.get("guard_count")))
     return {"version": runtime["version"], "fingerprint": runtime["fingerprint"],
             "runtime_capabilities": capability_names(runtime["capabilities"]),
-            "coverage": coverage, "module_records": len(modules)}
+            "coverage": coverage, "module_records": len(modules), "fault_tables": len(fault_tables)}
 
 
 def validate_bti_layout(elf, address, ranges, target_identification='aarch64-bti-pac'):

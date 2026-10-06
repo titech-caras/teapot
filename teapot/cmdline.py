@@ -15,6 +15,9 @@ from teapot.utils.serialization import compact_for_pprinter, save_protobuf_order
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--adaptive-fault-precheck", action="store_true",
+                        help="Emit validated x64 scalar fault windows (requires a publishing runtime; "
+                             "single-threaded only). TEAPOT_FAULT_ADAPTATION=0 disables activation at startup.")
     parser.add_argument('--force-checkpoint-df', action='store_true',
                         help='Save DF at every x64 checkpoint instead of selecting DF-sensitive sites')
     parser.add_argument('--x64-vector-state', choices=('auto', 'xmm0-7', 'sse', 'avx', 'full'),
@@ -170,6 +173,8 @@ def main():
         conservative_flags=args.conservative_flags,
         force_checkpoint_df=args.force_checkpoint_df,
         x64_vector_state=args.x64_vector_state,
+        enable_fault_training=args.adaptive_fault_precheck,
+        enable_fault_publishing=args.adaptive_fault_precheck,
     )
     pipeline = TeapotPipeline(ir, args.dift_layout, options, runtime_contract=runtime_contract)
     try:

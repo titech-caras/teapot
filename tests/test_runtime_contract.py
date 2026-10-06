@@ -55,7 +55,7 @@ class RuntimeContractLoadTests(unittest.TestCase):
                 ("runtime values must be integers",
                  lambda data: data["runtime"].update({"max_checkpoints": "1"}), True),
                 ("not a libcheckpoint runtime contract", lambda data: data.update(schema="other"), True),
-                ("contract version 2", lambda data: data.update(version=2), True),
+                ("contract version 3", lambda data: data.update(version=3), True),
                 ("is not the hash of its ABI section",
                  lambda data: data["abi"].update({"memlog.entry_size": 32}), False),
                 ("capability_bits disagrees", lambda data: data.update(capability_bits=0), True),
@@ -337,7 +337,7 @@ class ContractRecordTests(unittest.TestCase):
         self.assertEqual(len(contents) % 8, 0)
         magic, version, kind, header_size, json_size, fingerprint, required = \
             struct.unpack_from("<IHHIIQQ", contents)
-        self.assertEqual((magic, version, kind, header_size), (RECORD_MAGIC, 1, RECORD_KIND_MODULE,
+        self.assertEqual((magic, version, kind, header_size), (RECORD_MAGIC, contract.version, RECORD_KIND_MODULE,
                                                                RECORD_HEADER_SIZE))
         self.assertEqual((f"{fingerprint:016x}", required), (contract.fingerprint, bits))
         self.assertEqual(contents[ANCHOR_OFFSET:ANCHOR_OFFSET + 8], bytes(8))

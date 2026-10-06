@@ -25,10 +25,14 @@ class ModeTableTests(unittest.TestCase):
                 with self.subTest(isa=isa, options=options, component=component):
                     mode = validate_options(options, isa, component=component)
                     self.assertIs(mode, MODES[options.target_identification])
-        # Outside components every option may vary, including all disables and nesting.
+        # Disables/nesting may combine. Publishing separately requires active
+        # checkpoints; it is not meaningful in the all-disables combination.
         loose = InstrumentationOptions(**{field: not value for field, value in InstrumentationOptions().__dict__.items()
                                           if isinstance(value, bool)})
+        loose = replace(loose, enable_fault_publishing=False)
         self.assertIs(validate_options(loose, "x64"), MODES["software"])
+        self.assertIs(validate_options(InstrumentationOptions(enable_fault_training=True,
+            enable_fault_publishing=True), "x64"), MODES["software"])
 
     def test_refused_combinations_name_the_conflict_and_remedy(self):
         bti = InstrumentationOptions(target_identification="aarch64-bti-pac")

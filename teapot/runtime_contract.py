@@ -62,7 +62,7 @@ SCHEMA = "libcheckpoint-runtime-contract"
 
 # Capability names in the bit order of runtime_contract.h.
 CAPABILITIES = ("nested", "aarch64_bti_pac", "dift_runtime", "x64_vector_full", "coverage",
-                "riscv64_float_state", "x64_vector_sse", "x64_vector_avx")
+                "riscv64_float_state", "x64_vector_sse", "x64_vector_avx", "fault_training", "fault_publishing")
 # The capability each x64 vector state needs: a runtime with a forced, smaller
 # TEAPOT_X64_VECTOR_STATE ignores the state the rewrite asks for.
 _X64_VECTOR_CAPABILITY = {"auto": "x64_vector_full", "full": "x64_vector_full", "avx": "x64_vector_avx",
@@ -77,7 +77,7 @@ _X64_VECTOR_CAPABILITY = {"auto": "x64_vector_full", "full": "x64_vector_full", 
 # exactly such a runtime (RuntimeContract.emits_coverage).
 _DIFT_RANGE_SLOTS = 5
 _CONFIGURED = ("isa", "dift.layout", "dift.xor_mask", "dift.asan_shadow_offset", "tag_storage",
-               "coverage", "dift.app_range_count",
+               "coverage", "fault_training", "fault_publishing", "dift.app_range_count",
                *(f"dift.app_range{index}.{end}" for index in range(_DIFT_RANGE_SLOTS)
                  for end in ("start", "end")))
 
@@ -192,6 +192,10 @@ class RuntimeContract:
                             f"--dift-layout asks for {dift_layout_name}")
 
         required = set()
+        if options.enable_fault_training:
+            required.add("fault_training")
+        if options.enable_fault_publishing:
+            required.add("fault_publishing")
         if options.target_identification == "aarch64-bti-pac":
             required.add("aarch64_bti_pac")
         if options.enable_nested_speculation:
@@ -211,6 +215,8 @@ class RuntimeContract:
         if self.emits_coverage(options):
             required.add("coverage")
         remedies = {
+            "fault_training": "training metadata needs -DTEAPOT_ENABLE_FAULT_TRAINING=ON (no text patching yet)",
+            "fault_publishing": "adaptive windows need x64 -DTEAPOT_ENABLE_FAULT_PUBLISHING=ON and fault training",
             "coverage": ("the module pushes speculative coverage guards, which only a runtime built "
                          "with -DTEAPOT_ENABLE_COVERAGE=ON replays"),
             "aarch64_bti_pac": "the BTI+PAC mode needs a runtime built with -DTEAPOT_EXPERIMENTAL_AARCH64_BTI=ON",
@@ -244,6 +250,15 @@ def expected_abi(arch, abi) -> dict:
     dift_id = lambda name: arch.dift_register_id(abi.get_register(name))
     expected = {
         "contract.version": RUNTIME_CONTRACT_VERSION,
+        "contract.header_size": 48,
+        "fault_sites.version": 2,
+        "fault_sites.header_size": 112,
+        "fault_sites.entry_size": 16,
+        "fault_sites.counter_word_size": 4,
+        "fault_sites.low_bound": 65536,
+        "fault_windows.version": 3,
+        "fault_windows.entry_size": 128,
+        "fault_windows.low_policy": 1,
         "word_size": 8,
         "little_endian": 1,
         "scratchpad.size": SCRATCHPAD_SIZE,
@@ -348,6 +363,12 @@ def load_runtime_contract(path) -> RuntimeContract:
                  f"missing or malformed ABI field {key}")
     _require(abi.get("coverage") in (0, 1) and type(abi.get("coverage")) is int, path,
              "missing or malformed ABI field coverage (0 or 1)")
+    _require(type(abi.get("fault_training")) is int and abi["fault_training"] in (0, 1), path,
+             "missing or malformed ABI field fault_training (0 or 1)")
+    _require(type(abi.get("fault_publishing")) is int and abi["fault_publishing"] in (0, 1), path,
+             "missing or malformed ABI field fault_publishing (0 or 1)")
+    _require(not abi["fault_publishing"] or abi["fault_training"] and abi["isa"] == "x64", path,
+             "fault publishing requires x64 and fault training")
     _require(all(isinstance(value, int) and not isinstance(value, bool) for value in data["runtime"].values()),
              path, "runtime values must be integers")
     # The application ranges: a count of 1 to the number of slots, every slot
@@ -364,6 +385,10 @@ def load_runtime_contract(path) -> RuntimeContract:
             _require(isinstance(value, int) and not isinstance(value, bool), path, f"missing or malformed ABI field {key}")
             _require(index < count or value == 0, path, f"{key} is past dift.app_range_count but not zero")
     fingerprint = abi_fingerprint(abi)
+    _require(data["capabilities"].get("fault_training") == bool(abi["fault_training"]), path,
+             "the fault-training capability disagrees with ABI field fault_training")
+    _require(data["capabilities"].get("fault_publishing") == bool(abi["fault_publishing"]), path,
+             "the publishing capability disagrees with ABI field fault_publishing")
     _require(data["fingerprint"] == fingerprint, path,
              f"the fingerprint {data['fingerprint']} is not the hash of its ABI section ({fingerprint}); "
              "regenerate the file by configuring libcheckpoint, do not edit it")

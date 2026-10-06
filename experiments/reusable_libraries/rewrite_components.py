@@ -163,7 +163,11 @@ def contract_identity(contract):
     # The coverage mode is in the fingerprint too, since it decides whether the
     # components push coverage guards (components always enable gadgets); it is
     # spelled out so that keys and manifests show it.
-    return {"version": contract.version, "fingerprint": contract.fingerprint, "coverage": contract.coverage}
+    return {"version": contract.version, "fingerprint": contract.fingerprint, "coverage": contract.coverage,
+            "fault_sites_version": contract.abi["fault_sites.version"],
+            "fault_training_capable": "fault_training" in contract.capabilities,
+            "fault_publishing_capable": "fault_publishing" in contract.capabilities,
+            "fault_windows_version": contract.abi["fault_windows.version"]}
 
 
 def run(root, name, command):

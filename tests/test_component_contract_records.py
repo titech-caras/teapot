@@ -13,7 +13,7 @@ from experiments.reusable_libraries.rewrite_components import component_layout
 from experiments.reusable_libraries.validate_link import contract_records, validate_contract_records
 
 FINGERPRINT = "0123456789abcdef"
-ANCHOR = "__libcheckpoint_contract_v1_" + FINGERPRINT
+ANCHOR = "__libcheckpoint_contract_v2_" + FINGERPRINT
 
 
 def record(section, kind, fingerprint, capabilities, abi, *, anchor=None, label=None, component=None,
@@ -24,16 +24,16 @@ def record(section, kind, fingerprint, capabilities, abi, *, anchor=None, label=
     lines = [f'.section {section},"a",@progbits', ".balign 8"]
     if label:
         lines += [f".global {name}" for name in label] + [f"{name}:" for name in label]
-    lines += [".4byte 0x54435054", ".2byte 1", f".2byte {kind}", ".4byte 40", f".4byte {len(payload)}",
+    lines += [".4byte 0x54435054", ".2byte 2", f".2byte {kind}", ".4byte 48", f".4byte {len(payload)}",
               f".8byte 0x{fingerprint}", f".8byte {capabilities}", f".8byte {anchor or 0}",
-              ".byte " + ",".join(str(byte) for byte in payload), ".balign 8, 0"]
+              ".8byte 0", ".byte " + ",".join(str(byte) for byte in payload), ".balign 8, 0"]
     return "\n".join(lines) + "\n"
 
 
 def raw_record(kind, json_bytes, json_size=None):
     """One record's bytes, without the padding that rounds it to 8 bytes."""
-    header = struct.pack("<IHHIIQQQ", 0x54435054, 1, kind, 40,
-                         len(json_bytes) if json_size is None else json_size, int(FINGERPRINT, 16), 0, 0)
+    header = struct.pack("<IHHIIQQQQ", 0x54435054, 2, kind, 48,
+                         len(json_bytes) if json_size is None else json_size, int(FINGERPRINT, 16), 0, 0, 0)
     return header + json_bytes
 
 
@@ -119,7 +119,7 @@ __guard_end__teapot___{key}:
 
     def validate(self, binary, components, recorded=FINGERPRINT, coverage=False):
         manifest = {"components": components,
-                    "runtime_contract": {"version": 1, "fingerprint": recorded, "coverage": coverage}}
+                    "runtime_contract": {"version": 2, "fingerprint": recorded, "coverage": coverage}}
         with binary.open("rb") as stream:
             elf = ELFFile(stream)
             symbols = {s.name: s["st_value"] for s in elf.get_section_by_name(".symtab").iter_symbols()}

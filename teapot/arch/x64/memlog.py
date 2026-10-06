@@ -9,10 +9,10 @@ from teapot.configs.runtime import (
 
 
 class X64MemlogPatchesMixin:
-    @staticmethod
-    def memlog_snippet(addr_reg: Register, top_reg: Register, data_reg: Register, access_size: int, *,
+    def memlog_snippet(self, addr_reg: Register, top_reg: Register, data_reg: Register, access_size: int, *,
                        no_clobber_addr: bool = False):
         asm = f"mov {top_reg}, [memory_history_top]\n"
+        marker_number = self.next_label_number("fault_memlog") if getattr(self, "fault_memlog_markers", False) else None
 
         if no_clobber_addr:
             assert access_size <= MEMORY_HISTORY_DATA_WIDTH
@@ -33,6 +33,8 @@ class X64MemlogPatchesMixin:
                     (2, "word", "16"), (1, "byte", "8l")):
                 if not chunk_size & width:
                     continue
+                if getattr(self, "fault_memlog_markers", False):
+                    asm += f".L__teapot_fault_memlog_{marker_number}_{offset}_{byte_idx}:\n"
                 asm += f"""
                     mov {data_reg:{register_size}}, {operand_size} ptr [{addr_reg} + {byte_idx}]
                     mov {operand_size} ptr [{top_reg} + {MEMORY_HISTORY_DATA_OFFSET + byte_idx}], {data_reg:{register_size}}
