@@ -4,6 +4,7 @@ from teapot.configs.runtime import (
     MEMORY_HISTORY_ENTRY_SIZE,
     MEMORY_HISTORY_SIZE_OFFSET,
 )
+from teapot.fault_risc import MEMLOG, origin_marker
 
 
 class AArch64MemlogPatchesMixin:
@@ -28,6 +29,7 @@ class AArch64MemlogPatchesMixin:
                     (8, "", "64"), (4, "", "32"), (2, "h", "32"), (1, "b", "32")):
                 if not chunk_size & width:
                     continue
+                asm += origin_marker(self, MEMLOG)
                 asm += f"""
                     ldr{suffix} {data_reg:{register_size}}, [{addr_reg}, #{byte_idx}]
                     str{suffix} {data_reg:{register_size}}, [{top_reg}, #{MEMORY_HISTORY_DATA_OFFSET + byte_idx}]

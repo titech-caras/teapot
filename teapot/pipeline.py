@@ -336,9 +336,14 @@ class TeapotPipeline:
             self.arch.finalize_bti_layout(self)
         fault_sites = None
         if self.options.enable_fault_publishing:
-            from teapot.preprocess.fault_windows import add_fault_windows
-            fault_sites = add_fault_windows(self.module, self.transient_section, self.local_section_bounds[2:],
-                                           threshold=self.fault_training_threshold, marker=self.arch.nop_bytes)
+            if self.arch.name == "x64":
+                from teapot.preprocess.fault_windows import add_fault_windows
+                fault_sites = add_fault_windows(self.module, self.transient_section, self.local_section_bounds[2:],
+                                               threshold=self.fault_training_threshold, marker=self.arch.nop_bytes)
+            else:
+                from teapot.preprocess.fault_risc_windows import add_risc_fault_windows
+                fault_sites = add_risc_fault_windows(self.module, self.transient_section, self.local_section_bounds[2:],
+                    self.reg_manager, self.arch.name, threshold=self.fault_training_threshold, marker=self.arch.nop_bytes)
         self._pin_section_bounds()
         self._verify_target_markers()
         if source_lines is not None:

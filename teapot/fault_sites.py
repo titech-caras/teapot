@@ -89,6 +89,9 @@ def validate_table(elf, address):
     if version == 3:
         from teapot.fault_window_validation import validate_windows
         return validate_windows(elf, address)
+    if version == 4:
+        from teapot.fault_risc_validation import validate_risc_windows
+        return validate_risc_windows(elf, address)
     require((magic, version, header, entry_size, flags) ==
             (MAGIC, VERSION, HEADER_SIZE, ENTRY_SIZE, TRAINING_ONLY), "unsupported table format")
     require(count > 0 and threshold <= 255 and not any(fields[15:]), "count/threshold/reserved")
@@ -156,12 +159,12 @@ def validate_module_tables(elf, modules):
         publishing = bool(record["capabilities"] & capability_bits({"fault_publishing"}))
         publisher_policy = record["contract"].get("policy", {}).get("fault_publishing", False)
         require(type(publisher_policy) is bool and publishing == publisher_policy and
-                publishing == bool(pointer and tables[-1]["version"] == 3), "publisher format/capability/policy disagreement")
+                publishing == bool(pointer and tables[-1]["version"] in (3, 4)), "publisher format/capability/policy disagreement")
     tables.sort(key=lambda t: t["text"][0])
     for i, table in enumerate(tables):
         if i: require(tables[i - 1]["text"][1] <= table["text"][0], "overlapping module text ranges")
         for other in tables[:i]:
-            for a in (table["counters"], table["pending"]):
-                for b in (other["counters"], other["pending"]):
+            for a in ((table["state"],) if "state" in table else (table["counters"], table["pending"])):
+                for b in ((other["state"],) if "state" in other else (other["counters"], other["pending"])):
                     require(a[1] <= b[0] or b[1] <= a[0], "modules share training storage")
     return tables

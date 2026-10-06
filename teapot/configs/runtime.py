@@ -1,3 +1,5 @@
+import re
+
 SYMBOL_SUFFIX = "__teapot__"
 
 # The names of the symbols Teapot generates, which the input must not use: it
@@ -23,11 +25,16 @@ GENERATED_NAMES = (
     "teapot_aarch64_bti_pac_rewrite_marker",
 )
 
+# RISC-V publisher-owned assembly-scope anchors, not runtime archive exports.
+# Keep the precise emitted shape; do not reserve every application fault_* name.
+_FAULT_RV_SCOPE_NAME = re.compile(r"__teapot_fault_rv_scope_(?:begin|end)_[0-9a-f]{32}\Z")
+
 
 def is_generated_name(name: str) -> bool:
     """Whether Teapot generates symbols called ``name`` (GENERATED_NAME_*)."""
     return (any(infix in name for infix in GENERATED_NAME_INFIXES) or name.startswith(GENERATED_NAME_PREFIXES) or
-            name.endswith(GENERATED_NAME_SUFFIXES) or name in GENERATED_NAMES)
+            name.endswith(GENERATED_NAME_SUFFIXES) or name in GENERATED_NAMES or
+            _FAULT_RV_SCOPE_NAME.fullmatch(name) is not None)
 
 
 # The speculation budget: Teapot's alone, recorded in each module's contract

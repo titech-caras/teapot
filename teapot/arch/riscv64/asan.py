@@ -1,4 +1,5 @@
 from teapot.configs.runtime import ASAN_TAG_STORAGE_SHADOW, SYMBOL_SUFFIX
+from teapot.fault_risc import SHADOW, origin_marker
 
 
 class RISCV64AsanPatchesMixin:
@@ -19,7 +20,7 @@ class RISCV64AsanPatchesMixin:
             srli {scratch_reg}, {addr_reg}, 3
             li {shadow_reg}, {shadow_offset}
             add {scratch_reg}, {scratch_reg}, {shadow_reg}
-            lbu {shadow_reg}, 0({scratch_reg})
+            {origin_marker(self, SHADOW)}lbu {shadow_reg}, 0({scratch_reg})
             beqz {shadow_reg}, {check_ok_label}
             sltiu {scratch_reg}, {shadow_reg}, 8
             beqz {scratch_reg}, .L__asan_shadow_check_fail{SYMBOL_SUFFIX}
@@ -34,7 +35,7 @@ class RISCV64AsanPatchesMixin:
             raise ValueError("multi-byte RV64 ASan checks require an end_reg scratch register")
 
         next_granule = (f"j .L__asan_shadow_check_loop{SYMBOL_SUFFIX}" if access_size > 8
-                        else f"lbu {shadow_reg}, 0({scratch_reg})")
+                        else f"{origin_marker(self, SHADOW)}lbu {shadow_reg}, 0({scratch_reg})")
 
         return f"""
             srli {scratch_reg}, {addr_reg}, 3
@@ -44,7 +45,7 @@ class RISCV64AsanPatchesMixin:
             add {scratch_reg}, {scratch_reg}, {shadow_reg}
             add {end_reg}, {end_reg}, {shadow_reg}
         .L__asan_shadow_check_loop{SYMBOL_SUFFIX}:
-            lbu {shadow_reg}, 0({scratch_reg})
+            {origin_marker(self, SHADOW)}lbu {shadow_reg}, 0({scratch_reg})
             beq {scratch_reg}, {end_reg}, .L__asan_shadow_check_last{SYMBOL_SUFFIX}
             bnez {shadow_reg}, .L__asan_shadow_check_fail{SYMBOL_SUFFIX}
             addi {scratch_reg}, {scratch_reg}, 1

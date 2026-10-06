@@ -216,7 +216,7 @@ class RuntimeContract:
             required.add("coverage")
         remedies = {
             "fault_training": "training metadata needs -DTEAPOT_ENABLE_FAULT_TRAINING=ON (no text patching yet)",
-            "fault_publishing": "adaptive windows need x64 -DTEAPOT_ENABLE_FAULT_PUBLISHING=ON and fault training",
+            "fault_publishing": "adaptive prechecks need -DTEAPOT_ENABLE_FAULT_PUBLISHING=ON and fault training",
             "coverage": ("the module pushes speculative coverage guards, which only a runtime built "
                          "with -DTEAPOT_ENABLE_COVERAGE=ON replays"),
             "aarch64_bti_pac": "the BTI+PAC mode needs a runtime built with -DTEAPOT_EXPERIMENTAL_AARCH64_BTI=ON",
@@ -256,7 +256,7 @@ def expected_abi(arch, abi) -> dict:
         "fault_sites.entry_size": 16,
         "fault_sites.counter_word_size": 4,
         "fault_sites.low_bound": 65536,
-        "fault_windows.version": 3,
+        "fault_windows.version": 3 if arch.name == "x64" else 4,
         "fault_windows.entry_size": 128,
         "fault_windows.low_policy": 1,
         "word_size": 8,
@@ -302,11 +302,17 @@ def expected_abi(arch, abi) -> dict:
         return expected
 
     expected.update({
+        "fault_risc.isolation": 65536,
+        "fault_risc.policy_size": 16,
+        "fault_risc.recipe_version": 1,
+        "fault_risc.instruction_alignment": 4 if arch.name == "aarch64" else 2,
         "target_metadata.scratch_reg": CHECKPOINT_TARGET_SCRATCH_REG_OFFSET,
         "target_metadata.fixed_reg0_source": CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS[0],
         "target_metadata.fixed_reg1_source": CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS[1],
         "target_metadata.fixed_reg_none": CHECKPOINT_TARGET_FIXED_REG_SOURCE_NONE,
     })
+    if arch.name == "riscv64":
+        expected["fault_risc.assembly_scope_version"] = 1
     if arch.name == "aarch64":
         for number in range(31):
             expected[f"checkpoint.reg.x{number}"] = arch.checkpoint_register_state_offset(number)
@@ -367,8 +373,8 @@ def load_runtime_contract(path) -> RuntimeContract:
              "missing or malformed ABI field fault_training (0 or 1)")
     _require(type(abi.get("fault_publishing")) is int and abi["fault_publishing"] in (0, 1), path,
              "missing or malformed ABI field fault_publishing (0 or 1)")
-    _require(not abi["fault_publishing"] or abi["fault_training"] and abi["isa"] == "x64", path,
-             "fault publishing requires x64 and fault training")
+    _require(not abi["fault_publishing"] or abi["fault_training"] and abi["isa"] in ("x64", "aarch64", "riscv64"), path,
+             "fault publishing requires a supported 64-bit ISA and fault training")
     _require(all(isinstance(value, int) and not isinstance(value, bool) for value in data["runtime"].values()),
              path, "runtime values must be integers")
     # The application ranges: a count of 1 to the number of slots, every slot

@@ -63,6 +63,14 @@ def dump(path, value):
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def component_assembler_argv(module, compiler, assembly, output, isa, tag_storage):
+    from teapot.fault_risc_assembly import fault_risc_assembler_flags
+    return [compiler, "-c", assembly, "-o", output,
+            *(['-mno-relax', '-Wa,-mno-relax'] if isa == 'RISCV64' else []),
+            *(['-march=armv8.5-a+memtag'] if tag_storage == 'mte' else []),
+            *fault_risc_assembler_flags(module)]
+
+
 def tree_hash(root):
     root = Path(root)
     return {str(path.relative_to(root)): sha(path)
@@ -339,13 +347,21 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         printer += ["--skip-section", ".init", ".fini"]
     run(directory, "print", printer)
     # The printer emits Teapot's section flags and global guard bounds itself.
-    run(directory, "assemble", [args.cc, "-c", directory / "raw.S", "-o", directory / "component.o",
-                                *(['-mno-relax', '-Wa,-mno-relax'] if isa == 'RISCV64' else []),
-                                *(['-march=armv8.5-a+memtag'] if args.mode_tag_storage == 'mte' else [])])
+    from teapot.fault_risc_assembly import emit_fault_risc_scopes
+    raw_assembly = (directory / "raw.S").read_text()
+    scoped_assembly = emit_fault_risc_scopes(module, raw_assembly)
+    assembly = directory / "raw.S"
+    if scoped_assembly != raw_assembly:
+        assembly = directory / "fault-scoped.S"
+        assembly.write_text(scoped_assembly)
+    run(directory, "assemble", component_assembler_argv(
+        module, args.cc, assembly, directory / "component.o", isa, args.mode_tag_storage))
     validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]),
                     item['machine'], converter.eh_cfi_entries, args.target_identification)
     recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "component.o",
                 "proven-data-decoder-warnings.json", "selected-version-bindings.json", "compaction.json"]
+    if assembly.name != "raw.S":
+        recorded.append(assembly.name)
     if args.preserve_selected_lifecycle:
         recorded.append("lifecycle.json")
     if isa == 'ARM64':

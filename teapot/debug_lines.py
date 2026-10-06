@@ -286,9 +286,17 @@ def main():
         parser.error("source-line printing currently requires one ELF module")
     try:
         result = emit_source_lines(ir.modules[0], args.assembly.read_text())
+        # This is also a supported print/assemble entrypoint. Adaptive RV
+        # scopes must survive whether or not source-line metadata was requested.
+        from teapot.fault_risc_assembly import emit_fault_risc_scopes, fault_risc_assembler_flags
+        result = emit_fault_risc_scopes(ir.modules[0], result)
+        flags = fault_risc_assembler_flags(ir.modules[0])
     except ValueError as error:
         parser.error(str(error))
     args.output.write_text(result)
+    if flags:
+        print("[teapot] RV v4 assembly requires compiler flag: " + " ".join(flags) +
+              "; link with -Wl,-z,separate-code and validate the final ELF.", flush=True)
 
 
 if __name__ == "__main__":

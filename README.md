@@ -288,6 +288,44 @@ gtirb-pprinter --ir a.inst.gtirb --asm a.inst.S
 ```
 For RV64, use a RISC-V-capable `gtirb-pprinter` build and assembler path; see
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the current smoke-test notes.
+Adaptive RV fault output additionally requires the matching-IR preparation step
+before assembly; directly assembling its raw listing is unsupported:
+```shell
+gtirb-pprinter --ir a.inst.gtirb --asm a.raw.S
+python -m teapot.fault_risc_assembly a.inst.gtirb a.raw.S a.inst.S
+riscv64-linux-gnu-gcc -Wa,--no-pad-sections -c a.inst.S -o a.inst.o
+```
+This adds scoped `norvc/norelax` options only around recorded cold stubs and
+refuses missing, duplicate, malformed, nested or cross-section markers. It does
+not modify ELF files. The `teapot.debug_lines` CLI shares this preparation after
+its source-line pass; do not apply both commands to the same listing. Adaptive
+pipeline source-line emission remains unsupported. Adaptive prechecks currently
+require whole-program rewriting and reject component mode explicitly. The
+component assembly driver also uses the same preparation if it receives owned
+scope metadata; the standalone ELF-to-component converter refuses that input.
+Final ELF width, template, reach and page-isolation
+validation remains mandatory. No-scope output passes through byte-identically.
+For emitted RV v4 output only, `-Wa,--no-pad-sections` is required so GNU as
+does not append bytes beyond the final aligned isolation marker. The metadata-
+checked flag helper is shared by supported assembly entrypoints; ordinary and
+disabled output keep their existing compiler arguments. Link with
+`-Wl,-z,separate-code`, as for other adaptive output. Omitting the RV assembler
+flag can produce a linked section that the mandatory final validator refuses.
+This adds no global relaxation flag and changes no runtime compilation flags.
+
+Adaptive AArch64/RV64 publishing uses v4 tables and an ISA-matched publishing
+runtime contract. RV covered loads are whole four-byte instructions at their
+natural halfword boundaries, without per-site alignment NOPs. A64 uses only the
+startup-verified low-page predicate; RV enables a high predicate only after the
+Linux hwprobe exclusive-end and effective PMLEN=0 queries succeed. Missing facts
+leave that predicate disabled. MTE tag faults still use kernel handling.
+Synchronous kernel-generated memory faults at copied loads are transient-only
+and go directly to rollback; asynchronous faults and application notifications
+keep baseline instrumentation-context routing. Handlers that modify interrupted speculative context remain
+unsupported. Later low mappings/address-mode changes while adaptation is on,
+multiple application threads, and unvalidated final ELF files are unsupported;
+`TEAPOT_FAULT_ADAPTATION=0` retains original access execution (including required
+RV encoding widening). QEMU checks correctness, never native cache/migration or speed.
 
 4. Recompile the instrumented assembly file. Software mode needs no special layout: the speculative
 copy's indirect-target check tests only the marker pair at the target, for branches, calls and returns

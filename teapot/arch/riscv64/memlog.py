@@ -4,6 +4,7 @@ from teapot.configs.runtime import (
     MEMORY_HISTORY_ENTRY_SIZE,
     MEMORY_HISTORY_SIZE_OFFSET,
 )
+from teapot.fault_risc import MEMLOG, origin_marker
 
 
 class RISCV64MemlogPatchesMixin:
@@ -33,11 +34,13 @@ class RISCV64MemlogPatchesMixin:
                                            (2, "lh", "sh"), (1, "lb", "sb")):
                     if not chunk_size & width:
                         continue
+                    asm += origin_marker(self, MEMLOG)
                     asm += f"{load} {data_reg}, {byte_idx}({addr_reg})\n"
                     asm += f"{store} {data_reg}, {MEMORY_HISTORY_DATA_OFFSET + byte_idx}({top_reg})\n"
                     byte_idx += width
                 asm += "j 92f\n91:\n"
             for byte_idx in range(chunk_size):
+                asm += origin_marker(self, MEMLOG)
                 asm += f"""
                     lbu {data_reg}, {byte_idx}({addr_reg})
                     sb {data_reg}, {MEMORY_HISTORY_DATA_OFFSET + byte_idx}({top_reg})

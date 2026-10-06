@@ -73,7 +73,7 @@ COMPONENT_FIXED = {
     "conservative_flags": "drop --conservative-flags",
     "force_checkpoint_df": "drop --force-checkpoint-df",
     "x64_vector_state": "the vector state is chosen per site; drop --x64-vector-state",
-    "enable_fault_publishing": "adaptive fault windows are whole-program x64 only; drop --adaptive-fault-precheck",
+    "enable_fault_publishing": "adaptive fault prechecks are whole-program only; drop --adaptive-fault-precheck",
 }
 COMPONENT_FREE = frozenset({"aarch64_tag_storage", "target_identification", "enable_fault_training"})
 
@@ -97,8 +97,9 @@ def validate_options(options, isa: str, *, component: bool = False) -> ModeSpec:
                         f"{', '.join(sorted(known))}")
     if options.aarch64_tag_storage not in TAG_STORAGES[isa]:
         raise ModeError(f"--aarch64-tag-storage={options.aarch64_tag_storage} is only valid for AArch64 modules")
-    if options.enable_fault_publishing and (isa != "x64" or not options.enable_checkpoints or options.debug_source):
-        raise ModeError("adaptive fault prechecks require x64 checkpoints and no source-line emission")
+    if options.enable_fault_publishing and (isa not in ("x64", "aarch64", "riscv64") or
+                                          not options.enable_checkpoints or options.debug_source):
+        raise ModeError("adaptive fault prechecks require a supported 64-bit ISA, checkpoints and no source-line emission")
     if component:
         defaults = type(options)()
         changed = [f"{field} ({remedy})" for field, remedy in COMPONENT_FIXED.items()

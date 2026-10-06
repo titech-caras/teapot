@@ -16,7 +16,7 @@ from teapot.utils.serialization import compact_for_pprinter, save_protobuf_order
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adaptive-fault-precheck", action="store_true",
-                        help="Emit validated x64 scalar fault windows (requires a publishing runtime; "
+                        help="Emit validated scalar fault prechecks (requires an ISA-matched publishing runtime; "
                              "single-threaded only). TEAPOT_FAULT_ADAPTATION=0 disables activation at startup.")
     parser.add_argument('--force-checkpoint-df', action='store_true',
                         help='Save DF at every x64 checkpoint instead of selecting DF-sensitive sites')
@@ -210,6 +210,13 @@ def main():
     print("[teapot] begin serialization", flush=True)
     save_protobuf_ordered(ir, args.output)
     print("[teapot] end serialization", flush=True)
+    if any("teapotFaultRiscAssemblyScopes" in module.aux_data for module in ir.modules):
+        from teapot.fault_risc_assembly import fault_risc_assembler_flags
+        flags = sorted({flag for module in ir.modules for flag in fault_risc_assembler_flags(module)})
+        print("[teapot] RV adaptive output requires: python -m teapot.fault_risc_assembly "
+              "IR RAW.S OUTPUT.S before assembly (or the teapot.debug_lines CLI when used). "
+              "Assemble with " + " ".join(flags) + "; link with -Wl,-z,separate-code. "
+              "An unprepared listing is unsupported; final ELF validation is still required.", flush=True)
 
 
 if __name__ == "__main__":

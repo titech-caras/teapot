@@ -31,8 +31,15 @@ class ModeTableTests(unittest.TestCase):
                                           if isinstance(value, bool)})
         loose = replace(loose, enable_fault_publishing=False)
         self.assertIs(validate_options(loose, "x64"), MODES["software"])
-        self.assertIs(validate_options(InstrumentationOptions(enable_fault_training=True,
-            enable_fault_publishing=True), "x64"), MODES["software"])
+        for isa in ISAS:
+            adaptive = InstrumentationOptions(enable_fault_training=True, enable_fault_publishing=True)
+            self.assertIs(validate_options(adaptive, isa), MODES["software"])
+            with self.assertRaisesRegex(ModeError, "whole-program only"):
+                validate_options(adaptive, isa, component=True)
+            with self.assertRaisesRegex(ModeError, "checkpoints"):
+                validate_options(replace(adaptive, enable_checkpoints=False), isa)
+            with self.assertRaisesRegex(ModeError, "source-line"):
+                validate_options(replace(adaptive, debug_source="input.elf"), isa)
 
     def test_refused_combinations_name_the_conflict_and_remedy(self):
         bti = InstrumentationOptions(target_identification="aarch64-bti-pac")

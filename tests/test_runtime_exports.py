@@ -16,6 +16,19 @@ from test_runtime_names import add_symbol, program, text_bytes
 
 
 class RuntimeExportTests(unittest.TestCase):
+    def test_risc_scope_names_are_reserved_in_both_input_preflights(self):
+        for edge in ("begin", "end"):
+            name = "__teapot_fault_rv_scope_" + edge + "_" + "0123456789abcdef" * 2
+            self.assertTrue(is_generated_name(name))
+            for component in (False, True):
+                ir, module = program("riscv64")
+                add_symbol(module, name)
+                with self.assertRaisesRegex(RuntimeNameError, name):
+                    refuse_reserved_names(ir, InstrumentationOptions(), fixture_contract("riscv64"),
+                                          component=component)
+            for near in (name + "0", name[:-1], name.upper(), name.replace(edge, "middle")):
+                self.assertFalse(is_generated_name(near), near)
+
     def test_runtime_and_rewriter_manifests_and_checkers_match(self):
         root = Path(__file__).resolve().parents[1]
         for suffix in ("py", "json"):

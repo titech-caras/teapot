@@ -3,6 +3,7 @@ from teapot.configs.runtime import (
     ASAN_TAG_STORAGE_SHADOW,
     SYMBOL_SUFFIX,
 )
+from teapot.fault_risc import SHADOW, origin_marker
 
 
 class AArch64AsanPatchesMixin:
@@ -30,7 +31,7 @@ class AArch64AsanPatchesMixin:
             lsr {scratch_reg}, {addr_reg}, #3
             {self.mov_u64(shadow_reg, shadow_offset)}
             add {scratch_reg}, {scratch_reg}, {shadow_reg}
-            ldrb {shadow_reg:32}, [{scratch_reg}]
+            {origin_marker(self, SHADOW)}ldrb {shadow_reg:32}, [{scratch_reg}]
             cbz {shadow_reg:32}, {check_ok_label}
             cmp {shadow_reg:32}, #8
             b.hs .L__asan_shadow_check_fail{SYMBOL_SUFFIX}
@@ -46,7 +47,7 @@ class AArch64AsanPatchesMixin:
             raise ValueError("multi-byte AArch64 ASan checks require an end_reg scratch register")
 
         next_granule = (f"b .L__asan_shadow_check_loop{SYMBOL_SUFFIX}" if access_size > 8
-                        else f"ldrb {shadow_reg:32}, [{scratch_reg}]")
+                        else f"{origin_marker(self, SHADOW)}ldrb {shadow_reg:32}, [{scratch_reg}]")
 
         return f"""
             lsr {scratch_reg}, {addr_reg}, #3
@@ -56,7 +57,7 @@ class AArch64AsanPatchesMixin:
             add {scratch_reg}, {scratch_reg}, {shadow_reg}
             add {end_reg}, {end_reg}, {shadow_reg}
         .L__asan_shadow_check_loop{SYMBOL_SUFFIX}:
-            ldrb {shadow_reg:32}, [{scratch_reg}]
+            {origin_marker(self, SHADOW)}ldrb {shadow_reg:32}, [{scratch_reg}]
             cmp {scratch_reg}, {end_reg}
             b.eq .L__asan_shadow_check_last{SYMBOL_SUFFIX}
             cbnz {shadow_reg:32}, .L__asan_shadow_check_fail{SYMBOL_SUFFIX}

@@ -1412,6 +1412,13 @@ def reconstruct(item, args, out, index=0, priority=None):
     if len(ir.modules) != 1:
         reject('MULTIMODULE_INPUT', item['path'], 'one module per ELF required')
     module = ir.modules[0]
+    # This standalone converter reconstructs uninstrumented ELF only. It does
+    # not own the adaptive RV assembler-option preparation stage; refuse an
+    # already-instrumented input rather than silently dropping that contract.
+    if ("teapotFaultRiscAssemblyScopes" in module.aux_data or
+            any(symbol.name.startswith("__teapot_fault_rv_scope_") for symbol in module.symbols)):
+        reject('INSTRUMENTED_RV_FAULT_INPUT', item['path'],
+               'use the component rewrite driver or teapot.fault_risc_assembly with matching instrumented IR')
     data_warnings = validate_frontend_diagnostics(module, item, diagnostics)
     dump(directory / 'proven-data-decoder-warnings.json', data_warnings)
     cfi = module.aux_data.get('cfiDirectives')
