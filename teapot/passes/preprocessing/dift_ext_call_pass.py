@@ -15,11 +15,13 @@ class DiftExtCallPass(VisitorPassMixin):
     symbols_to_rename: Set[gtirb.Symbol]
 
     def __init__(self, section: gtirb.Section, decoder: GtirbInstructionDecoder,
-                 wrap_dift_calls: bool = True, enforce_mappings: bool = False):
+                 wrap_dift_calls: bool = True, enforce_mappings: bool = False,
+                 linked_function_symbols=frozenset()):
         self.section = section
         self.decoder = decoder
         self.wrap_dift_calls = wrap_dift_calls
         self.enforce_mappings = enforce_mappings
+        self.linked_function_symbols = frozenset(linked_function_symbols)
         self.symbols_to_rename = set()
 
     @staticmethod
@@ -47,7 +49,15 @@ class DiftExtCallPass(VisitorPassMixin):
         version_entries = symbol_versions.data[2] if symbol_versions is not None else {}
         destinations = wrapper_destinations(self.wrap_dift_calls, self.enforce_mappings)
         for forwarded_sym in {forwarding.get(sym, sym) for sym in self.symbols_to_rename}:
-            if forwarded_sym.name in MAPPING_WRAPPER_FUNCTIONS and not _undefined(module, forwarded_sym):
+            # A PLT/forwarding edge can target this module's own definition.
+            # Renaming it destroys the public export and rewrites every reference.
+            if not _undefined(module, forwarded_sym):
+                continue
+            # These names are supplied only by the validated component link set.
+            # Its instrumented providers already propagate DIFT; their imports
+            # must retain the link identity rather than enter an external wrapper.
+            if (forwarded_sym.name in DIFT_WRAPPER_FUNCTIONS and
+                    forwarded_sym.name in self.linked_function_symbols):
                 continue
             wrapper = destinations.get(forwarded_sym.name)
             if wrapper:

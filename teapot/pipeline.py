@@ -690,7 +690,9 @@ class TeapotPipeline:
         pass_manager.add(DiftExtCallPass(
             self.text_section, self.decoder,
             wrap_dift_calls=self.options.enable_dift,
-            enforce_mappings=self.runtime_contract.shadow_mapping_enforcement))
+            enforce_mappings=self.runtime_contract.shadow_mapping_enforcement,
+            linked_function_symbols=(self.linked_component.linked_function_symbols
+                                     if self.linked_component else ())))
         self._run_pass_manager(pass_manager, "dift-ext-calls")
 
     def _run_text_passes(self):
