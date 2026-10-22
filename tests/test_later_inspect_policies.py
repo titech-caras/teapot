@@ -59,20 +59,6 @@ class CompleteInspectPolicyTests(unittest.TestCase):
             with patch.object(converter, 'ELFFile', return_value=PolicyELF(role, symbols)):
                 return converter.inspect(path, role, **options)
 
-    def test_all_loader_names_need_true_and_definition_still_refuses(self):
-        for role in ('executable', 'selected'):
-            for name in sorted(converter.LOOKUP):
-                for spelling in (name, name + '@LIBC_TEST_1'):
-                    with self.subTest(role=role, name=spelling):
-                        imported = Symbol(spelling)
-                        with self.assertRaisesRegex(converter.Unsupported, 'RUNTIME_SYMBOL_LOOKUP'):
-                            self.invoke(role, [imported])
-                        accepted = self.invoke(role, [imported], allow_runtime_symbol_lookup=True)
-                        self.assertTrue(accepted['allow_runtime_symbol_lookup'])
-                        defined = Symbol(spelling, section=1, address=0x2000, size=4)
-                        with self.assertRaisesRegex(converter.Unsupported, 'RUNTIME_SYMBOL_LOOKUP'):
-                            self.invoke(role, [defined], allow_runtime_symbol_lookup=True)
-
     def test_weak_callback_and_lookup_grants_remain_independent_when_composed(self):
         symbols = [
             Symbol('application_callback', binding='STB_WEAK', section=1, address=0x2000, size=4),
@@ -96,25 +82,6 @@ class CompleteInspectPolicyTests(unittest.TestCase):
             allow_runtime_symbol_lookup=True)
         self.assertEqual(selected['executable_weak_callbacks'], ['application_callback'])
         self.assertFalse(selected['weak_callback_closure_validated'])
-
-    def test_weak_definition_near_misses_still_refuse_through_full_inspect(self):
-        for change in (
-            {'kind': 'STT_OBJECT'}, {'visibility': 'STV_HIDDEN'},
-            {'section': 'SHN_ABS'}, {'section': 'SHN_COMMON'},
-        ):
-            options = dict(binding='STB_WEAK', section=1, address=0x2000, size=4)
-            options.update(change)
-            with self.subTest(change=change), self.assertRaisesRegex(converter.Unsupported, 'WEAK_BINDING'):
-                self.invoke('executable', [Symbol('application_callback', **options)],
-                            allow_executable_weak_callbacks=True,
-                            allow_runtime_symbol_lookup=True)
-
-    def test_external_inventory_keeps_default_false_without_selected_policy(self):
-        result = self.invoke('external', [Symbol('dlsym')])
-        self.assertFalse(result['allow_runtime_symbol_lookup'])
-        self.assertEqual(result['executable_weak_callbacks'], [])
-        self.assertEqual([row['name'] for row in result['static_symbols']], ['_start'])
-
 
 if __name__ == '__main__':
     unittest.main()

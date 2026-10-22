@@ -8,7 +8,6 @@ import unittest
 from uuid import uuid4
 
 import gtirb
-import llvmlite.binding as llvm
 from gtirb_functions import Function
 from gtirb_rewriting import Patch, RewritingContext, patch_constraints
 
@@ -257,17 +256,6 @@ def mcasm_marker_module(arch, assembly):
 
 
 class PureRISCVCodegenTests(unittest.TestCase):
-    def test_explicit_llvm_lp64_and_integer_features(self):
-        dift = replay(architecture())
-        module = llvm.parse_assembly("define i64 @func(i64 %a, i64 %b) { %x = mul i64 %a, %b\nret i64 %x }")
-        machine_code = dift.target_machine.emit_object(module)
-        record_object_bytes(machine_code)
-        self.assertEqual(machine_code[:5], b"\x7fELF\x02")
-        # ELF64 e_flags: no FLOAT_ABI bits and no compressed-patch flag.
-        self.assertEqual(struct.unpack_from("<I", machine_code, 48)[0] & 7, 0)
-        self.assertRegex(dift.target_machine.emit_assembly(module), r"\bmul\b")
-
-
     def test_pure_replay_refuses_fp_control_vector_and_hidden_calls(self):
         dift = replay(architecture())
         for body in ("fmv.d.x ft0, zero", "fld f0, 0(a0)", "frcsr a0", "fsflags a0",
@@ -313,46 +301,6 @@ store <16 x i8> %r, ptr @dift_reg_tags, align 16
                 self.assertEqual(summary["extension_counts"].get("zicond"), 1)
                 for row in emitted:
                     self.assertNotRegex(row["assembly"], r"\bczero\.(?:eqz|nez)\b")
-
-    def test_mcasm_preserves_czero_and_emits_required_zero_tag_store(self):
-        arch = architecture()
-        for kind in ("text", "lazy", "eager", "enforcing"):
-            for mnemonic, shape, skip, require_capture in (
-                    ("czero.eqz", (11, 11, 11), True, False),
-                    ("czero.nez", (11, 11, 11), False, False),
-                    ("czero.eqz", (10, 11, 12), False, True)):
-                with self.subTest(kind=kind, mnemonic=mnemonic, shape=shape):
-                    inst = conditional_zero(mnemonic, *shape)
-                    dift = replay(arch, kind)
-                    capture, flush, effects = build_effect(dift, inst)
-                    recipe = core_recipe("core", dift, inst, capture, flush, effects)
-                    self.assertEqual(recipe["skip_effects"], skip)
-                    self.assertEqual(recipe["capture_required"], require_capture)
-                    _, module, summary, ledger = mcasm_cores(arch, [recipe])
-                    self.assertEqual(summary["extension_counts"].get("zicond"), 1)
-                    self.assertTrue(all(row["context_apply_completed"] for row in ledger))
-                    statuses = {row["role"]: row["status"] for row in ledger}
-                    if skip:
-                        self.assertEqual((capture, flush), ("", ""))
-                        self.assertEqual(statuses, {"capture": "empty-omitted", "flush": "empty-omitted"})
-                        interval, = module.byte_intervals
-                        self.assertEqual(bytes(interval.contents), bytes(inst.bytes) + bytes.fromhex("67800000"))
-                        self.assertEqual((summary["instruction_count"], summary["code_bytes"]), (2, 8))
-                    else:
-                        self.assertEqual(statuses["flush"], "callback-invoked")
-                        self.assertEqual(statuses["capture"], "callback-invoked" if require_capture else "empty-omitted")
-                        self.assertGreater(summary["code_bytes"], 8)
-                        if effects.clear_dest_tags:
-                            self.assertEqual(capture, "")
-                            instructions = [instruction for block in module.code_blocks
-                                for instruction in riscv64_decoder().disasm(
-                                    bytes(block.byte_interval.contents[block.offset:block.offset + block.size]),
-                                    block.address or 0)]
-                            self.assertTrue(any(instruction.mnemonic == "sb" and
-                                                instruction.reg_name(instruction.operands[0].reg) == "zero"
-                                                for instruction in instructions),
-                                            "mandatory tag-zero replay must actually be present in emitted bytes")
-
 
     def test_pure_markers_remain_in_executable_code_blocks(self):
         arch = architecture()

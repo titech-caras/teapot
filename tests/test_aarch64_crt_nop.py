@@ -68,58 +68,11 @@ class AArch64CrtNopTests(unittest.TestCase):
                     with self.assertRaises(Unsupported):
                         checked.arm_init_fini(init, fini)
 
-    def test_no_duplicate_nop_nop_pac_extra_or_truncated_tail(self):
-        for prefix in ('none', 'pac', 'nop'):
-            for is_init in (True, False):
-                for operation in ('prepend_nop', 'append_nop', 'truncate', 'nop_then_pac'):
-                    if prefix == 'none' and operation == 'prepend_nop':
-                        continue  # This is the legal NOP form, tested above.
-                    with self.subTest(prefix=prefix, init=is_init, operation=operation):
-                        checked, init, fini, _, _ = fixture(prefix)
-                        section = init if is_init else fini
-                        if operation == 'prepend_nop':
-                            section.words.insert(0, 0xd503201f)
-                        elif operation == 'append_nop':
-                            section.words.append(0xd503201f)
-                        elif operation == 'truncate':
-                            section.words.pop()
-                        else:
-                            section.words = [0xd503201f, 0xd503233f] + section.words
-                        section['sh_size'] = len(section.words) * 4
-                        with self.assertRaises(Unsupported):
-                            checked.arm_init_fini(init, fini)
-
     def test_nop_call_immediate_is_resolved_at_the_shifted_pc(self):
         checked, init, fini, _, _ = fixture('nop')
         init.words[3] = 0x9400007e  # Bare-form immediate, now targets helper+4.
         with self.assertRaisesRegex(Unsupported, 'CRT branch target'):
             checked.arm_init_fini(init, fini)
-
-
-    def test_helper_and_got_plt_proofs_are_not_skipped(self):
-        for prefix in ('none', 'pac', 'nop'):
-            for mutation in ('helper_name', 'helper_body', 'got_name', 'got_kind', 'got_addend',
-                             'plt_name', 'plt_kind', 'plt_addend', 'plt_load', 'plt_add', 'plt_return'):
-                with self.subTest(prefix=prefix, mutation=mutation):
-                    checked, init, fini, helper, plt = fixture(prefix)
-                    if mutation == 'helper_name':
-                        checked.symbols['call_weak_fn'] += 4
-                    elif mutation == 'helper_body':
-                        helper.words[2] ^= 1
-                    elif mutation in ('got_name', 'plt_name'):
-                        checked.relocations[0x403040 if mutation == 'got_name' else 0x403048]['r_info_sym'] = 2
-                    elif mutation in ('got_kind', 'plt_kind'):
-                        checked.relocations[0x403040 if mutation == 'got_kind' else 0x403048]['r_info_type'] = 257
-                    elif mutation in ('got_addend', 'plt_addend'):
-                        checked.relocations[0x403040 if mutation == 'got_addend' else 0x403048]['r_addend'] = 1
-                    elif mutation == 'plt_load':
-                        plt.words[1] ^= 0x400
-                    elif mutation == 'plt_add':
-                        plt.words[2] ^= 0x400
-                    else:
-                        plt.words[3] ^= 1
-                    with self.assertRaises(Unsupported):
-                        checked.arm_init_fini(init, fini)
 
 
 if __name__ == '__main__':

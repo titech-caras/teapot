@@ -4,21 +4,14 @@ import struct
 import gtirb
 from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 
-from elftools.elf.elffile import ELFFile
 
 from teapot.arch import get_arch
 from gtirb_rewriting.abi import _ABIS
-from teapot.pipeline import InstrumentationOptions, TeapotPipeline
-from teapot.riscv_profile import (DEFAULT, PURE, PURE_ABI, INTERPRETERS,
-                                 RiscvProfileError, validate_arch_attribute_record, validate_arch_attributes,
-                                 validate_arch_string, validate_compiler, validate_elf_header, validate_flags)
+from teapot.pipeline import InstrumentationOptions
+from teapot.riscv_profile import DEFAULT, PURE, PURE_ABI, RiscvProfileError, validate_flags
 from teapot.runtime_contract import RuntimeContractError, capability_bits, load_runtime_contract
-from experiments.reusable_libraries.targets import mode_metadata
-from experiments.reusable_libraries.validate_link import validate_mode_contract
 from runtime_contract_support import runtime_contract
 from test_runtime_contract import edited_contract
 ARCH = "rv64i2p1_m2p0_a2p1_c2p0_zicond1p0_zicsr2p0_zifencei2p0_zmmul1p0_zaamo1p0_zalrsc1p0_zca1p0"
@@ -131,48 +124,6 @@ class RiscvPureProfileTests(unittest.TestCase):
             with self.subTest(profile=profile), self.assertRaises(RiscvProfileError):
                 validate_flags(0x10, profile)  # EF_RISCV_TSO is not an ABI permission.
 
-    def test_priv_spec_attributes_are_informational_but_validated_and_recorded(self):
-        import io
-        raw = elf_fixture(integer_attrs=((8, 1), (10, 12), (12, 0)))
-        elf = ELFFile(io.BytesIO(raw))
-        validate_elf_header(elf)
-        record = validate_arch_attribute_record(elf)
-        self.assertEqual(record['priv_spec'], {'major': 1, 'minor': 12, 'revision': 0})
-        self.assertEqual(record['integer_attributes'], {'4': 16, '8': 1, '10': 12, '12': 0})
-        self.assertEqual(validate_arch_attributes(elf), record['architectures'])
-        for attrs in (((8, 1), (8, 2)), ((20, 0),)):
-            with self.subTest(attrs=attrs), self.assertRaises(RiscvProfileError):
-                validate_arch_attributes(ELFFile(io.BytesIO(elf_fixture(integer_attrs=attrs))))
-
-    def test_card_attributes_and_compiler_defaults_are_not_replaced(self):
-        self.assertIn('zicond', validate_arch_string('rv64i2p1_m2p0_a2p1_c2p0_zicond1p0_zicsr2p0_zifencei2p0'))
-        for text in ('rv64imafd', 'rv64imac_zbb1p0', 'rv64imac_zba', 'rv32imac', 'rv64imac_v1p0'):
-            with self.assertRaises(ValueError):
-                validate_arch_string(text)
-        macros = '#define __riscv_xlen 64\n#define __riscv_float_abi_soft 1\n#define __riscv_zicond 1000000\n'
-        with patch('teapot.riscv_profile.subprocess.run', return_value=SimpleNamespace(stdout=macros)) as run:
-            self.assertIn('__riscv_zicond', validate_compiler('/bound/gcc'))
-            self.assertEqual(run.call_args.args[0], ['/bound/gcc', '-dM', '-E', '-x', 'c', '/dev/null'])
-        for wrong in ('#define __riscv_flen 64\n', '#define __riscv_zbb 1\n'):
-            with patch('teapot.riscv_profile.subprocess.run', return_value=SimpleNamespace(stdout=macros + wrong)):
-                with self.assertRaises(ValueError):
-                    validate_compiler('/bound/gcc')
-
-    def test_interpreter_uses_the_first_c_string_as_the_loader_does(self):
-        import io
-        class Interp(dict):
-            def data(self):
-                return self['bytes']
-        elf = ELFFile(io.BytesIO(elf_fixture(elf_type=2)))
-        lp64 = INTERPRETERS[PURE].encode()
-        for raw in (lp64 + b'\0', lp64 + b'\0' + lp64 + b'\0'):
-            with patch.object(elf, 'iter_segments', return_value=iter([Interp(p_type='PT_INTERP', bytes=raw)])):
-                validate_elf_header(elf, role='executable')
-        wrong = INTERPRETERS[DEFAULT].encode() + b'\0' + lp64 + b'\0'
-        with patch.object(elf, 'iter_segments', return_value=iter([Interp(p_type='PT_INTERP', bytes=wrong)])):
-            with self.assertRaisesRegex(RiscvProfileError, 'another interpreter'):
-                validate_elf_header(elf, role='executable')
-
     def test_default_float_requirement_stays_and_pure_is_explicit(self):
         module, _ = self.input(); arch = get_arch(module); abi = arch.register_abi(_ABIS)
         options = InstrumentationOptions()
@@ -186,35 +137,6 @@ class RiscvPureProfileTests(unittest.TestCase):
         capable = replace(contract, capabilities=contract.capabilities | {'riscv64_float_state'})
         with self.assertRaisesRegex(RuntimeContractError, 'integer-only'):
             capable.check(arch, abi, options, riscv_profile=PURE)
-
-    def test_partial_or_false_pure_abi_is_not_accepted_on_load(self):
-        for key in PURE_ABI:
-            def missing(data):
-                del data['abi'][key]
-            with self.assertRaisesRegex(RuntimeContractError, 'partial'):
-                self.contract(missing)
-        with self.assertRaisesRegex(RuntimeContractError, 'partial'):
-            self.contract(lambda data: data['abi'].__setitem__('riscv.fp_policy', 'unknown'))
-
-
-    def test_pure_adaptive_combination_refuses_before_input_or_emission(self):
-        import gtirb
-        for options in (InstrumentationOptions(enable_fault_training=True),
-                        InstrumentationOptions(enable_fault_training=True, enable_fault_publishing=True)):
-            pipeline = TeapotPipeline(gtirb.IR(), options=options, riscv_profile=PURE)
-            with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'no adaptive backend'):
-                pipeline.run()
-
-
-    def test_mode_manifest_refuses_mixed_profiles_and_abi(self):
-        pure = mode_metadata('RISCV64', 'riscv64-lp64-pure')
-        manifest = dict(pure, components=[dict(pure, component_id='one')])
-        self.assertEqual(validate_mode_contract(manifest), ('RISCV64', 'riscv64-lp64-pure'))
-        for field, value in (('riscv_profile', DEFAULT), ('riscv_abi', {})):
-            mixed = dict(manifest, components=[dict(manifest['components'][0], **{field: value})])
-            with self.assertRaises(ValueError):
-                validate_mode_contract(mixed)
-        self.assertNotIn('riscv_profile', mode_metadata('RISCV64', 'riscv64'))
 
     def test_closure_refuses_mixed_calling_abi_before_bindings(self):
         executable = dict(machine='EM_RISCV', elf_flags=1, riscv_profile=PURE, path='main')

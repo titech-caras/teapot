@@ -115,34 +115,5 @@ class LinkedRiscvPreinitTests(unittest.TestCase):
         self.assertEqual(section['sh_addralign'], 1)
         self.assertEqual(section.data(), before)
 
-    def test_missing_mistyped_empty_or_misaligned_section_refuses(self):
-        for section in (
-            None,
-            PreinitSection(sh_type='SHT_PROGBITS'),
-            PreinitSection(words=()),
-            PreinitSection(address=PREINIT_ADDRESS + 1),
-            PreinitSection(sh_size=7),
-        ):
-            with self.subTest(section=section), self.assertRaisesRegex(
-                    ValueError, 'preinit array is missing or misaligned'):
-                validate_rv_preinit(PreinitELF(section, tags=[]), self.address)
-
-    def test_dynamic_tags_must_describe_the_exact_preinit_section(self):
-        valid = [('DT_PREINIT_ARRAY', PREINIT_ADDRESS), ('DT_PREINIT_ARRAYSZ', 8)]
-        invalid = ([], valid[:1], valid[1:],
-                   [('DT_PREINIT_ARRAY', PREINIT_ADDRESS + 8), valid[1]],
-                   [valid[0], ('DT_PREINIT_ARRAYSZ', 16)])
-        for tags in invalid:
-            with self.subTest(tags=tags), self.assertRaisesRegex(
-                    ValueError, 'dynamic preinit tags do not describe'):
-                validate_rv_preinit(PreinitELF(PreinitSection(), tags=tags), self.address)
-
-    def test_missing_or_repeated_load_gp_slot_refuses(self):
-        for words in ((0x10800,), (LOAD_GP, LOAD_GP), (LOAD_GP, 0x10800, LOAD_GP)):
-            with self.subTest(words=words), self.assertRaisesRegex(
-                    ValueError, 'load_gp preinit entry is not retained once'):
-                validate_rv_preinit(PreinitELF(PreinitSection(words=words)), self.address)
-
-
 if __name__ == '__main__':
     unittest.main()

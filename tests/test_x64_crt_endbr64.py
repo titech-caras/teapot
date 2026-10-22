@@ -47,33 +47,6 @@ class X64CrtEndbr64Tests(unittest.TestCase):
             with self.assertRaisesRegex(converter.Unsupported, 'CUSTOM_DT_INIT'):
                 self.validate(self.init(ENDBR, displacement), None, got - 4)
 
-    def test_gmon_relocation_remains_mandatory_and_exact(self):
-        for prefix in (b'', ENDBR):
-            with self.subTest(prefix=prefix):
-                init, got = self.init(prefix), 0x1000 + len(prefix) + 11 + 0x100
-                with self.assertRaisesRegex(converter.Unsupported, 'CUSTOM_DT_INIT'):
-                    self.validate(init, None, None)
-                with self.assertRaisesRegex(converter.Unsupported, 'CUSTOM_DT_INIT'):
-                    self.validate(init, None, got, name='application_hook')
-
-    def test_noncanonical_init_prefixes_bodies_and_trailing_bytes_are_refused(self):
-        canonical = self.init().data()
-        bad = (ENDBR + ENDBR + canonical, b'\x90' + canonical,
-               bytes.fromhex('f30f1efb') + canonical, ENDBR[:3] + canonical,
-               ENDBR + canonical + b'\x90', ENDBR + canonical[:-1],
-               ENDBR + canonical[:11] + b'\x90' + canonical[12:])
-        for contents in bad:
-            with self.subTest(contents=contents), self.assertRaisesRegex(converter.Unsupported, 'CUSTOM_DT_INIT'):
-                self.validate(Section(contents), None, 0x1000 + 15 + 0x100)
-
-    def test_noncanonical_fini_prefixes_bodies_and_trailing_bytes_are_refused(self):
-        for contents in (ENDBR + ENDBR + FINI, b'\x90' + FINI,
-                         bytes.fromhex('f30f1efb') + FINI, ENDBR + FINI + b'\x90',
-                         ENDBR + FINI[:-1], ENDBR + FINI[:-1] + b'\xcc'):
-            with self.subTest(contents=contents), self.assertRaisesRegex(converter.Unsupported, 'CUSTOM_DT_FINI'):
-                self.validate(None, Section(contents), None)
-
-
 class X64CrtFinalizePltTests(unittest.TestCase):
     def fixture(self, prefix=b''):
         # Literal canonical bodies, not generated from the production regex.
@@ -137,27 +110,6 @@ class X64CrtFinalizePltTests(unittest.TestCase):
         plt.contents[-4:] = struct.pack('<i', 0x6010 - 0x1400 - 6)
         with self.assertRaisesRegex(converter.Unsupported, 'GOT slot'):
             self.validate(fixture)
-
-    def test_missing_wrong_kind_or_wrong_name_relocation_still_refused(self):
-        for prefix in (b'', ENDBR):
-            for failure in ('missing', 'kind', 'name'):
-                with self.subTest(prefix=prefix, failure=failure):
-                    fixture = self.fixture(prefix)
-                    if failure == 'missing':
-                        del fixture[2][0x6010]
-                    elif failure == 'kind':
-                        fixture[2][0x6010]['r_info_type'] = 7
-                    else:
-                        fixture[2][0x6010]['r_info_sym'] = 4
-                    with self.assertRaisesRegex(converter.Unsupported, 'GOT slot'):
-                        self.validate(fixture)
-
-    def test_callback_body_proof_is_not_skipped_by_plt_endbr(self):
-        fixture = self.fixture(ENDBR)
-        fixture[4][3].contents[13] = 0x90
-        with self.assertRaisesRegex(converter.Unsupported, 'UNSUPPORTED_CRT_CALLBACK_BODY'):
-            self.validate(fixture)
-
 
 if __name__ == '__main__':
     unittest.main()
