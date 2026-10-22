@@ -72,6 +72,11 @@ other warning rejects the conversion.
   replaceable weak definitions, and (without the explicit opt-in above)
   non-CRT weak imports are refused.
   The executable's standard `data_start` alias is recognized explicitly.
+  One ordinary selected DSO may share an unversioned strong default-visibility
+  function/data definition with the executable's dynamic symbol table. Its
+  GOT/PLT references bind to the executable, first in the loader lookup scope;
+  the DSO's own body/data becomes local. Other duplicate shapes, including
+  `DT_SYMBOLIC` self-binding and retained external conflicts, remain refused.
 - Default/local/hidden definitions, ordinary GOT/PLT calls and data relocations
   are reconstructed symbolically. Executable COPY imports require a validated
   destination, exact external provider, recovered forwarding and final loader

@@ -1005,7 +1005,9 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                   'resolve_selected_versions': resolve_selected_versions,
                   'preserve_selected_lifecycle': preserve_selected_lifecycle,
                   'preserve_nonlocal_jumps': preserve_nonlocal_jumps,
-                  'preserve_weak_imports': preserve_weak_imports}
+                  'preserve_weak_imports': preserve_weak_imports,
+                  'symbolic_lookup': any(t.entry.d_tag == 'DT_SYMBOLIC' or
+                      (t.entry.d_tag == 'DT_FLAGS' and t.entry.d_val & 2) for t in tags)}
         if role == 'external':
             return result
         if role == 'executable':
@@ -1280,10 +1282,12 @@ def validate_closure(executable, selected, external):
                 or symbol.get('version_library') not in (None, matches[0][0]['soname'])):
             reject('COPY_RELOCATION', executable['path'], 'COPY provider is not an exact external object: ' + symbol['name'])
         copy['provider'] = matches[0][0]['soname']
-    # No silently changed ELF search-order/weak/preemption policy. Duplicate
-    # definitions among selected inputs or versus retained external providers
-    # require a richer resolver and are rejected in this prototype.
+    # The executable is first in the loader scope. Admit only its strong,
+    # unversioned dynsym definition preempting one ordinary selected DSO.
+    # Other duplicate shapes, including DT_SYMBOLIC self-binding, still refuse.
     definitions = {}
+    for item in selected:
+        item['executable_interpositions'] = []
     for item in [executable] + selected + external:
         for symbol in item['symbols']:
             if item is executable and any(symbol == copy['symbol'] for copy in copies):
@@ -1294,13 +1298,25 @@ def validate_closure(executable, selected, external):
                 continue
             if symbol['visibility'] == 'STV_HIDDEN':
                 continue
-            definitions.setdefault(symbol['name'], []).append(item)
-    for name, items in definitions.items():
+            definitions.setdefault(symbol['name'], []).append((item, symbol))
+    for name, entries in definitions.items():
+        items = [item for item, _ in entries]
         paths = {item['path'] for item in items}
         selected_definitions = [i for i in items if i['role'] != 'external']
         if len(paths) > 1 and selected_definitions:
-            reject('AMBIGUOUS_GLOBAL_BINDING', selected_definitions[0]['path'],
-                   '{} also defined in {}'.format(name, ', '.join(sorted(paths))))
+            main = [(item, symbol) for item, symbol in entries if item is executable]
+            dso = [(item, symbol) for item, symbol in entries if item['role'] == 'selected']
+            ordinary = lambda s: (s['binding'] == 'STB_GLOBAL' and
+                s['visibility'] == 'STV_DEFAULT' and isinstance(s['section'], int) and
+                s['type'] in ('STT_FUNC', 'STT_OBJECT') and not s.get('version'))
+            if (len(entries) == 2 and len(main) == len(dso) == 1 and
+                    ordinary(main[0][1]) and ordinary(dso[0][1]) and
+                    main[0][1]['type'] == dso[0][1]['type'] and
+                    not dso[0][0].get('symbolic_lookup')):
+                dso[0][0]['executable_interpositions'].append(name)
+            else:
+                reject('AMBIGUOUS_GLOBAL_BINDING', selected_definitions[0]['path'],
+                       '{} also defined in {}'.format(name, ', '.join(sorted(paths))))
         if name in CRT_WEAK - {'__cxa_finalize'}:
             reject('CALLABLE_CRT_HOOK', items[0]['path'], name)
     selected_sonames = {item['soname'] for item in selected}
@@ -1457,6 +1473,66 @@ def localize_private_library_definitions(module, item):
             info[symbol] = row[:2] + ('LOCAL',) + row[3:]
 
 
+def bind_executable_interpositions(module, item):
+    """Keep the DSO body local, but bind its loader-owned GOT/PLT uses to main."""
+    names = item.get('executable_interpositions', ())
+    if not names:
+        return
+    info = module.aux_data['elfSymbolInfo'].data
+    forwarding = module.aux_data.get('symbolForwarding')
+    forwarding = forwarding.data if forwarding else {}
+    bindings = {}
+    for name in names:
+        named = list(module.symbols_named(name))
+        symbols = [s for s in named
+                   if isinstance(s.referent, (gtirb.CodeBlock, gtirb.DataBlock))]
+        imports = [s for s in named if isinstance(s.referent, gtirb.ProxyBlock)]
+        if len(symbols) != 1 or len(imports) > 1:
+            reject('UNRECOVERED_INTERPOSITION', item['path'], name)
+        local = symbols[0]
+        row = info[local]
+        local_name = '.L__component_interposed_' + name
+        if list(module.symbols_named(local_name)):
+            reject('UNRECOVERED_INTERPOSITION', item['path'], local_name)
+        local.name = local_name
+        info[local] = row[:2] + ('LOCAL',) + row[3:]
+        target = imports[0] if imports else gtirb.Symbol(
+            name, payload=gtirb.ProxyBlock(module=module), module=module)
+        info[target] = (0, row[1], 'GLOBAL', 'DEFAULT', 0)
+        bindings[name] = (local, target)
+    for source, target in list(forwarding.items()):
+        for local, main in bindings.values():
+            if target is local:
+                forwarding[source] = main
+    # Forwarding handles code references to the GOT/PLT. Rewrite the matching
+    # dynamic-relocation slots too; direct local references remain untouched.
+    with Path(item['path']).open('rb') as stream:
+        elf = ELFFile(stream)
+        for section in elf.iter_sections():
+            if not isinstance(section, RelocationSection):
+                continue
+            table = elf.get_section(section['sh_link'])
+            if table['sh_type'] != 'SHT_DYNSYM':
+                continue
+            for relocation in section.iter_relocations():
+                name = table.get_symbol(relocation['r_info_sym']).name
+                if name not in bindings:
+                    continue
+                address = relocation['r_offset']
+                intervals = list(module.byte_intervals_on(address))
+                if len(intervals) != 1:
+                    reject('UNRECOVERED_INTERPOSITION', item['path'], hex(address))
+                interval = intervals[0]
+                offset = address - interval.address
+                expression = interval.symbolic_expressions.get(offset)
+                local, target = bindings[name]
+                if (not isinstance(expression, gtirb.SymAddrConst) or
+                        expression.symbol not in (local, target)):
+                    reject('UNRECOVERED_INTERPOSITION', item['path'], hex(address))
+                interval.symbolic_expressions[offset] = gtirb.SymAddrConst(
+                    expression.offset, target, expression.attributes)
+
+
 def external_load_order(executable, selected, external):
     """Retain the original breadth-first ELF dependency lookup scope."""
     providers = {item['soname']: item for item in selected + external}
@@ -1553,6 +1629,7 @@ def ordinary_object_recipe(item, context, priority=None):
         context.pop('executable', None)
     return {'format': 2, 'stage': 'ordinary-et-rel', 'context': context,
             'input_sha256': item['sha256'], 'role': item['role'],
+            'executable_interpositions': sorted(item.get('executable_interpositions', ())),
             'module_basename': Path(item['path']).name, 'array_priority': priority,
             'printing_policy': 'complete', 'shared': False}
 
@@ -1610,6 +1687,7 @@ def reconstruct(item, args, out, index=0, priority=None):
     print_ir = irpath
     if item['role'] == 'selected':
         localize_private_library_definitions(module, item)
+        bind_executable_interpositions(module, item)
     data_metadata = preserve_executable_data_blocks(module)
     dump(directory / 'recovered-data-metadata.json', data_metadata)
     version_bindings = (resolve_selected_symbol_versions(module, item, args.selected_sonames)
@@ -1650,7 +1728,8 @@ def reconstruct(item, args, out, index=0, priority=None):
         emitted = {s.name: s for s in table.iter_symbols() if s['st_shndx'] != 'SHN_UNDEF'}
         for symbol in item['symbols']:
             if (symbol['section'] == 'SHN_UNDEF' or symbol['binding'] == 'STB_LOCAL' or
-                    version_node_symbol(item, symbol)):
+                    version_node_symbol(item, symbol) or
+                    symbol['name'] in item.get('executable_interpositions', ())):
                 continue
             expected = reconstructed_symbol_name(symbol, item)
             if expected not in emitted:

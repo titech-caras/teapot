@@ -198,6 +198,7 @@ def exports(item, converter, functions_only=True):
     for symbol in item["symbols"]:
         if (symbol["section"] == "SHN_UNDEF" or (functions_only and symbol["type"] != "STT_FUNC")
                 or converter.version_node_symbol(item, symbol)
+                or symbol['name'] in item.get('executable_interpositions', ())
                 or symbol["binding"] != "STB_GLOBAL" or symbol["visibility"] != "STV_DEFAULT"):
             continue
         names.add(converter.reconstructed_symbol_name(symbol, item))
@@ -212,7 +213,7 @@ def component_bindings(item, converter, context):
     In particular, unrelated executable exports do not change a library's
     call policy. Versioned imports use the same identities as the converter.
     """
-    names = set(exports(item, converter))
+    names = set(exports(item, converter)) | set(item.get('executable_interpositions', ()))
     selected_sonames = {name for name, _ in context['selected_libraries']}
     for symbol in item['symbols']:
         if symbol['section'] != 'SHN_UNDEF':
@@ -297,6 +298,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         dump(directory / 'pointer-return-contracts.json', evidence)
     if item["role"] == "selected":
         converter.localize_private_library_definitions(module, item)
+        converter.bind_executable_interpositions(module, item)
     converter.validate_copy_forwarding(module, item)
     version_bindings = (converter.resolve_selected_symbol_versions(module, item, args.selected_sonames)
                         if args.resolve_selected_versions else [])
@@ -392,6 +394,7 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
     # caller-specific export set and then cache under a narrowed identity.
     selected_symbols = frozenset(name for name, _ in bindings)
     key_data = {"format": "teapot-components-v2", "input_sha256": item["sha256"],
+                "executable_interpositions": sorted(item.get('executable_interpositions', ())),
                 "role": item["role"], "priority": priority, "context": context}
     key_data = json.loads(json.dumps(key_data, sort_keys=True))
     key = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
