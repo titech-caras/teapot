@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.sharedlib import convert as converter
+from frontend_diagnostic_support import component_frontend_fields
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,7 @@ class LibraryBindingTests(unittest.TestCase):
                     path='/libtest.so', machine='EM_RISCV', application_fdes=[],
                     symbols=[dict(base, name='api'), dict(base, name='callback', section='SHN_UNDEF')])
         context = dict(selected_libraries=[('libtest.so', 'same-library')],
+                       allow_ambiguous_data_pointers=False,
                        bindings=[('api', 'libtest.so'), ('callback', 'executable'),
                                  ('unrelated_A', 'executable')],
                        runtime_contract=dict(version=1, fingerprint='0' * 16, coverage=False))
@@ -39,14 +41,15 @@ class LibraryBindingTests(unittest.TestCase):
             driver.dump(directory / 'key.json', key)
             (directory / 'component.o').write_bytes(b'one instrumented library object')
             result = {'component_id': identity, 'coverage': False,
-                      'files': {'component.o': driver.sha(directory / 'component.o')}}
+                      **component_frontend_fields(directory, item)}
+            result['files']['component.o'] = driver.sha(directory / 'component.o')
             driver.dump(directory / 'component.json', result)
             return result
 
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(driver, 'build_component', side_effect=build) as builder, \
                 patch.object(driver, 'validate_object'):
-            args = SimpleNamespace(cache=Path(directory))
+            args = SimpleNamespace(cache=Path(directory), allow_ambiguous_data_pointers=False)
             cold = driver.cached_component(args, converter, item, context, set(), 100)
             other = dict(context, bindings=context['bindings'][:2] + [('unrelated_B', 'executable')])
             original_sha = driver.sha

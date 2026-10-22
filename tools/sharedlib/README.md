@@ -7,12 +7,19 @@ deliberately narrow converter, not a general-purpose ELF static linker: it works
 from workload sources, original objects or archives, and refuses what its contract below does not cover. Supported
 targets are x86-64, AArch64 and RV64.
 
-Link input executables with `-no-pie -Wl,--emit-relocs`, and retain their symbol
-and relocation sections. Building PIC code (`-fPIC`) is compatible with this
-non-PIE final link. Relocations let the frontend distinguish real data pointers
-from integer constants that happen to equal an address. The converter does not
-enable the frontend's unsafe ambiguity override. Its ordinary output also
-retains relocations, since that executable is lifted again before instrumentation.
+Input executables must be non-PIE `ET_EXEC`; retained static relocations are
+optional precision evidence, not an input rebuild requirement. For new inputs,
+`-no-pie -Wl,--emit-relocs` preserves useful evidence (`-fPIC` is compatible).
+Existing relocation records keep precedence over pointer heuristics. Without
+proof, the strict default refuses ambiguous words. The explicit default-false
+`--allow-ambiguous-data-pointers` opt-in passes the same option to every input
+lift and accepts only DDisasm's exact grouped override warning. Address-shaped
+integers may then be changed by relayout: these are **unproven heuristic**
+guesses, not proven data pointers. Symbol tables and the binding/startup/unwind
+contract remain required; dynamic-loader relocations retain their semantics.
+The ordinary output keeps `--emit-relocs` as useful evidence for a later lift,
+not as a prerequisite on supplied inputs. Select the same explicit opt-in at
+DDisasm and the reuse driver if those entry points need it; it is never inferred.
 
 The library-rewriting pipeline, `experiments/reusable_libraries/rewrite_components.py`, builds on this converter: it
 instruments each selected library once and reuses the instrumented archive across executables.
@@ -20,7 +27,8 @@ instruments each selected library once and reuses the instrumented archive acros
 ```
 python3 tools/sharedlib/convert.py --executable APP --select libfoo.so [--select ...] \
     --external libc.so.6 [--external ...] --ddisasm DDISASM --pprinter GTIRB_PPRINTER --out DIR \
-    [--cc gcc] [--ar ar] [--linker ld] [--cache-dir DIR] [--jobs N] [opt-in flags below]
+    [--cc gcc] [--ar ar] [--linker ld] [--cache-dir DIR] [--jobs N] \
+    [--allow-ambiguous-data-pointers] [other opt-in flags below]
 ```
 
 The steps are:
@@ -134,3 +142,14 @@ rejects symlinks and copies rather than hardlinks. Entries are installed atomica
 fails with `CACHE_INTEGRITY`. Manifests are trusted local metadata, not signatures against a malicious writer. The
 `ET_REL` key is deliberately conservative: even a change of executable or binding order invalidates object reuse, while
 unchanged library IR can still be reused.
+
+The explicit ambiguity boolean enters both stage keys and all result/summary
+records. `frontend-diagnostics.json` binds the original `lift/stderr`, command,
+input and IR hashes. Both IR and object hits revalidate it; missing policy,
+changed diagnostics or a strict/opt-in mismatch fail closed. The existing
+`proven-data-decoder-warnings.json` contains only independently proven decoder
+data warnings, never ambiguity guesses. The new sidecar keeps raw stderr and
+grouped object counts/first examples (not a complete per-word inventory).
+For a full inventory request, capture DDisasm's exported
+`ambiguous_data_pointer` relation with input/tool/command provenance. The
+instrumented-component cache uses the same explicit policy separation.

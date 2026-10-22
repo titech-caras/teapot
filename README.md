@@ -245,15 +245,24 @@ sysroot is left unchanged.
 
 ## Usage
 
-Keep relocation evidence when building the input. For whole-program rewriting,
-build PIE, or link a fixed-address executable with `-Wl,--emit-relocs` (for
-example, `cc -fPIC -no-pie -Wl,--emit-relocs ...`). Keep its symbol and relocation
-sections. The selected-library converter requires the latter, non-PIE form.
-The frontend rejects ambiguous absolute data words instead of guessing whether
-an integer is a pointer. Its explicit `--allow-ambiguous-data-pointers` option
-restores the old heuristic, with a warning; it is not a safe default for
-rewriting. Rebuild affected inputs with relocations rather than adding that
-override to a batch.
+Relocations are optional precision evidence, not a requirement to rebuild a
+supplied input. When available, retain them: they take precedence over pointer
+heuristics and protect integer data. For new whole-program inputs, PIE or a
+fixed-address link with `-Wl,--emit-relocs` can provide that evidence. The
+selected-library converter independently requires a non-PIE `ET_EXEC`, not PIE;
+its symbol/startup/unwind and dynamic-loader checks still apply.
+
+By default DDisasm refuses ambiguous absolute data words. Its explicit
+`--allow-ambiguous-data-pointers` option retains legacy symbolic guesses and
+warns that address-shaped integers may be corrupted by relayout. The same
+default-false opt-in is available in `tools/sharedlib/convert.py` and
+`experiments/reusable_libraries/rewrite_components.py`, and must be selected
+explicitly at each entry point or fresh lift. These drivers retain the warning
+and grouped object counts/first examples as **unproven heuristic** diagnostics,
+not data-pointer proofs. Strict and opt-in artifacts have distinct recovered-IR,
+ordinary-object and instrumented-component cache keys, and hits revalidate
+checksummed diagnostic records. Opting in does not relax ABI-typed pointer
+arrays, return-ABI evidence, dynamic relocation semantics or other validation.
 
 1. Create a disassembly of the program of interest using Datalog Disassembly, generating the disassembled GTIRB file.
 ```shell

@@ -300,14 +300,13 @@ def validate_object(path, component_id, expected_exports, expected_fdes,
 def build_component(args, converter, item, key_data, component_id, selected_symbols, priority, directory):
     dump(directory / "key.json", key_data)
     lifted = directory / "lift.gtirb"
-    run(directory, "lift", [args.ddisasm, item["path"], "--ir", lifted, "-j", str(args.jobs)])
+    run(directory, "lift", converter.frontend_argv(args, item, lifted))
     ir = gtirb.IR.load_protobuf(lifted)
     require(len(ir.modules) == 1, 'check failed: len(ir.modules) == 1')
     module = ir.modules[0]
     isa, target = for_machine(item['machine'])
     require(module_isa_name(module) == isa, 'check failed: module_isa_name(module) == isa')
-    dump(directory / "proven-data-decoder-warnings.json", converter.validate_frontend_diagnostics(
-        module, item, (directory / "lift/stderr").read_text()))
+    converter.record_frontend_diagnostics(module, item, directory, args.allow_ambiguous_data_pointers)
     require("liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data,
             'check failed: "liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data')
     cfi = module.aux_data.get("cfiDirectives")
@@ -404,7 +403,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]),
                     item['machine'], converter.eh_cfi_entries, args.target_identification)
     recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "component.o",
-                "proven-data-decoder-warnings.json", "selected-version-bindings.json", "compaction.json"]
+                "proven-data-decoder-warnings.json", "selected-version-bindings.json", "compaction.json",
+                "frontend-diagnostics.json", "lift/command.json", "lift/stderr", "lift/stdout", "lift/result.json"]
     if assembly.name != "raw.S":
         recorded.append(assembly.name)
     if args.preserve_selected_lifecycle:
@@ -412,6 +412,9 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     if isa == 'ARM64':
         recorded.append('pointer-return-contracts.json')
     result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"],
+              "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
+              "pointer_inference": "unproven heuristic" if args.allow_ambiguous_data_pointers else "strict",
+              "frontend_diagnostics_sha256": sha(directory / "frontend-diagnostics.json"),
               **mode_metadata(isa, args.mode, args.target_identification),
               "exports": sorted(own_exports), "linked_exports": sorted(exports(item, converter, False)),
               "guard_count": guard_count, "coverage": coverage,
@@ -427,12 +430,15 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
     # Provider names/types and dependency bytes affect the binding decision.
     # The executable's own bytes are deliberately not in a *library* key: a
     # different main with the same binding contract can reuse this exact object.
+    require(type(context.get('allow_ambiguous_data_pointers')) is bool and
+            context['allow_ambiguous_data_pointers'] is args.allow_ambiguous_data_pointers,
+            'request/component cache policy mismatch or missing policy')
     bindings = component_bindings(item, converter, context)
     context = dict(context, bindings=bindings)
     # Use exactly the contract in the key; never instrument with the larger
     # caller-specific export set and then cache under a narrowed identity.
     selected_symbols = frozenset(name for name, _ in bindings)
-    key_data = {"format": "teapot-components-v2", "input_sha256": item["sha256"],
+    key_data = {"format": "teapot-components-v3", "input_sha256": item["sha256"],
                 "executable_interpositions": sorted(item.get('executable_interpositions', ())),
                 "role": item["role"], "priority": priority, "context": context}
     key_data = json.loads(json.dumps(key_data, sort_keys=True))
@@ -450,11 +456,14 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
                 temporary = Path(tempfile.mkdtemp(prefix=key + ".building-", dir=args.cache))
                 result = build_component(args, converter, item, key_data, key,
                                          selected_symbols, priority, temporary)
+                verify_component_frontend(converter, item, temporary, result,
+                                          args.allow_ambiguous_data_pointers)
                 temporary.rename(entry)
                 return {**result, "cache_hit": False, "cache_path": str(entry), "input_path": item["path"]}
             fcntl.flock(lock, fcntl.LOCK_SH)
         require(json.loads((entry / "key.json").read_text()) == key_data, "cache key mismatch")
         result = json.loads((entry / "component.json").read_text())
+        verify_component_frontend(converter, item, entry, result, args.allow_ambiguous_data_pointers)
         # Covered and uncovered objects are never interchangeable.
         require(result.get("coverage") == context["runtime_contract"]["coverage"],
                 "cached component has another speculative coverage mode", result.get("coverage"))
@@ -468,6 +477,24 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
                         item['machine'], converter.eh_cfi_entries,
                         context.get('target_identification', 'software'))
     return {**result, "cache_hit": True, "cache_path": str(entry), "input_path": item["path"]}
+
+
+def verify_component_frontend(converter, item, directory, result, allow_ambiguous_data_pointers):
+    """A hit or a newly built entry cannot shed its frontend policy/evidence."""
+    require(type(result.get('allow_ambiguous_data_pointers')) is bool and
+            result['allow_ambiguous_data_pointers'] is allow_ambiguous_data_pointers,
+            'component frontend policy mismatch or missing policy')
+    require(result.get('pointer_inference') == ('unproven heuristic' if allow_ambiguous_data_pointers else 'strict'),
+            'component frontend policy label mismatch')
+    for name in converter.FRONTEND_DIAGNOSTIC_FILES:
+        require(name in result['files'], 'component has no checksummed frontend diagnostic: ' + name)
+        require(sha(directory / name) == result['files'][name], 'cached artifact hash mismatch: ' + name)
+    require(result.get('frontend_diagnostics_sha256') == result['files']['frontend-diagnostics.json'],
+            'component frontend diagnostic hash mismatch or missing hash')
+    ir = gtirb.IR.load_protobuf(directory / 'lift.gtirb')
+    require(len(ir.modules) == 1, 'one frontend module per component required')
+    converter.record_frontend_diagnostics(ir.modules[0], item, directory,
+                                         allow_ambiguous_data_pointers, verify=True)
 
 
 def main():
@@ -495,6 +522,8 @@ def main():
     parser.add_argument("--preserve-selected-lifecycle", action="store_true")
     parser.add_argument("--preserve-nonlocal-jumps", action="store_true")
     parser.add_argument("--preserve-weak-imports", action="store_true")
+    parser.add_argument('--allow-ambiguous-data-pointers', action='store_true', default=False,
+                        help='explicitly allow unproven heuristic data-pointer guesses; warn and retain diagnostics')
     args = parser.parse_args()
     if not 1 <= args.jobs <= 8:
         parser.error("--jobs must be 1..8")
@@ -565,6 +594,7 @@ def main():
                "target_identification": args.target_identification,
                "liveness_contract": "standalone-ddisasm-abi-v1",
                "conversion_options": conversion_options,
+               "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
                "dift_layout": args.mode_layout, 'isa': isa,
                'component_targets_sha256': sha(args.teapot / 'experiments/reusable_libraries/targets.py'),
                'pointer_contract_producer_sha256': sha(args.teapot / 'tools/sharedlib/aarch64_return_abi.py')}
@@ -587,11 +617,15 @@ def main():
         shutil.copyfile(Path(component["cache_path"]) / "component.o",
                         args.out / ("component-{:03d}.o".format(index)))
     dump(args.out / "components.json", {"components": components, "total_guards": total_guards,
+                                       "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
+                                       "pointer_inference": "unproven heuristic" if args.allow_ambiguous_data_pointers else "strict",
                                        **mode_metadata(isa, args.mode, args.target_identification),
                                        "runtime_contract": contract_identity(args.contract),
                                        "link_support": link_support,
                                        "status": "objects_ready_final_link_and_behavior_not_yet_verified"})
     print(json.dumps({"components": len(components), "cache_hits": sum(c["cache_hit"] for c in components),
+                      "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
+                      "pointer_inference": "unproven heuristic" if args.allow_ambiguous_data_pointers else "strict",
                       "total_guards": total_guards}), flush=True)
 
 

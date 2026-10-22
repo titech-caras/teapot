@@ -10,6 +10,7 @@ class OrdinaryLibraryCacheTests(unittest.TestCase):
         self.item = {'path': '/inputs/libcore.so', 'sha256': 'library-A',
                      'role': 'selected'}
         self.context = {'contract': 'test-contract', 'executable': 'harness-A',
+                        'allow_ambiguous_data_pointers': False,
                         'selected_order': [['libcore.so', 'library-A']],
                         'external_order': [['libc.so.6', 'libc-A']],
                         'initialization_order': ['libcore.so'],

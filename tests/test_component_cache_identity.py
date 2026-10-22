@@ -15,6 +15,8 @@ import teapot
 
 from experiments.reusable_libraries import rewrite_components as driver
 from runtime_contract_support import runtime_contract
+from frontend_diagnostic_support import component_frontend_fields
+from tools.sharedlib import convert as selected_converter
 
 
 class CacheIdentityTests(unittest.TestCase):
@@ -24,13 +26,14 @@ class CacheIdentityTests(unittest.TestCase):
         def build(args, converter, item, key_data, key, selected, priority, directory):
             driver.dump(directory / "key.json", key_data)
             result = {"component_id": key, "files": {}, "coverage": False,
+                      **component_frontend_fields(directory, item, args.allow_ambiguous_data_pointers),
                       "shadow_mapping_enforcement": key_data["context"]["runtime_contract"]["shadow_mapping_enforcement"]}
             driver.dump(directory / "component.json", result)
             return result
         with tempfile.TemporaryDirectory() as directory, patch.object(driver, "build_component", build), \
                 patch.object(driver, "validate_object", lambda *args, **kwargs: None):
-            args = SimpleNamespace(cache=Path(directory))
-            converter = SimpleNamespace(eh_cfi_entries=None)
+            args = SimpleNamespace(cache=Path(directory), allow_ambiguous_data_pointers=False)
+            converter = selected_converter
             paths = []
             for enabled in (False, True):
                 # Even a falsely reused fingerprint cannot erase the explicit
@@ -38,7 +41,8 @@ class CacheIdentityTests(unittest.TestCase):
                 identity = driver.contract_identity(SimpleNamespace(version=2, fingerprint="a" * 16,
                     coverage=False, shadow_mapping_enforcement=enabled, capabilities=frozenset(),
                     abi={"fault_sites.version": 2, "fault_windows.version": 3}))
-                context = {"selected_libraries": [], "bindings": [], "runtime_contract": identity}
+                context = {"selected_libraries": [], "bindings": [], "runtime_contract": identity,
+                           "allow_ambiguous_data_pointers": False}
                 built = driver.cached_component(args, converter, item, context, frozenset(), 100)
                 paths.append(Path(built["cache_path"]))
                 self.assertTrue(driver.cached_component(args, converter, item, context, frozenset(), 100)["cache_hit"])
@@ -142,6 +146,7 @@ class CacheIdentityTests(unittest.TestCase):
         def build(args, converter, item, key_data, key, selected_symbols, priority, directory):
             driver.dump(directory / "key.json", key_data)
             result = {"component_id": key, "files": {},
+                      **component_frontend_fields(directory, item, args.allow_ambiguous_data_pointers),
                       "coverage": key_data["context"]["runtime_contract"]["coverage"]}
             driver.dump(directory / "component.json", result)
             return result
@@ -149,11 +154,12 @@ class CacheIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(driver, "build_component", build), \
                 patch.object(driver, "validate_object", lambda *args, **kwargs: None):
-            args = SimpleNamespace(cache=Path(directory))
-            converter = SimpleNamespace(eh_cfi_entries=None)
+            args = SimpleNamespace(cache=Path(directory), allow_ambiguous_data_pointers=False)
+            converter = selected_converter
             entries = {}
             for name in ("x64", "x64-coverage"):
                 context = {"selected_libraries": [], "bindings": [],
+                           "allow_ambiguous_data_pointers": False,
                            "runtime_contract": driver.contract_identity(runtime_contract(name))}
                 built = driver.cached_component(args, converter, item, context, frozenset(), 100)
                 self.assertFalse(built["cache_hit"])

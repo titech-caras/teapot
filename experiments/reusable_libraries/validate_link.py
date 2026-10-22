@@ -84,6 +84,25 @@ def validate_mode_contract(manifest, *, isa=None, mode=None, target_identificati
     return actual_isa, actual_mode
 
 
+def validate_frontend_policy(manifest):
+    """No absent legacy field grants approval for heuristic pointer guesses."""
+    policy = manifest.get('allow_ambiguous_data_pointers')
+    require(type(policy) is bool, 'component manifest has no explicit frontend policy')
+    label = 'unproven heuristic' if policy else 'strict'
+    require(manifest.get('pointer_inference') == label, 'component manifest frontend policy label mismatch')
+    for component in manifest['components']:
+        require(type(component.get('allow_ambiguous_data_pointers')) is bool and
+                component['allow_ambiguous_data_pointers'] is policy and
+                component.get('pointer_inference') == label, 'component frontend policy mismatch')
+        require(component.get('frontend_diagnostics_sha256') ==
+                component.get('files', {}).get('frontend-diagnostics.json') and
+                isinstance(component.get('frontend_diagnostics_sha256'), str),
+                'component has no bound frontend diagnostic hash')
+    return {'allow_ambiguous_data_pointers': policy, 'pointer_inference': label,
+            'frontend_diagnostics': {component['component_id']: component['frontend_diagnostics_sha256']
+                                     for component in manifest['components']}}
+
+
 def contract_records(elf, section_name, kind):
     """Parse the contract records the link concatenated in one section."""
     section = elf.get_section_by_name(section_name)
@@ -233,6 +252,7 @@ def validate_bti_layout(elf, address, ranges, target_identification='aarch64-bti
 
 def validate(binary, objects, *, isa=None, mode=None, target_identification=None):
     manifest = json.loads((objects / "components.json").read_text())
+    frontend_policy = validate_frontend_policy(manifest)
     isa, mode = validate_mode_contract(manifest, isa=isa, mode=mode,
                                        target_identification=target_identification)
     target_identification = manifest['target_identification']
@@ -345,6 +365,7 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
                                  for item in [inputs["executable"]] + inputs["selected"]),
                 'check failed: the link has fewer FDEs than its inputs')
     return {"status": "structural_checks_passed_behavior_still_required", "needed": needed, 'isa': isa,
+            **frontend_policy,
             'mode': mode, 'target_identification': target_identification, 'bti_guard': bti_guard,
             "runtime_contract": runtime_contract,
             "target_ranges": ranges, "guard_ranges": guard_ranges,

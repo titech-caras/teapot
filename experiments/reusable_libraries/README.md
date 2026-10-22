@@ -9,10 +9,18 @@ This is a final-link pipeline. Its output is one non-PIE executable, never an in
 on its own. The input contract is the selected-library converter's (`tools/sharedlib/README.md`): a non-PIE
 executable, the selected compiled shared libraries and explicitly supplied external ELFs, all x86-64, AArch64 or
 RV64. Whatever that contract does not cover is refused before anything is lifted.
-Build the ordinary executable input with `-no-pie -Wl,--emit-relocs` and keep its
-relocation and symbol tables; see the converter's input-build guidance. A
-non-PIE link without this evidence can leave integer constants indistinguishable
-from absolute data pointers, which the frontend now rejects rather than guessing.
+Retained static relocations are optional precision evidence, not an input
+rebuild requirement. For new non-PIE inputs, `-no-pie -Wl,--emit-relocs` can
+preserve that evidence; existing records take precedence over heuristics.
+Without proof, the strict default refuses ambiguous words. The explicit
+default-false `--allow-ambiguous-data-pointers` flag passes the same opt-in to
+the executable and all selected-library lifts, retaining DDisasm's exact
+warning as **unproven heuristic** evidence. Address-shaped integers may be
+corrupted by relayout; the flag is not proof of pointer identity. It does not
+relax the independent `ET_EXEC`, symbol, binding, startup, liveness, unwind,
+return-ABI, ABI-typed pointer-array or dynamic-loader checks. DDisasm and the
+ordinary converter expose the same explicit option; select it at every entry
+point that requires it rather than inferring it from missing relocations.
 
 ## Modes
 
@@ -39,7 +47,7 @@ python3 experiments/reusable_libraries/rewrite_components.py \
     --runtime-contract CONTRACT.json --ddisasm DDISASM --pprinter GTIRB_PPRINTER [--cc CC] [--jobs N] \
     [--target-identification software|aarch64-bti-pac] \
     [--resolve-selected-versions] [--preserve-selected-lifecycle] [--preserve-nonlocal-jumps] \
-    [--preserve-weak-imports]
+    [--preserve-weak-imports] [--allow-ambiguous-data-pointers]
 ```
 
 `--teapot`, `--rewriting` and `--lra` name the source trees whose Python files enter the cache key. The driver checks
@@ -50,7 +58,7 @@ The runtime
 contract is the `libcheckpoint.contract.json` beside the libcheckpoint archive of the final link. Its ABI
 fingerprint enters the key, so archives with the same ABI share components; each component's record lists
 the capabilities it needs, and `validate_link.py` compares every record with the runtime record the link
-holds. The four opt-in flags are the converter's.
+holds. The conversion opt-in flags are the converter's.
 
 ### AArch64 BTI+PAC (opt-in)
 
@@ -102,6 +110,9 @@ python3 experiments/reusable_libraries/validate_link.py --binary APP.instrumente
 ```
 
 The validator derives ISA, mode, DIFT layout and tag storage from the manifests and checks every component agrees.
+It also checks the explicit frontend policy agrees for every component and
+copies that boolean, the `unproven heuristic`/`strict` label and diagnostic
+hashes into the validation record.
 Optional `--isa` and `--mode` arguments assert the requested contract; a mismatch is an error, not a mode override.
 Older manifests without this contract must be rebuilt. It checks the two ranges and that no other code falls inside them, every exported entry and its marker,
 the coverage-guard bases and that no two components' guards overlap, that every component pushes speculative
@@ -129,6 +140,18 @@ gtirb-layout and leb128; and the version of every installed distribution. Tool p
 run records them in `tools.json`. A library's key leaves out the executable's bytes but not its binding contract,
 so another program with the same contract reuses the same instrumented library. This cache is separate from the
 converter's cache of ordinary IR and objects.
+
+The ambiguity opt-in is recorded explicitly in the v3 component key, each
+component result and the final manifest. Strict and opt-in components never
+share an entry, even when the input, tools, mode and runtime are identical.
+`frontend-diagnostics.json` retains raw stderr and the grouped object counts
+and first examples, labelled `unproven heuristic` (not a complete per-word
+inventory). It and `lift/stderr`, the lift command and original IR are hashed;
+both newly built entries and cache hits revalidate their policy and diagnostic
+record. Old entries with no explicit policy do not grant override approval.
+Proven decoder-data warnings remain separate from guesses. If a full inventory
+is requested, capture DDisasm's exported `ambiguous_data_pointer` relation
+with input/tool/command provenance; do not describe first examples as all words.
 
 ## Limitations
 

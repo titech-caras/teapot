@@ -511,6 +511,7 @@ def build_component(ir, role):
     """The component driver's build_component on an in-memory lift, up to the rewrite: the converted IR that the
     rewrite gets, unless the driver refuses the input first."""
     args = SimpleNamespace(ddisasm="ddisasm", jobs=1, resolve_selected_versions=True,
+                           allow_ambiguous_data_pointers=False,
                            selected_sonames={"libversions.so"}, preserve_selected_lifecycle=False,
                            mode_layout="x64-la48-asan-new", instrumentation_options=InstrumentationOptions(),
                            contract=fixture_contract("x64"))
@@ -522,7 +523,7 @@ def build_component(ir, role):
 
     with tempfile.TemporaryDirectory() as directory, patch.object(DRIVER, "run"), \
             patch.object(DRIVER.gtirb.IR, "load_protobuf", return_value=ir), \
-            patch.object(converter, "validate_frontend_diagnostics", return_value=[]), \
+            patch.object(converter, "record_frontend_diagnostics", return_value={}), \
             patch.object(DRIVER, "TeapotPipeline", side_effect=rewrite_stub):
         (Path(directory) / "lift").mkdir()
         (Path(directory) / "lift" / "stderr").write_text("")
