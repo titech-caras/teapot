@@ -30,6 +30,10 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
             for original_uuid, transient in self.text_transient_mapping.code_blocks_map.items()
         }
         symbol_names = {symbol.name for symbol in module.symbols}
+        # A jump-only target may itself be relaxed before an incoming jump is
+        # visited. Register every entry insertion before any replacement, so
+        # offset-zero insertions precede the replaced instruction in a block.
+        replacements = []
 
         sections = dict.fromkeys((self.text_section, self.transient_section))
         for block in [block for section in sections for block in section.code_blocks]:
@@ -74,9 +78,9 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
                         jalr {link}, {temporary}, %pcrel_lo({hi_label})
                     """
 
-                rewriting_ctx.replace_at(
+                replacements.append((
                     block, instruction.address - block.address, instruction.size,
-                    Patch.from_function(long_external))
+                    Patch.from_function(long_external)))
                 self.relaxed += 1
                 continue
             if not is_tail:
@@ -121,13 +125,16 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
             def long_jump(ctx, target_name=landing_name):
                 return self.arch.jump_symbol_with_first_spill_restore(target_name, "t0")
 
-            rewriting_ctx.replace_at(
+            replacements.append((
                 block,
                 instruction.address - block.address,
                 instruction.size,
                 Patch.from_function(long_jump),
-            )
+            ))
             self.relaxed += 1
+
+        for block, offset, size, patch in replacements:
+            rewriting_ctx.replace_at(block, offset, size, patch)
 
     def end_module(self, module, functions):
         print(
