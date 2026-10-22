@@ -45,7 +45,7 @@ class SignalInstallerRuntimeTests(unittest.TestCase):
             self.run_checked(command)
             self.run_checked(['cmake', '--build', build, '--target', 'checkpoint',
                               'checkpoint_signal_installers_test', '--parallel', '2'])
-            self.run_checked(['ctest', '--test-dir', build, '-R', '^checkpoint_signal_installers$',
+            self.run_checked(['ctest', '--test-dir', build, '-R', '^checkpoint_(signal_installers|riscv_profile_contract)$',
                               '--output-on-failure', '--timeout', '30'], timeout=45)
             archive = build / 'libcheckpoint.a'
             symbols = self.run_checked([nm, '-g', '--defined-only', archive])
