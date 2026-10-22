@@ -458,6 +458,13 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
     require(type(context.get('allow_ambiguous_data_pointers')) is bool and
             context['allow_ambiguous_data_pointers'] is args.allow_ambiguous_data_pointers,
             'request/component cache policy mismatch or missing policy')
+    policy = getattr(converter, 'component_frontend_policy', None)
+    if policy is not None:
+        allow = policy(item, args.allow_ambiguous_data_pointers)
+        require(type(allow) is bool and (not allow or args.allow_ambiguous_data_pointers),
+                'component frontend policy may only narrow the request')
+        args = argparse.Namespace(**dict(vars(args), allow_ambiguous_data_pointers=allow))
+        context = dict(context, allow_ambiguous_data_pointers=allow)
     if getattr(args, 'riscv_profile', 'lp64d') == 'lp64-pure':
         context = dict(context, **converter.pure_cache_identity())
     bindings = component_bindings(item, converter, context)
