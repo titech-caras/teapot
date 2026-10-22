@@ -75,8 +75,10 @@ class AArch64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
             asm += self.arch.mem_operand_address_snippet(
                 self.reg_manager.abi, inst, addr_reg, tmp_reg, mem_operand,
                 ctx.stack_adjustment, mem_symexpr=mem_symexpr)
+            # The secret mask (0b1010) is not a logical immediate.
             asm += f"""
-                and {tmp_reg:32}, {tag_reg:32}, #{TAG_SECRET | TAG_SECRET_INDIRECT}
+                mov {tmp_reg:32}, #{TAG_SECRET | TAG_SECRET_INDIRECT}
+                and {tmp_reg:32}, {tag_reg:32}, {tmp_reg:32}
                 cbz {tmp_reg:32}, .L__attacker_tags_check{SYMBOL_SUFFIX}
                 {self.arch.report_gadget_snippet("KASPER_CACHE", addr_reg, tag_reg, shadow_reg, tmp_reg)}
 

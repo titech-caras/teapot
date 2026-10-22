@@ -5,6 +5,9 @@
 uint64_t instruction_cnt, old_rsp, reports_CACHE, reports_MDS, reports_PORT;
 uint64_t ordering_seen;
 
+/* DIFT labels, as in teapot/configs/tags.py. */
+enum { TAG_ATTACKER = 1, TAG_SECRET = 2, TAG_ATTACKER_INDIRECT = 4 };
+
 int main(void) {
     data = mmap((void *)0x31000000, 8192, PROT_READ|PROT_WRITE,
                 MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE, -1, 0);
@@ -31,11 +34,11 @@ int main(void) {
         test->original(&expected);
         memcpy(expected_data, data, 4096);
         memset(data, 0, 8192);
-        memset(tags, scenario == 0 ? 0x10 : 0, 8192);
+        memset(tags, scenario == 0 ? TAG_SECRET : 0, 8192);
         memset(shadow, scenario == 1 || scenario == 3 ? 0xff : 0, 4096);
         memset(dift_reg_tags, 0, 48);
-        dift_reg_tags[4] = dift_reg_tags[5] = scenario == 1 ? 1 : scenario == 2 ? 0x10 : 0;
-        dift_reg_tags[2] = scenario == 4 ? 0x10 : 0;
+        dift_reg_tags[4] = dift_reg_tags[5] = scenario == 1 ? TAG_ATTACKER : scenario == 2 ? TAG_SECRET : 0;
+        dift_reg_tags[2] = scenario == 4 ? TAG_SECRET : 0;
         memory_history_top = history;
         instruction_cnt = reports_CACHE = reports_MDS = reports_PORT = 0;
         ordering_seen = 0;
@@ -57,7 +60,7 @@ int main(void) {
             if (scenario == 2) assert(reports_CACHE);
             unsigned char tag = test->kind == 'm' ? tags[512] :
                 test->kind == 'l' ? dift_reg_tags[0] : dift_reg_tags[2];
-            assert(tag & (scenario == 3 ? 2 : 0x10));
+            assert(tag & (scenario == 3 ? TAG_ATTACKER_INDIRECT : TAG_SECRET));
             if ((test->kind == 'c' || test->kind == 't') && scenario != 3) assert(reports_PORT);
         }
         while (memory_history_top != history) {
@@ -66,7 +69,7 @@ int main(void) {
         }
         for (unsigned i = 0; i < 4096; ++i) {
             assert(data[i] == 0);
-            assert(tags[i] == (scenario == 0 ? 0x10 : 0));
+            assert(tags[i] == (scenario == 0 ? TAG_SECRET : 0));
         }
     }
     puts("rewritten REP access policies and tag flow passed");

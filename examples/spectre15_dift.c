@@ -5,7 +5,7 @@
 #include <sys/mman.h>
 
 #ifndef TAG_SECRET
-#define TAG_SECRET 16
+#define TAG_SECRET 2
 #endif
 
 __attribute__((weak))

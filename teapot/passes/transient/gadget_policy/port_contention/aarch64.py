@@ -112,8 +112,10 @@ class AArch64TransientPortContentionPolicyPass(TransientPortContentionPolicyPass
                     orr {tag_reg:32}, {tag_reg:32}, {tmp_reg:32}
                 """
 
+            # The secret mask (0b1010) is not a logical immediate.
             asm += f"""
-                and {tmp_reg:32}, {tag_reg:32}, #{TAG_SECRET | TAG_SECRET_INDIRECT}
+                mov {tmp_reg:32}, #{TAG_SECRET | TAG_SECRET_INDIRECT}
+                and {tmp_reg:32}, {tag_reg:32}, {tmp_reg:32}
                 cbz {tmp_reg:32}, {done_label}
                 {self.arch.clear_register_snippet(addr_reg)}
                 {self.arch.report_gadget_snippet("KASPER_PORT", addr_reg, tag_reg, tmp_reg, call_tmp_reg)}

@@ -213,7 +213,8 @@ class FastPathDifferentialTests(unittest.TestCase):
                     {TAG_SECRET_INDIRECT}|{TAG_ATTACKER}, {TAG_SECRET_INDIRECT}|{TAG_ATTACKER_INDIRECT},
                     {TAG_SECRET_INDIRECT}|{TAG_ATTACKER}|{TAG_ATTACKER_INDIRECT},
                     {TAG_SECRET}|{TAG_SECRET_INDIRECT}, {TAG_SECRET}|{TAG_SECRET_INDIRECT}|{TAG_ATTACKER},
-                    {TAG_SECRET}|{TAG_SECRET_INDIRECT}|{TAG_ATTACKER_INDIRECT}, 0x33}};
+                    {TAG_SECRET}|{TAG_SECRET_INDIRECT}|{TAG_ATTACKER_INDIRECT},
+                    {TAG_SECRET}|{TAG_SECRET_INDIRECT}|{TAG_ATTACKER}|{TAG_ATTACKER_INDIRECT}}};
                 const int seconds[] = {{0, {TAG_ATTACKER}, {TAG_SECRET}, {TAG_ATTACKER_INDIRECT}}};
                 const unsigned char granule0[] = {{0, 1, 3, 7, 0x80, 0xf9, 0xff}};
                 const unsigned char granule1[] = {{0, 2, 0xfa}};

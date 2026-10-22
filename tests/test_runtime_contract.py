@@ -210,7 +210,7 @@ class RuntimeContractCheckTests(unittest.TestCase):
                            edit=lambda data: data["abi"].update({"dift.reg.t0": 6}))
         self.assertRefused("x64", options, r"abi\.future\.field: the runtime has 1, which this Teapot does not know",
                            edit=lambda data: data["abi"].update({"future.field": 1}))
-        self.assertRefused("x64", options, r"abi\.dift\.tag\.secret: Teapot emits 16; the runtime has no such field",
+        self.assertRefused("x64", options, r"abi\.dift\.tag\.secret: Teapot emits 2; the runtime has no such field",
                            edit=lambda data: data["abi"].pop("dift.tag.secret"))
 
     def test_options_the_archive_cannot_serve(self):
