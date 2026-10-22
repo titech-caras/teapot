@@ -81,6 +81,11 @@ def is_blacklisted_function(function) -> bool:
 RUNTIME_WRAPPER_FUNCTIONS = {
     "signal": "signal__teapot_wrapper__",
     "sigaction": "sigaction__teapot_wrapper__",
+    "__sysv_signal": "__sysv_signal__teapot_wrapper__",
+    "sysv_signal": "sysv_signal__teapot_wrapper__",
+    "bsd_signal": "bsd_signal__teapot_wrapper__",
+    "ssignal": "ssignal__teapot_wrapper__",
+    "sigset": "sigset__teapot_wrapper__",
 }
 MAPPING_WRAPPER_FUNCTIONS = {
     name: name + "__teapot_wrapper__"

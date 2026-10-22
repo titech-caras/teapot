@@ -524,6 +524,7 @@ class FixtureRegenerationTests(unittest.TestCase):
                         fixture["abi"].update(SHADOW_MAPPING_ABI, shadow_mapping_enforcement=1)
                         fixture["capabilities"].update(fault_training=False, fault_publishing=False,
                                                        shadow_mapping_enforcement=True)
+                        fixture["runtime"]["signal_installer_coverage"] = 1
                         fixture["fingerprint"] = abi_fingerprint(fixture["abi"])
                         for field in ("version", "fingerprint", "abi", "capabilities", "runtime"):
                             self.assertEqual(generated[field], fixture[field],
