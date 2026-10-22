@@ -117,6 +117,10 @@ runtime. The script gathers every component's normal and transient code into two
 gives each component its own coverage-guard storage, based on the guard-start symbol after input-section
 alignment.
 
+Both RV profiles use `-Wl,--no-relax` at the owned instrumented final
+compiler-driver link; pure also uses `-Wl,-z,separate-code`. These are plain
+flags and do not change baseline or object-assembly flags.
+
 ```
 python3 experiments/reusable_libraries/validate_link.py --binary APP.instrumented --objects OUT \
     --out validation.json [--isa ISA] [--mode MODE] [--target-identification software|aarch64-bti-pac]

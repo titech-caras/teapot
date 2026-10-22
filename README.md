@@ -304,7 +304,9 @@ markers and text padding. There is no sysroot scan or named-provider exception.
 A real LP64 ASan runtime is still required; no dummy/no-ASan fallback is used.
 Pure adaptive fault training/publishing remains unsupported.
 
-Run the ELF directly with `-L SYSROOT` and its library search path:
+Own RV final executable links use `-Wl,--no-relax`; pure links also use
+`-Wl,-z,separate-code`. These are plain linker flags, not a captured-command
+policy. Run the ELF directly with `-L SYSROOT` and its library search path:
 ```shell
 qemu-riscv64 -R 0x4000000000 \
   -cpu rv64,f=false,d=false,zfa=false,zfh=false,zfhmin=false,zicond=true \
@@ -365,10 +367,11 @@ validation remains mandatory. No-scope output passes through byte-identically.
 For emitted RV v4 output only, `-Wa,--no-pad-sections` is required so GNU as
 does not append bytes beyond the final aligned isolation marker. The metadata-
 checked flag helper is shared by supported assembly entrypoints; ordinary and
-disabled output keep their existing compiler arguments. Link with
-`-Wl,-z,separate-code`, as for other adaptive output. Omitting the RV assembler
+disabled output keep their existing assembler arguments. Link own RV output with
+`-Wl,--no-relax -Wl,-z,separate-code`. Omitting the RV assembler
 flag can produce a linked section that the mandatory final validator refuses.
-This adds no global relaxation flag and changes no runtime compilation flags.
+Assembly preparation adds no global assembler relaxation flag and changes no
+runtime compilation flags; final-link no-relax is a separate owned-output policy.
 
 Adaptive AArch64/RV64 publishing uses v4 tables and an ISA-matched publishing
 runtime contract. RV covered loads are whole four-byte instructions at their
@@ -390,6 +393,10 @@ alike, so an ordinary link works.
 ```shell
 gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint -lasan
 ```
+For Teapot-owned RV final links (LP64D and pure), append `-Wl,--no-relax`;
+pure final executables also need `-Wl,-z,separate-code`. This applies to the
+coverage link below as well. Baselines and `-c` assembly commands stay unchanged.
+
 For a fuzzing build, configure the runtime with `TEAPOT_ENABLE_COVERAGE=ON` (see above) and
 rewrite with that build's `libcheckpoint.contract.json`, so that the program pushes the guards
 the runtime replays. Such a runtime requires the fuzzer: it refers to honggfuzz's `hfuzz_trace_pc`

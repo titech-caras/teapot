@@ -187,6 +187,10 @@ def validate_compiler(compiler):
     return {key: macros[key] for key in sorted(macros) if key.startswith("__riscv")}
 
 
+def final_link_flags(profile=DEFAULT):
+    """Compiler-driver flags for Teapot-owned final links, not baselines."""
+    profile_name(profile)
+    return ["-Wl,--no-relax"] + (["-Wl,-z,separate-code"] if profile == PURE else [])
 
 
 def objdump_for(compiler):

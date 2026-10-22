@@ -582,6 +582,8 @@ def main():
         conversion_options['riscv_profile'] = args.riscv_profile
     executable = converter.inspect(args.executable, "executable", **conversion_options)
     isa, target = for_machine(executable['machine'])
+    if isa == 'RISCV64':
+        from teapot.riscv_profile import final_link_flags
     if args.riscv_profile == 'lp64-pure':
         if isa != 'RISCV64':
             parser.error('lp64-pure components require RV64')
@@ -652,6 +654,11 @@ def main():
                                        **mode_metadata(isa, args.mode, args.target_identification),
                                        "runtime_contract": contract_identity(args.contract),
                                        "link_support": link_support,
+                                       **({'riscv_final_link_requirements': {
+                                           'status': 'required_not_linked',
+                                           'profile': args.riscv_profile,
+                                           'compiler_driver_flags': final_link_flags(args.riscv_profile)}}
+                                          if isa == 'RISCV64' else {}),
                                        "status": "objects_ready_final_link_and_behavior_not_yet_verified"})
     print(json.dumps({"components": len(components), "cache_hits": sum(c["cache_hit"] for c in components),
                       "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,

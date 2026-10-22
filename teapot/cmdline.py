@@ -215,6 +215,10 @@ def main():
     print("[teapot] begin serialization", flush=True)
     save_protobuf_ordered(ir, args.output)
     print("[teapot] end serialization", flush=True)
+    if any(module.isa == gtirb.Module.ISA.RISCV64 for module in ir.modules):
+        print("[teapot] Own RV final executable links require -Wl,--no-relax "
+              "(lp64-pure also -Wl,-z,separate-code). "
+              "Input baselines and assembly-only flags are unchanged.", flush=True)
     if args.riscv_profile == "lp64-pure":
         print("[teapot] After linking, check the pure final ELF and built libraries with "
               "python -m teapot.riscv_pure_link --objdump TOOLCHAIN-OBJDUMP FILE... . "
@@ -224,7 +228,7 @@ def main():
         flags = sorted({flag for module in ir.modules for flag in fault_risc_assembler_flags(module)})
         print("[teapot] RV adaptive output requires: python -m teapot.fault_risc_assembly "
               "IR RAW.S OUTPUT.S before assembly (or the teapot.debug_lines CLI when used). "
-              "Assemble with " + " ".join(flags) + "; link with -Wl,-z,separate-code. "
+              "Assemble with " + " ".join(flags) + "; link with -Wl,--no-relax -Wl,-z,separate-code. "
               "An unprepared listing is unsupported; final ELF validation is still required.", flush=True)
 
 

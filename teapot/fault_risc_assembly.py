@@ -168,7 +168,7 @@ def main():
         stream.write(result)
     if flags:
         print("[teapot] RV v4 assembly requires compiler flag: " + " ".join(flags) +
-              "; link with -Wl,-z,separate-code and validate the final ELF.", flush=True)
+              "; link own RV output with -Wl,--no-relax -Wl,-z,separate-code and validate the final ELF.", flush=True)
 
 
 if __name__ == "__main__":

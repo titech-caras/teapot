@@ -2062,6 +2062,8 @@ def main():
         # bytes. Without this, the linker may turn load_gp's AUIPC/ADDI pair
         # into mv gp,gp, assuming the very GP value this code must initialize.
         link_policy = ['--no-relax'] if executable['machine'] == 'EM_RISCV' else []
+        if args.riscv_profile == 'lp64-pure':
+            link_policy += ['-z', 'separate-code']
         run(args.out, 'link', shlex.split(args.linker) + link_policy + [
             '-m', architecture['emulation'], '--dynamic-linker', architecture['interpreter'],
             '--eh-frame-hdr', '--build-id=sha1', '--emit-relocs', '-z', 'noexecstack',
