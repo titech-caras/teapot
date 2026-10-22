@@ -28,7 +28,7 @@ FROM scratch AS lief-src
 ADD --keep-git-dir=true https://github.com/lief-project/LIEF.git#d52c66d6da4d67c69438989df83a5415236ae08b /
 
 FROM scratch AS pprinter-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#0107fb639ab60a51a021c60ed93477cfb41557e1 /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#f90fc0baee88a35148e874a2245e73aa54c9b988 /
 
 FROM scratch AS ddisasm-src
 ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#b509ae48a6778807115147238e67c782e074ec94 /
