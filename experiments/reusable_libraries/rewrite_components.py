@@ -193,6 +193,30 @@ def run(root, name, command):
     return directory
 
 
+def executable_entry_exports(item, converter):
+    """The preserved executable entry is not an instrumented call provider."""
+    if item['role'] != 'executable':
+        return frozenset()
+    candidates = []
+    for symbol in item['symbols']:
+        if (not isinstance(symbol['section'], int) or symbol['type'] != 'STT_FUNC'
+                or symbol['binding'] != 'STB_GLOBAL' or symbol['visibility'] != 'STV_DEFAULT'
+                or symbol['address'] != item['entry']):
+            continue
+        names = {converter.reconstructed_symbol_name(symbol, item)}
+        if symbol.get('version_default'):
+            names.add(symbol['name'])
+        names = {name for name in names if is_blacklisted_function_name(name)}
+        if names:
+            candidates.append((symbol['section'], names))
+    if not candidates:
+        return frozenset()
+    with Path(item['path']).open('rb') as stream:
+        elf = ELFFile(stream)
+        return frozenset(name for section, names in candidates
+                         if elf.get_section(section).name == '.text' for name in names)
+
+
 def exports(item, converter, functions_only=True):
     names = set()
     for symbol in item["symbols"]:
@@ -204,7 +228,22 @@ def exports(item, converter, functions_only=True):
         names.add(converter.reconstructed_symbol_name(symbol, item))
         if symbol.get("version_default"):
             names.add(symbol["name"])
-    return frozenset(names)
+    # Preserve its actual linked symbol, but never require a transient marker
+    # or allow selected calls to this deliberately uninstrumented CRT entry.
+    trusted_entry = executable_entry_exports(item, converter) if functions_only else frozenset()
+    return frozenset(names - trusted_entry)
+
+
+def export_bindings(executable, selected, external, converter):
+    trusted_entry = executable_entry_exports(executable, converter)
+    for item in selected + external:
+        for symbol in item['symbols']:
+            if symbol['section'] == 'SHN_UNDEF' and (
+                    symbol['name'] in trusted_entry or
+                    converter.reconstructed_symbol_name(symbol, item) in trusted_entry):
+                raise RuntimeError('selected/external input imports trusted executable entry: ' + symbol['name'])
+    return [(name, item['soname'] or 'executable')
+            for item in [executable] + selected for name in exports(item, converter)]
 
 
 def component_bindings(item, converter, context):
@@ -511,8 +550,7 @@ def main():
     external = [converter.inspect(path, "external") for path in args.external]
     order = converter.validate_closure(executable, selected, external)
     args.selected_sonames = {item["soname"] for item in selected}
-    items = [executable] + selected
-    bindings = [(name, item["soname"] or "executable") for item in items for name in exports(item, converter)]
+    bindings = export_bindings(executable, selected, external, converter)
     selected_symbols = frozenset(name for name, owner in bindings)
     if any(is_blacklisted_function_name(name) for name in selected_symbols):
         raise RuntimeError("selected exports include an uninstrumented/trusted startup entry")
