@@ -91,6 +91,21 @@ def _restore_integral_symbol_values(symbol_values):
         symbol.value = value
 
 
+def _export_static_dso_handle(module):
+    """Expose the CRT object for atexit newly linked from libc_nonshared."""
+    symbols = list(module.symbols_named('__dso_handle'))
+    if not symbols:
+        return  # Do not invent a missing CRT definition; the link still refuses it.
+    info = module.aux_data['elfSymbolInfo'].data
+    if len(symbols) != 1 or info.get(symbols[0], (None, None))[1] != 'OBJECT':
+        raise ValueError('static __dso_handle must be one CRT OBJECT definition')
+    symbol, entry = symbols[0], info[symbols[0]]
+    if not isinstance(symbol.referent, gtirb.DataBlock) or symbol.at_end:
+        raise ValueError('static __dso_handle must name its CRT data')
+    if entry[2] == 'LOCAL':
+        info[symbol] = (entry[0], entry[1], 'GLOBAL', 'HIDDEN', entry[4])
+
+
 def _add_arch_feature(module: gtirb.Module, feature: str):
     aux_data = module.aux_data.get("archInfo")
     if aux_data is None:
@@ -367,6 +382,8 @@ class TeapotPipeline:
                              for symbol in site[:3]), site[3]) for site in self.fault_training_sites)
             fault_sites = add_fault_site_table(
                 self.module, pairs, self.fault_training_threshold, *self.local_section_bounds[2:])
+        if self.linked_component is None:
+            _export_static_dso_handle(self.module)
         add_contract_record(self.module, self.runtime_contract, self.contract_requirements, self.options,
                             self.linked_component.component_id if self.linked_component is not None else None,
                             fault_sites=fault_sites)
