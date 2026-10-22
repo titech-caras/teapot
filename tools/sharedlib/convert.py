@@ -391,6 +391,8 @@ def validate_crt_callbacks(elf, static, relocations, dynsym, path):
     named(target(address, 30, 34), '__dso_handle')
     named(target(address, 40, 44), 'deregister_tm_clones')
     plt = target(address, 35, 39)
+    if read(plt, 4) == bytes.fromhex('f30f1efa'):
+        plt += 4  # One exact CET landing; the canonical jump/GOT proof stays below.
     if read(plt, 2) != b'\xff\x25':
         reject('UNSUPPORTED_CRT_CALLBACK_TARGET', path, 'unrecognized cxa_finalize PLT')
     got(target(plt, 2, 6), '__cxa_finalize')
@@ -833,6 +835,27 @@ def validate_frontend_diagnostics(module, item, diagnostics):
     return accepted
 
 
+def validate_x64_init_fini(init, fini, relocations, dynsym, path):
+    """Admit only the canonical CRT bodies, optionally preceded by one ENDBR64."""
+    endbr64 = bytes.fromhex('f30f1efa')
+    if init:
+        data = init.data()
+        offset = 4 if data.startswith(endbr64) else 0
+        body = data[offset:]
+        prefix, suffix = bytes.fromhex('4883ec08488b05'), bytes.fromhex('4885c07402ffd04883c408c3')
+        if not (len(body) == 23 and body[:7] == prefix and body[11:] == suffix):
+            reject('CUSTOM_DT_INIT', path, 'not the supported x64 glibc gmon-only CRT sequence')
+        got = init['sh_addr'] + offset + 11 + struct.unpack('<i', body[7:11])[0]
+        relocation = relocations.get(got)
+        if not relocation or dynsym.get_symbol(relocation['r_info_sym']).name != '__gmon_start__':
+            reject('CUSTOM_DT_INIT', path, 'init call is not the weak __gmon_start__ hook')
+    if fini:
+        data = fini.data()
+        body = data[4:] if data.startswith(endbr64) else data
+        if body != bytes.fromhex('4883ec084883c408c3'):
+            reject('CUSTOM_DT_FINI', path, 'not the supported empty x64 glibc CRT sequence')
+
+
 def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifecycle=False,
             preserve_nonlocal_jumps=False, preserve_weak_imports=False):
     path = Path(path)
@@ -1031,17 +1054,7 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                 # operands and actual load_gp target must still match.
                 result['preinit_contract'] = 'retained single CRT load_gp; validated _start initialization'
         elif role in ('selected', 'executable'):
-            if init:
-                data = init.data()
-                prefix, suffix = bytes.fromhex('4883ec08488b05'), bytes.fromhex('4885c07402ffd04883c408c3')
-                if not (len(data) == 23 and data[:7] == prefix and data[11:] == suffix):
-                    reject('CUSTOM_DT_INIT', path, 'not the supported x64 glibc gmon-only CRT sequence')
-                got = init['sh_addr'] + 11 + struct.unpack('<i', data[7:11])[0]
-                relocation = relocations.get(got)
-                if not relocation or dynsym.get_symbol(relocation['r_info_sym']).name != '__gmon_start__':
-                    reject('CUSTOM_DT_INIT', path, 'init call is not the weak __gmon_start__ hook')
-            if fini and fini.data() != bytes.fromhex('4883ec084883c408c3'):
-                reject('CUSTOM_DT_FINI', path, 'not the supported empty x64 glibc CRT sequence')
+            validate_x64_init_fini(init, fini, relocations, dynsym, path)
         if role == 'selected' and not custom_lifecycle:
             callbacks_present = False
             for section_name, allowed in (('.init_array', 'frame_dummy'),
