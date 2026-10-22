@@ -1,5 +1,9 @@
 import unittest
 from unittest import mock
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 
 import gtirb
 from gtirb_rewriting.decoder import GtirbInstructionDecoder
@@ -144,6 +148,79 @@ class RISCV64RelaxFixedPointTests(unittest.TestCase):
                     landing_pad_targets=set(),
                     run_pass_manager=run_pass_manager,
                 )
+
+    def test_far_external_tail_and_call_use_abi_long_forms(self):
+        ir, module, text, tail, call = build_layout_growth_case()
+        text.name = ".text"
+        interval = tail.byte_interval
+        interval.contents = interval.contents[:4] + bytes.fromhex("ef000000") + interval.contents[8:]
+        external = gtirb.Symbol(name="far_external", payload=gtirb.ProxyBlock(module=module), module=module)
+        entry = gtirb.Symbol(name="_start", payload=tail, module=module)
+        module.aux_data["elfSymbolInfo"] = gtirb.AuxData({
+            external: (0, "FUNC", "GLOBAL", "DEFAULT", 0),
+            entry: (0, "FUNC", "GLOBAL", "DEFAULT", 1),
+        }, "mapping<UUID,tuple<uint64_t,string,string,string,uint64_t>>")
+        module.aux_data["functionEntries"] = gtirb.AuxData(
+            {entry.uuid: {tail}}, "mapping<UUID,set<UUID>>")
+        module.aux_data["functionBlocks"] = gtirb.AuxData(
+            {entry.uuid: set(text.code_blocks)}, "mapping<UUID,set<UUID>>")
+        module.aux_data["functionNames"] = gtirb.AuxData(
+            {entry.uuid: entry}, "mapping<UUID,UUID>")
+        module.aux_data["sectionProperties"] = gtirb.AuxData(
+            {text: (1, 6)}, "mapping<UUID,tuple<uint64_t,uint64_t>>")
+        interval.symbolic_expressions[0] = gtirb.SymAddrConst(0, external, set())
+        interval.symbolic_expressions[4] = gtirb.SymAddrConst(0, external, set())
+        adjusted = self.arch.relax_late_branches(
+            module=module, text_section=text, transient_section=text,
+            text_transient_mapping=CopiedSectionMapping({}, {}, {}), landing_pad_targets=set(),
+            run_pass_manager=lambda manager, label: manager.run(ir))
+        self.assertEqual(adjusted, (2, 0))
+        decoder = GtirbInstructionDecoder(module.isa)
+        for block, temporary, link in ((tail, "t1", "zero"), (call, "ra", "ra")):
+            instructions = list(decoder.get_instructions(block))
+            self.assertEqual([i.mnemonic for i in instructions], ["auipc", "jalr"])
+            self.assertEqual(instructions[0].reg_name(instructions[0].operands[0].reg), temporary)
+            self.assertEqual(instructions[1].reg_name(instructions[1].operands[0].reg), link)
+            self.assertEqual(instructions[1].reg_name(instructions[1].operands[1].reg), temporary)
+
+        # Exercise the printer and the real no-relax link with the external
+        # definition more than JAL's 1 MiB away, not a mocked distance.
+        cc = shutil.which("riscv64-linux-gnu-gcc")
+        printer = shutil.which("gtirb-pprinter")
+        if cc is None or printer is None:
+            self.skipTest("far external final-link test needs RV64 GCC and gtirb-pprinter")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ir.save_protobuf(root / "input.gtirb")
+            printed = subprocess.run([printer, "--ir", root / "input.gtirb", "--asm", root / "main.S",
+                                      "--policy", "complete", "--shared", "no"], capture_output=True)
+            self.assertEqual(printed.returncode, 0, printed.stderr.decode(errors="replace"))
+            (root / "external.S").write_text(
+                '.section .far,"ax",@progbits\n.globl far_external\n.type far_external,@function\n'
+                'far_external:\nret\n')
+            linked = subprocess.run([cc, "-nostdlib", "-no-pie", "-Wl,--no-relax", "-Wl,-z,separate-code",
+                                     "-Wl,--section-start=.far=0x400000", "-Wl,-e,_start",
+                                     root / "main.S", root / "external.S", "-o", root / "linked"],
+                                    capture_output=True)
+            self.assertEqual(linked.returncode, 0, linked.stderr.decode(errors="replace"))
+
+    def test_compressed_external_tail_keeps_following_alignment(self):
+        ir, module, text, tail, following = build_layout_growth_case()
+        interval = tail.byte_interval
+        interval.contents = bytes.fromhex("01a00100") + interval.contents[4:]
+        tail.size = 2
+        gtirb.CodeBlock(size=2, offset=2, byte_interval=interval)
+        external = gtirb.Symbol(name="far_external", payload=gtirb.ProxyBlock(module=module), module=module)
+        interval.symbolic_expressions[0] = gtirb.SymAddrConst(0, external, set())
+        module.aux_data["symbolicExpressionSizes"].data[gtirb.Offset(interval, 0)] = 2
+        module.aux_data["alignment"] = gtirb.AuxData({following: 4}, "mapping<UUID,uint64_t>")
+        adjusted = self.arch.relax_late_branches(
+            module=module, text_section=text, transient_section=text,
+            text_transient_mapping=CopiedSectionMapping({}, {}, {}), landing_pad_targets=set(),
+            run_pass_manager=lambda manager, label: manager.run(ir))
+        self.assertEqual(adjusted, (1, 0))
+        self.assertEqual(following.address % 4, 0)
+        self.assertEqual(tail.byte_interval.contents[tail.offset:tail.offset + 2], bytes.fromhex("0100"))
 
     def test_normal_text_preserves_target_marker_and_transient_pad(self):
         for marked in (False, True):

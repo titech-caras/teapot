@@ -1,9 +1,10 @@
 import gtirb
 from gtirb_rewriting import Pass, Patch
+from teapot.utils.symbol_references import reference_name
 
 
 class RISCV64RelaxUnconditionalBranchesPass(Pass):
-    """Replace distant direct jumps with spill-preserving long jumps."""
+    """Relax internal jumps and ABI transfers to external functions."""
 
     # JAL reaches just under +/-1 MiB. Relax at 768 KiB, then let the
     # architecture driver relayout and rescan until later growth reaches a
@@ -38,7 +39,10 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
             if not instructions:
                 continue
             instruction = instructions[-1]
-            if not self.arch.is_unconditional_jump(instruction):
+            is_tail = self.arch.is_unconditional_jump(instruction)
+            is_call = (instruction.mnemonic == "jal" and
+                       instruction.reg_name(instruction.operands[0].reg) == "ra")
+            if not (is_tail or is_call):
                 continue
 
             byte_interval_offset = block.offset + instruction.address - block.address
@@ -46,6 +50,37 @@ class RISCV64RelaxUnconditionalBranchesPass(Pass):
             if not isinstance(expression, gtirb.SymAddrConst):
                 continue
             target = expression.symbol.referent
+            if isinstance(target, gtirb.ProxyBlock) and expression.offset == 0:
+                # The final address is unknown in this module (including
+                # selected components). Use the psABI long form: ra for a
+                # call, or t1 for a tail. t1 is caller-saved and not an argument
+                # register. Do not use this rule for an interior target/addend.
+                name = reference_name(expression.symbol, expression.attributes)
+                anchor = f".L__riscv64_mem_addr_{self.arch.next_label_number('pcrel')}__teapot__"
+                # Preserve growth modulo four when replacing C.J, so interval
+                # joins never need half a four-byte ABI padding NOP. Keep the
+                # NOP before the transfer so calls still return past the pair.
+                padding = ".option push\n.option rvc\nc.nop\n.option pop" if instruction.size == 2 else ""
+
+                @self.arch.constraints()
+                def long_external(ctx, target_name=name, call=is_call, hi_label=anchor, prefix=padding):
+                    temporary, link = ("ra", "ra") if call else ("t1", "zero")
+                    # Spell the pair explicitly: mcasm's CALL relocation does
+                    # not give the printer the 8-byte symbolic size it expects.
+                    return f"""
+                    {prefix}
+                    {hi_label}:
+                        auipc {temporary}, %pcrel_hi({target_name})
+                        jalr {link}, {temporary}, %pcrel_lo({hi_label})
+                    """
+
+                rewriting_ctx.replace_at(
+                    block, instruction.address - block.address, instruction.size,
+                    Patch.from_function(long_external))
+                self.relaxed += 1
+                continue
+            if not is_tail:
+                continue
             if (not isinstance(target, gtirb.CodeBlock) or target.address is None or
                     target.section not in sections):
                 continue
