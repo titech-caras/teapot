@@ -31,7 +31,7 @@ FROM scratch AS pprinter-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#f90fc0baee88a35148e874a2245e73aa54c9b988 /
 
 FROM scratch AS ddisasm-src
-ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#b509ae48a6778807115147238e67c782e074ec94 /
+ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#9d524325d2de18d17a58c1e6e2c3fd5fe1dbec3d /
 
 FROM scratch AS rewriting-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#e47b9e40b2ac2475a52193dcd4cb9def80154caf /
