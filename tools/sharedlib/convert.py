@@ -1014,6 +1014,8 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
             if tag.entry.d_tag == 'DT_FLAGS_1' and tag.entry.d_val & ~allowed_flags1:
                 reject('UNSUPPORTED_DYNAMIC_FLAGS_1', path, hex(tag.entry.d_val))
         relocations = {}
+        if machine == 'EM_AARCH64':
+            result['aarch64_got_relocations'] = []
         counts = Counter()
         static_counts = Counter()
         for sec in elf.iter_sections():
@@ -1034,6 +1036,14 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                 if rtype not in architecture['relocations']:
                     reject('UNSUPPORTED_RELOCATION', path, str(rtype))
                 relocations[relocation['r_offset']] = dict(relocation.entry)
+                if machine == 'EM_AARCH64' and any(
+                        got is not None and got['sh_addr'] <= relocation['r_offset']
+                        and relocation['r_offset'] + 8 <= got['sh_addr'] + got['sh_size']
+                        for got in (elf.get_section_by_name('.got'), elf.get_section_by_name('.got.plt'))):
+                    symbol = dynsym.get_symbol(relocation['r_info_sym'])
+                    result['aarch64_got_relocations'].append((
+                        relocation['r_offset'], rtype, symbol.name, relocation.entry.get('r_addend', 0),
+                        symbol['st_shndx'] == 'SHN_UNDEF'))
         result['relocation_types'] = dict(counts)
         result['static_relocation_types'] = dict(static_counts)
         address_names = {}

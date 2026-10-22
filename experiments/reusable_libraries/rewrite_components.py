@@ -282,6 +282,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     # and localizes others, which would hide a runtime name from the rewrite's own check (which stays as well).
     refuse_reserved_names(ir, args.instrumentation_options, args.contract, component=True)
     if isa == 'ARM64':
+        from teapot.passes.preprocessing.normalize_aarch64_got_anchors_pass import record_got_relocations
+        record_got_relocations(module, item)
         # Bind proved pointer returns directly to the untouched standalone IR.
         # No ordinary link/re-lift, origin records or UUID correspondence needed.
         from tools.sharedlib.aarch64_return_abi import produce
