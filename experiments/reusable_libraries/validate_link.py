@@ -250,6 +250,23 @@ def validate_bti_layout(elf, address, ranges, target_identification='aarch64-bti
     return (lo, hi)
 
 
+def validate_rv_preinit(elf, address):
+    """The executable's retained CRT load_gp entry survives once, naturally aligned."""
+    preinit = elf.get_section_by_name('.preinit_array')
+    require(preinit is not None and preinit['sh_type'] == 'SHT_PREINIT_ARRAY' and preinit['sh_size'] and
+            preinit['sh_addr'] % 8 == 0 and preinit['sh_size'] % 8 == 0,
+            'RV executable preinit array is missing or misaligned')
+    tags = {tag.entry.d_tag: tag.entry.d_val for tag in elf.get_section_by_name('.dynamic').iter_tags()
+            if tag.entry.d_tag in ('DT_PREINIT_ARRAY', 'DT_PREINIT_ARRAYSZ')}
+    require(tags == {'DT_PREINIT_ARRAY': preinit['sh_addr'], 'DT_PREINIT_ARRAYSZ': preinit['sh_size']},
+            'dynamic preinit tags do not describe the preinit array')
+    load_gp = address('load_gp')
+    data = preinit.data()
+    slots = [int.from_bytes(data[offset:offset + 8], 'little') for offset in range(0, len(data), 8)]
+    require(slots.count(load_gp) == 1, 'RV executable CRT load_gp preinit entry is not retained once')
+    return {'address': preinit['sh_addr'], 'size': preinit['sh_size'], 'load_gp': load_gp}
+
+
 def validate(binary, objects, *, isa=None, mode=None, target_identification=None):
     manifest = json.loads((objects / "components.json").read_text())
     frontend_policy = validate_frontend_policy(manifest)
@@ -322,6 +339,8 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
                 require(all(end <= lower or start >= upper for lower, upper in ranges.values()), section.name)
         bti_guard = (validate_bti_layout(elf, address, ranges, target_identification)
                      if target_identification == 'aarch64-bti-pac' else None)
+        rv_preinit = (validate_rv_preinit(elf, address)
+                      if isa == 'RISCV64' and inputs['executable'].get('preinit_contract') else None)
         runtime_contract = validate_contract_records(elf, address, manifest)
         guard_section = elf.get_section_by_name(".teapot_component_guards")
         guard_start, guard_end = address("__guard_start__teapot__"), address("__guard_end__teapot__")
@@ -367,6 +386,7 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
     return {"status": "structural_checks_passed_behavior_still_required", "needed": needed, 'isa': isa,
             **frontend_policy,
             'mode': mode, 'target_identification': target_identification, 'bti_guard': bti_guard,
+            'rv_preinit': rv_preinit,
             "runtime_contract": runtime_contract,
             "target_ranges": ranges, "guard_ranges": guard_ranges,
             "guard_slots_including_alignment": (guard_end - guard_start) // 4,

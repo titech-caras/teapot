@@ -338,6 +338,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         converter.localize_private_library_definitions(module, item)
         converter.bind_executable_interpositions(module, item)
     converter.validate_copy_forwarding(module, item)
+    converter.align_executable_preinit_array(module, item)
     version_bindings = (converter.resolve_selected_symbol_versions(module, item, args.selected_sonames)
                         if args.resolve_selected_versions else [])
     dump(directory / "selected-version-bindings.json", version_bindings)

@@ -737,10 +737,12 @@ class StartupImage:
         # glibc's RV executable CRT initializes GP before dependency constructors
         # and again at _start. Retain this array and its real callback; dropping
         # it would change the process-wide GP contract for selected libraries.
+        # Some glibc builds emit crt1.o's .preinit_array with alignment 1; the
+        # entry the loader reads must still be naturally aligned.
         self.check(section is not None and section['sh_size'] == 8 and
                    section['sh_type'] == 'SHT_PREINIT_ARRAY' and
                    section['sh_entsize'] == 8 and section['sh_flags'] == 3 and
-                   section['sh_addralign'] >= 8,
+                   section['sh_addr'] % 8 == 0,
                    'RV executable requires the single-entry CRT preinit array')
         self.check(not any(section['sh_addr'] <= address < section['sh_addr'] + 8
                            for address in self.relocations),
@@ -1716,6 +1718,26 @@ def preserve_executable_data_blocks(module):
     return evidence
 
 
+def align_executable_preinit_array(module, item):
+    """Print the retained RV CRT preinit pointer naturally aligned.
+
+    rv_preinit accepts a crt1.o whose .preinit_array declares alignment 1, and
+    the lift then records alignment 1, so a later link could place the 8-byte
+    entry the loader reads unaligned. Record its real alignment instead.
+    """
+    if item['role'] != 'executable' or not item.get('preinit_contract'):
+        return 0
+    if 'alignment' not in module.aux_data:
+        reject('MISSING_ALIGNMENT', item['path'], 'fresh frontend alignment table required')
+    table = module.aux_data['alignment'].data
+    blocks = [block for section in module.sections if section.name == '.preinit_array'
+              for block in section.data_blocks if block.size]
+    if len(blocks) != 1 or blocks[0].size != 8:
+        reject('UNSUPPORTED_CRT_CALLBACK_BODY', item['path'], 'retained preinit array is not one 8-byte block')
+    table[blocks[0]] = max(table.get(blocks[0], 1), 8)
+    return 1
+
+
 def ordinary_object_recipe(item, context, priority=None):
     """Describe reconstruction inputs, not unrelated final executable bytes.
 
@@ -1808,6 +1830,7 @@ def reconstruct(item, args, out, index=0, priority=None):
     if item['role'] == 'selected':
         localize_private_library_definitions(module, item)
         bind_executable_interpositions(module, item)
+    preinit_aligned = align_executable_preinit_array(module, item)
     data_metadata = preserve_executable_data_blocks(module)
     dump(directory / 'recovered-data-metadata.json', data_metadata)
     version_bindings = (resolve_selected_symbol_versions(module, item, args.selected_sonames)
@@ -1826,7 +1849,8 @@ def reconstruct(item, args, out, index=0, priority=None):
                 section.name += '.{:05d}'.format(priority)
         module.aux_data.pop('elfDynamicInit', None)
         module.aux_data.pop('elfDynamicFini', None)
-    if item['role'] == 'selected' or version_bindings or args.preserve_selected_lifecycle or data_metadata:
+    if (item['role'] == 'selected' or version_bindings or args.preserve_selected_lifecycle or data_metadata
+            or preinit_aligned):
         print_ir = directory / 'relocatable.gtirb'
         save_protobuf_ordered(ir, print_ir)
     assembly = directory / 'reconstructed.S'
