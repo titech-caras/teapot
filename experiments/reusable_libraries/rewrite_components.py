@@ -222,12 +222,17 @@ def executable_entry_exports(item, converter):
 
 
 def exports(item, converter, functions_only=True):
+    # EXECUTABLE-WEAK-CALLBACKS-OPT-IN-R1: export only closure-validated callbacks.
+    converter.require_callback_closure(item)
     names = set()
     for symbol in item["symbols"]:
         if (symbol["section"] == "SHN_UNDEF" or (functions_only and symbol["type"] != "STT_FUNC")
                 or converter.version_node_symbol(item, symbol)
                 or symbol['name'] in item.get('executable_interpositions', ())
-                or symbol["binding"] != "STB_GLOBAL" or symbol["visibility"] != "STV_DEFAULT"):
+                or (symbol["binding"] != "STB_GLOBAL" and not (
+                    item['role'] == 'executable' and
+                    symbol['name'] in item.get('executable_weak_callbacks', ())))
+                or symbol["visibility"] != "STV_DEFAULT"):
             continue
         names.add(converter.reconstructed_symbol_name(symbol, item))
         if symbol.get("version_default"):
@@ -425,6 +430,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
         recorded.append('pointer-return-contracts.json')
     result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"],
               "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
+              "allow_executable_weak_callbacks": args.allow_executable_weak_callbacks,
+              "executable_weak_callbacks": sorted(item.get('executable_weak_callbacks', ())),
               "pointer_inference": "unproven heuristic" if args.allow_ambiguous_data_pointers else "strict",
               "frontend_diagnostics_sha256": sha(directory / "frontend-diagnostics.json"),
               **mode_metadata(isa, args.mode, args.target_identification),
@@ -454,6 +461,7 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
     selected_symbols = frozenset(name for name, _ in bindings)
     key_data = {"format": "teapot-components-v3", "input_sha256": item["sha256"],
                 "executable_interpositions": sorted(item.get('executable_interpositions', ())),
+                "executable_weak_callbacks": sorted(item.get('executable_weak_callbacks', ())),
                 "role": item["role"], "priority": priority, "context": context}
     key_data = json.loads(json.dumps(key_data, sort_keys=True))
     key = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
@@ -538,6 +546,8 @@ def main():
     parser.add_argument("--preserve-selected-lifecycle", action="store_true")
     parser.add_argument("--preserve-nonlocal-jumps", action="store_true")
     parser.add_argument("--preserve-weak-imports", action="store_true")
+    parser.add_argument("--allow-executable-weak-callbacks", action="store_true", default=False,
+                        help="explicitly retain executable weak callbacks after full binding-closure validation")
     parser.add_argument('--allow-ambiguous-data-pointers', action='store_true', default=False,
                         help='explicitly allow unproven heuristic data-pointer guesses; warn and retain diagnostics')
     args = parser.parse_args()
@@ -575,7 +585,7 @@ def main():
     dump(args.out / "tools.json", tools)
     conversion_options = {name: getattr(args, name) for name in (
         "resolve_selected_versions", "preserve_selected_lifecycle",
-        "preserve_nonlocal_jumps", "preserve_weak_imports")}
+        "preserve_nonlocal_jumps", "preserve_weak_imports", "allow_executable_weak_callbacks")}
     if args.riscv_profile == 'lp64-pure':
         from teapot.riscv_profile import validate_compiler
         dump(args.out / 'riscv-compiler.json', validate_compiler(args.cc))
@@ -604,7 +614,8 @@ def main():
                             **(dict(riscv_profile=args.riscv_profile) if args.riscv_profile == 'lp64-pure' else {}))
     except RuntimeContractError as error:
         parser.error(str(error))
-    selected = [converter.inspect(path, "selected", **conversion_options) for path in args.select]
+    selected = [converter.inspect(path, "selected", **conversion_options,
+                executable_weak_callbacks=executable["executable_weak_callbacks"]) for path in args.select]
     external = [converter.inspect(path, "external", **({'riscv_profile': args.riscv_profile}
                  if args.riscv_profile == 'lp64-pure' else {})) for path in args.external]
     order = converter.validate_closure(executable, selected, external)

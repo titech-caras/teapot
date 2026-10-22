@@ -1101,9 +1101,25 @@ def validate_x64_init_fini(init, fini, relocations, dynsym, path):
             reject('CUSTOM_DT_FINI', path, 'not the supported empty x64 glibc CRT sequence')
 
 
+# EXECUTABLE-WEAK-CALLBACKS-OPT-IN-R1: producer ELF binding policy, default refusal.
+def weak_callback_definition(symbol):
+    return (symbol['binding'] == 'STB_WEAK' and symbol['type'] == 'STT_FUNC'
+            and symbol['visibility'] == 'STV_DEFAULT' and isinstance(symbol['section'], int)
+            and not symbol.get('version'))
+
+
+def require_callback_closure(item):
+    if item.get('executable_weak_callbacks') and not item.get('weak_callback_closure_validated'):
+        reject('WEAK_BINDING', item['path'], 'executable callbacks require complete binding-closure validation')
+
+
 def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifecycle=False,
             preserve_nonlocal_jumps=False, preserve_weak_imports=False, *, riscv_profile='lp64d',
-            allow_integral_constant_symbols=None):
+            allow_executable_weak_callbacks=False, executable_weak_callbacks=(), allow_integral_constant_symbols=None):
+    if type(allow_executable_weak_callbacks) is not bool:
+        reject('WEAK_BINDING', path, 'callback policy must be an explicit boolean')
+    if executable_weak_callbacks and (role != 'selected' or not allow_executable_weak_callbacks):
+        reject('WEAK_BINDING', path, 'selected callback context requires the explicit callback opt-in')
     path = Path(path)
     integral_names = [] if allow_integral_constant_symbols is None else allow_integral_constant_symbols
     if (type(integral_names) is not list or
@@ -1138,6 +1154,9 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
         if dynsym is None or dynamic is None:
             reject('MISSING_DYNAMIC_METADATA', path, 'dynamic symbol/loader tables required')
         symbols, version_definitions, version_requirements = dynamic_symbol_records(elf)
+        weak_exports = {s['name']: s for s in symbols
+                        if role == 'executable' and allow_executable_weak_callbacks
+                        and weak_callback_definition(s)}
         symtab = elf.get_section_by_name('.symtab')
         static = [sym_record(s) for s in symtab.iter_symbols() if s.name] if symtab else []
         tags = list(dynamic.iter_tags())
@@ -1153,6 +1172,9 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                   'preserve_selected_lifecycle': preserve_selected_lifecycle,
                   'preserve_nonlocal_jumps': preserve_nonlocal_jumps,
                   'preserve_weak_imports': preserve_weak_imports,
+                  'allow_executable_weak_callbacks': allow_executable_weak_callbacks,
+                  'executable_weak_callbacks': sorted(weak_exports),
+                  'static_symbols': static,
                   'symbolic_lookup': any(t.entry.d_tag == 'DT_SYMBOLIC' or
                       (t.entry.d_tag == 'DT_FLAGS' and t.entry.d_val & 2) for t in tags)}
         if integral_names:
@@ -1209,11 +1231,21 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                 crt_data_alias = (role == 'executable' and symbol['name'] == 'data_start'
                     and any(s['name'] == '__data_start' and s['address'] == symbol['address']
                             and s['section'] == symbol['section'] for s in static))
-                if not crt_data_alias and (symbol['section'] != 'SHN_UNDEF' or
+                callback = (symbol == weak_exports.get(symbol['name']) or
+                    (role == 'selected' and allow_executable_weak_callbacks
+                     and symbol['name'] in executable_weak_callbacks
+                     and symbol['section'] == 'SHN_UNDEF' and symbol['visibility'] == 'STV_DEFAULT'
+                     and symbol['type'] in ('STT_FUNC', 'STT_NOTYPE') and not symbol.get('version')))
+                if callback and role == 'selected':
+                    result['executable_weak_callbacks'].append(symbol['name'])
+                if not crt_data_alias and not callback and (symbol['section'] != 'SHN_UNDEF' or
                         (not preserve_weak_imports and symbol['name'].split('@')[0] not in CRT_WEAK)):
                     reject('WEAK_BINDING', path, symbol['name'])
             if symbol['visibility'] not in ('STV_DEFAULT', 'STV_HIDDEN'):
                 reject('UNSUPPORTED_VISIBILITY', path, symbol['name'])
+        result['executable_weak_callbacks'] = sorted(set(result['executable_weak_callbacks']))
+        if result['executable_weak_callbacks']:
+            result['weak_callback_closure_validated'] = False
         # DT_SYMBOLIC only changes local-vs-global lookup on duplicate
         # definitions. validate_closure rejects that ambiguity, and hidden
         # library definitions are localized before reconstruction.
@@ -1396,6 +1428,11 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
 
 
 def validate_closure(executable, selected, external):
+    for item in [executable] + selected:
+        if item.get('executable_weak_callbacks'):
+            item['weak_callback_closure_validated'] = False
+            if item.get('allow_executable_weak_callbacks') is not True:
+                reject('WEAK_BINDING', item['path'], 'callback opt-in absent in closure item')
     for item in selected + external:
         if item['machine'] != executable['machine']:
             reject('MIXED_ARCHITECTURES', item['path'], executable['machine'] + ' required')
@@ -1414,6 +1451,22 @@ def validate_closure(executable, selected, external):
         for needed in item['needed']:
             if needed not in providers:
                 reject('INCOMPLETE_DEPENDENCY_CLOSURE', item['path'], needed)
+    for name in executable.get('executable_weak_callbacks', ()):
+        definitions = [(item, s) for item in [executable] + selected + external
+                       for s in item['symbols'] if s['name'] == name and s['section'] != 'SHN_UNDEF']
+        imports = [s for item in selected for s in item['symbols']
+                   if s['name'] == name and s['section'] == 'SHN_UNDEF']
+        other_definitions = [s for item in selected + external
+                             for s in item.get('static_symbols', ())
+                             if s['name'].split('@')[0] == name and s['section'] != 'SHN_UNDEF']
+        if (len(definitions) != 1 or definitions[0][0] is not executable or other_definitions
+                or not weak_callback_definition(definitions[0][1]) or not imports
+                or any(s['binding'] != 'STB_WEAK' or s['visibility'] != 'STV_DEFAULT'
+                       or s['type'] not in ('STT_FUNC', 'STT_NOTYPE') or s.get('version') for s in imports)):
+            reject('WEAK_BINDING', executable['path'], name)
+    for item in selected:
+        if set(item.get('executable_weak_callbacks', ())) - set(executable.get('executable_weak_callbacks', ())):
+            reject('WEAK_BINDING', item['path'], 'weak import has no executable callback definition')
     # A COPY source must be a uniquely resolved, retained external object.
     # It cannot be folded into a selected object, nor guessed from an unrelated DSO.
     copies = executable.get('copy_relocations', ())
@@ -1526,6 +1579,9 @@ def validate_closure(executable, selected, external):
             visit(providers[dependency])
     if len(visited) != len(selected):
         reject('UNREACHABLE_SELECTED_LIBRARY', executable['path'], str(selected_sonames - visited))
+    for item in [executable] + selected:
+        if item.get('executable_weak_callbacks'):
+            item['weak_callback_closure_validated'] = True
     return ordering
 
 
@@ -1810,6 +1866,7 @@ def ordinary_object_recipe(item, context, priority=None):
     return {'format': 3, 'stage': 'ordinary-et-rel', 'context': context,
             'input_sha256': item['sha256'], 'role': item['role'],
             'executable_interpositions': sorted(item.get('executable_interpositions', ())),
+            'executable_weak_callbacks': sorted(item.get('executable_weak_callbacks', ())),
             'module_basename': Path(item['path']).name, 'array_priority': priority,
             'printing_policy': 'complete', 'shared': False}
 
@@ -1825,6 +1882,7 @@ def recovered_ir_recipe(item, args):
 
 
 def reconstruct(item, args, out, index=0, priority=None):
+    require_callback_closure(item)
     directory = out / ('executable' if item['role'] == 'executable' else 'selected-{:03d}'.format(index))
     directory.mkdir()
     object_recipe = ordinary_object_recipe(item, args.cache_context, priority)
@@ -1982,6 +2040,8 @@ def main():
                         help='retain ordinary libc setjmp/longjmp calls and saved continuations')
     parser.add_argument('--preserve-weak-imports', action='store_true',
                         help='retain undefined weak bindings and the pinned original external lookup scope')
+    parser.add_argument('--allow-executable-weak-callbacks', action='store_true', default=False,
+                        help='explicitly retain executable-defined weak function callbacks after full binding-closure validation')
     parser.add_argument('--allow-ambiguous-data-pointers', action='store_true', default=False,
                         help='explicitly allow unproven heuristic data-pointer guesses; warn and retain diagnostics')
     parser.add_argument('--source-provenance', default='{}',
@@ -1996,7 +2056,8 @@ def main():
     try:
         executable = inspect(args.executable, 'executable', args.resolve_selected_versions,
                              args.preserve_selected_lifecycle, args.preserve_nonlocal_jumps,
-                             args.preserve_weak_imports, riscv_profile=args.riscv_profile)
+                             args.preserve_weak_imports, riscv_profile=args.riscv_profile,
+                             allow_executable_weak_callbacks=args.allow_executable_weak_callbacks)
         architecture = ARCHITECTURES[executable['machine']]
         if args.riscv_profile == 'lp64-pure':
             from teapot.riscv_profile import INTERPRETERS, validate_compiler
@@ -2005,7 +2066,9 @@ def main():
                 dump(args.out / 'riscv-compiler.json', validate_compiler(args.cc))
         selected = [inspect(path, 'selected', args.resolve_selected_versions,
                             args.preserve_selected_lifecycle, args.preserve_nonlocal_jumps,
-                            args.preserve_weak_imports, riscv_profile=args.riscv_profile) for path in args.select]
+                            args.preserve_weak_imports, riscv_profile=args.riscv_profile,
+                            allow_executable_weak_callbacks=args.allow_executable_weak_callbacks,
+                            executable_weak_callbacks=executable['executable_weak_callbacks']) for path in args.select]
         args.selected_sonames = {item['soname'] for item in selected}
         external = [inspect(path, 'external', riscv_profile=args.riscv_profile) for path in args.external]
         initialization_order = validate_closure(executable, selected, external)
@@ -2030,6 +2093,7 @@ def main():
             'preserve_selected_lifecycle': args.preserve_selected_lifecycle,
             'preserve_nonlocal_jumps': args.preserve_nonlocal_jumps,
             'preserve_weak_imports': args.preserve_weak_imports,
+            'allow_executable_weak_callbacks': args.allow_executable_weak_callbacks,
             'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
             'executable': executable['sha256'],
             'selected_order': [(i['soname'], i['sha256']) for i in selected],
