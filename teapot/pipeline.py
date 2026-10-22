@@ -39,6 +39,7 @@ from teapot.preprocess.copy_section import (
 )
 from teapot.preprocess.contract_record import add_contract_record
 from teapot.preprocess.create_guards import create_guards
+from teapot.preprocess.integral_code_targets import normalize_integral_code_targets
 from teapot.preprocess.runtime_names import refuse_runtime_names
 from teapot.runtime_exports import runtime_owned_names
 from teapot.liveness import LivenessMetadataError, LiveRegisterManager
@@ -240,6 +241,8 @@ class TeapotPipeline:
             _add_arch_feature(self.module, AARCH64_MTE_ARCH_FEATURE)
         self.text_section = [section for section in self.module.sections if section.name == ".text"][0]
         self.decoder = CachedGtirbInstructionDecoder(self.module.isa)
+        rebound = normalize_integral_code_targets(self.module, self.decoder, self.arch)
+        print(f"[teapot] integral direct transfers rebound: {rebound}", flush=True)
         unsupported = self.arch.unsupported_instructions(self.text_section, self.decoder)
         if unsupported:
             raise ValueError(f"module {self.module.name!r} uses {len(unsupported)} pointer-authenticated calls or "
