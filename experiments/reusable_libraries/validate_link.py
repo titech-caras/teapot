@@ -87,22 +87,69 @@ def validate_mode_contract(manifest, *, isa=None, mode=None, target_identificati
 
 
 def validate_frontend_policy(manifest):
-    """No absent legacy field grants approval for heuristic pointer guesses."""
+    """Validate explicit component policies within the requested permission ceiling."""
     policy = manifest.get('allow_ambiguous_data_pointers')
     require(type(policy) is bool, 'component manifest has no explicit frontend policy')
     label = 'unproven heuristic' if policy else 'strict'
     require(manifest.get('pointer_inference') == label, 'component manifest frontend policy label mismatch')
-    for component in manifest['components']:
-        require(type(component.get('allow_ambiguous_data_pointers')) is bool and
-                component['allow_ambiguous_data_pointers'] is policy and
-                component.get('pointer_inference') == label, 'component frontend policy mismatch')
-        require(component.get('frontend_diagnostics_sha256') ==
-                component.get('files', {}).get('frontend-diagnostics.json') and
-                isinstance(component.get('frontend_diagnostics_sha256'), str),
+    components = manifest.get('components')
+    require(isinstance(components, list) and components, 'component manifest has no frontend policy entries')
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, 'duplicate frontend diagnostic JSON key')
+            result[key] = value
+        return result
+
+    policies = {}
+    for component in components:
+        require(isinstance(component, dict), 'component frontend policy entry is not an object')
+        key = component.get('component_id')
+        require(isinstance(key, str) and key and key not in policies,
+                'component frontend policy ID is absent or duplicated')
+        allowed = component.get('allow_ambiguous_data_pointers')
+        require(type(allowed) is bool, 'component has no explicit frontend policy')
+        require(not allowed or policy, 'component frontend policy exceeds the manifest request')
+        component_label = 'unproven heuristic' if allowed else 'strict'
+        require(component.get('pointer_inference') == component_label, 'component frontend policy label mismatch')
+        digest = component.get('frontend_diagnostics_sha256')
+        files = component.get('files')
+        require(isinstance(digest, str) and len(digest) == 64 and
+                all(character in '0123456789abcdef' for character in digest) and
+                isinstance(files, dict) and files.get('frontend-diagnostics.json') == digest,
                 'component has no bound frontend diagnostic hash')
+        cache_path = component.get('cache_path')
+        require(isinstance(cache_path, str) and cache_path,
+                'component has no frontend diagnostic location')
+        diagnostic = Path(cache_path) / 'frontend-diagnostics.json'
+        require(diagnostic.is_file() and not diagnostic.is_symlink(),
+                'component frontend diagnostic file is absent or not regular')
+        diagnostic_bytes = diagnostic.read_bytes()
+        require(hashlib.sha256(diagnostic_bytes).hexdigest() == digest,
+                'component frontend diagnostic bytes differ from the bound hash')
+        record = json.loads(diagnostic_bytes, object_pairs_hook=unique_fields)
+        require(isinstance(record, dict) and record.get('format') == 'teapot-frontend-diagnostics-v1',
+                'component frontend diagnostic format mismatch')
+        require(type(record.get('allow_ambiguous_data_pointers')) is bool and
+                record['allow_ambiguous_data_pointers'] is allowed and
+                record.get('pointer_inference') == component_label,
+                'component frontend diagnostic policy mismatch')
+        input_sha256, input_role = component.get('input_sha256'), component.get('role')
+        require(isinstance(input_sha256, str) and len(input_sha256) == 64 and
+                all(character in '0123456789abcdef' for character in input_sha256) and
+                input_role in ('executable', 'selected') and
+                record.get('input_sha256') == input_sha256 and record.get('input_role') == input_role,
+                'component frontend diagnostic input identity mismatch')
+        policies[key] = {'allow_ambiguous_data_pointers': allowed,
+                         'pointer_inference': component_label,
+                         'input_sha256': input_sha256, 'input_role': input_role,
+                         'frontend_diagnostics_sha256': digest}
+    policy_bytes = json.dumps(policies, sort_keys=True, separators=(',', ':')).encode()
     return {'allow_ambiguous_data_pointers': policy, 'pointer_inference': label,
-            'frontend_diagnostics': {component['component_id']: component['frontend_diagnostics_sha256']
-                                     for component in manifest['components']}}
+            'component_frontend_policies': policies,
+            'component_frontend_policies_sha256': hashlib.sha256(policy_bytes).hexdigest(),
+            'frontend_diagnostics': {key: row['frontend_diagnostics_sha256']
+                                     for key, row in policies.items()}}
 
 
 def contract_records(elf, section_name, kind):
