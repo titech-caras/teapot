@@ -1005,6 +1005,12 @@ def validate_frontend_diagnostics(module, item, diagnostics, allow_ambiguous_dat
         if (item['role'] == 'selected' and item['entry'] == 0 and
                 message == 'WARNING: Failed to set module entry point.'):
             continue
+        integral = re.fullmatch(r'WARNING: Found integral symbol pointing into existing block:\s*(\S+)', message)
+        if integral and integral[1] in item.get('allow_integral_constant_symbols', []):
+            accepted.append({'category': 'integral-constant', 'symbol': integral[1],
+                             'diagnostic': message, 'evidence': 'caller named integral authorization',
+                             'constant_value_preservation_claimed': False})
+            continue
         match = re.fullmatch(pattern, message)
         if message == 'WARNING: unsupported CIMM operand' and index < len(lines):
             following = re.fullmatch(pattern, lines[index].strip())
@@ -1096,8 +1102,14 @@ def validate_x64_init_fini(init, fini, relocations, dynsym, path):
 
 
 def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifecycle=False,
-            preserve_nonlocal_jumps=False, preserve_weak_imports=False, *, riscv_profile='lp64d'):
+            preserve_nonlocal_jumps=False, preserve_weak_imports=False, *, riscv_profile='lp64d',
+            allow_integral_constant_symbols=None):
     path = Path(path)
+    integral_names = [] if allow_integral_constant_symbols is None else allow_integral_constant_symbols
+    if (type(integral_names) is not list or
+            not all(type(name) is str and name for name in integral_names) or
+            integral_names != sorted(set(integral_names))):
+        reject('FRONTEND_POLICY', path, 'integral symbol names require an explicit canonical list')
     with path.open('rb') as stream:
         elf = ELFFile(stream)
         machine = elf['e_machine']
@@ -1143,6 +1155,8 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                   'preserve_weak_imports': preserve_weak_imports,
                   'symbolic_lookup': any(t.entry.d_tag == 'DT_SYMBOLIC' or
                       (t.entry.d_tag == 'DT_FLAGS' and t.entry.d_val & 2) for t in tags)}
+        if integral_names:
+            result['allow_integral_constant_symbols'] = list(integral_names)
         if riscv_profile == 'lp64-pure':
             from teapot.riscv_profile import PURE_ABI
             result.update(riscv_profile=riscv_profile, riscv_abi=dict(PURE_ABI))
