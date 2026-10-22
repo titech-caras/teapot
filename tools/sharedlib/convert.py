@@ -651,6 +651,14 @@ class StartupImage:
                     (((word >> 5) & 3) << 6) | (((word >> 3) & 3) << 1) | (((word >> 2) & 1) << 5)
         self.check(pc + signed(immediate, 9) == target, 'RISC-V CRT conditional target')
 
+    def rv_cjump(self, pc, name):
+        word = self.word(pc, 0xa001, 0xe003, size=2)
+        immediate = (((word >> 12) & 1) << 11) | (((word >> 11) & 1) << 4) | \
+                    (((word >> 9) & 3) << 8) | (((word >> 8) & 1) << 10) | \
+                    (((word >> 7) & 1) << 6) | (((word >> 6) & 1) << 7) | \
+                    (((word >> 3) & 7) << 1) | (((word >> 2) & 1) << 5)
+        self.named(pc + signed(immediate, 12), name)
+
     def rv_preinit(self, section, static, allow_call_pair=False):
         # glibc's RV executable CRT initializes GP before dependency constructors
         # and again at _start. Retain this array and its real callback; dropping
@@ -686,15 +694,13 @@ class StartupImage:
 
     def rv_callbacks(self):
         address = self.address('frame_dummy')
+        if self.read(address, 2) == 0x1141:
+            self.rv_frame_pointer_callbacks()
+            return
         if self.read(address, 2) & 3 == 3:
             self.rv_jal(address, self.address('register_tm_clones'), register=0)
         else:
-            word = self.word(address, 0xa001, 0xe003, size=2)
-            immediate = (((word >> 12) & 1) << 11) | (((word >> 11) & 1) << 4) | \
-                        (((word >> 9) & 3) << 8) | (((word >> 8) & 1) << 10) | \
-                        (((word >> 7) & 1) << 6) | (((word >> 6) & 1) << 7) | \
-                        (((word >> 3) & 7) << 1) | (((word >> 2) & 1) << 5)
-            self.named(address + signed(immediate, 12), 'register_tm_clones')
+            self.rv_cjump(address, 'register_tm_clones')
         address = self.address('deregister_tm_clones')
         self.named(self.rv_pair(address, 10), '__TMC_END__')
         self.named(self.rv_pair(address + 8, 15), '__TMC_END__')
@@ -728,6 +734,48 @@ class StartupImage:
         immediate = ((store >> 25) << 5) | ((store >> 7) & 31)
         self.named(address + 42 + signed(upper & 0xfffff000, 32) + signed(immediate, 12),
                    'completed.0')
+
+    def rv_frame_pointer_callbacks(self):
+        # Ubuntu GCC 13 crtbeginS.o: one exact frame-pointer variant, not
+        # arbitrary prologue/epilogue skipping or instruction interpretation.
+        address = self.address('frame_dummy')
+        for offset, word in {0: 0x1141, 2: 0xe422, 4: 0x0800, 6: 0x6422, 8: 0x0141}.items():
+            self.word(address + offset, word, size=2)
+        self.rv_cjump(address + 10, 'register_tm_clones')
+        address = self.address('deregister_tm_clones')
+        for offset, word in {0: 0x1141, 2: 0xe422, 4: 0x0800, 36: 0x6422, 38: 0x0141,
+                             40: 0x8782, 42: 0x6422, 44: 0x0141, 46: 0x8082}.items():
+            self.word(address + offset, word, size=2)
+        self.named(self.rv_pair(address + 6, 10), '__TMC_END__')
+        self.named(self.rv_pair(address + 14, 15), '__TMC_END__')
+        self.word(address + 22, 0x00a78a63)  # beq a5,a0,epilogue, +20.
+        self.got(self.rv_pair(address + 26, 15, 3), '_ITM_deregisterTMCloneTable')
+        self.rv_cbranch(address + 34, 15, address + 42)
+        address = self.address('register_tm_clones')
+        self.named(self.rv_pair(address, 10), '__TMC_END__')
+        self.named(self.rv_pair(address + 8, 11), '__TMC_END__')
+        for offset, word in {16: 0x8d89, 18: 0x1141, 24: 0x91fd, 26: 0xe422,
+                             28: 0x95be, 30: 0x0800, 32: 0x8585, 46: 0x6422,
+                             48: 0x0141, 50: 0x8782, 52: 0x6422, 54: 0x0141,
+                             56: 0x8082}.items():
+            self.word(address + offset, word, size=2)
+        self.word(address + 20, 0x4035d793)
+        self.rv_cbranch(address + 34, 11, address + 52)
+        self.got(self.rv_pair(address + 36, 15, 3), '_ITM_registerTMCloneTable')
+        self.rv_cbranch(address + 44, 15, address + 52)
+        address = self.address('__do_global_dtors_aux')
+        for offset, word in {0: 0x1101, 2: 0xe822, 4: 0xe426, 6: 0xec06, 8: 0x1000,
+                             42: 0x9782, 48: 0x4785, 54: 0x60e2, 56: 0x6442,
+                             58: 0x64a2, 60: 0x6105, 62: 0x8082}.items():
+            self.word(address + offset, word, size=2)
+        self.named(self.rv_pair(address + 10, 9), 'completed.0')
+        self.word(address + 18, 0x0004c783)  # lbu a5,0(s1)
+        self.rv_cbranch(address + 22, 15, address + 54, nonzero=True)
+        self.got(self.rv_pair(address + 24, 15, 3), '__cxa_finalize')
+        self.rv_cbranch(address + 32, 15, address + 44)
+        self.named(self.rv_pair(address + 34, 10, 3), '__dso_handle')
+        self.rv_jal(address + 44, self.address('deregister_tm_clones'))
+        self.word(address + 50, 0x00f48023)  # sb a5,0(s1), the same completed.0.
 
 
 def validate_linked_riscv_startup(elf, path):
