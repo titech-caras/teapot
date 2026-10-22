@@ -36,7 +36,7 @@ _LO = gtirb.SymbolicExpression.Attribute.LO
 
 class PadTransientTargetsPass(Pass):
     def __init__(self, section, decoder, marker_words, directive=".word", arch=None,
-                 pad_return_sites=False, state=None):
+                 pad_return_sites=False, state=None, marker_assembly=None):
         self.section = section
         # The rewrite's state (teapot/rewrite_state.py), which receives the pads.
         self.state = state
@@ -47,6 +47,7 @@ class PadTransientTargetsPass(Pass):
         # `.long` so a pad is exactly one marker pair.
         self.directive = directive
         self.arch = arch
+        self.marker_assembly = marker_assembly
         self.padded = 0
         self._blocks_by_interval = {}
         self._addresses_by_interval = {}
@@ -54,6 +55,8 @@ class PadTransientTargetsPass(Pass):
         self._real_blocks = None
 
     def marker_text(self):
+        if self.marker_assembly is not None:
+            return self.marker_assembly
         return "".join(f"{self.directive} 0x{word:08x}\n" for word in self.marker_words)
 
     def _paddable_entry(self, block):
@@ -285,15 +288,18 @@ class AnchorTransientPadsPass(Pass):
     build.
     """
 
-    def __init__(self, section, marker_words, directive=".word", padded=(), originals=()):
+    def __init__(self, section, marker_words, directive=".word", padded=(), originals=(), marker_assembly=None):
         self.section = section
         self.marker_words = tuple(marker_words)
         self.directive = directive
+        self.marker_assembly = marker_assembly
         self.padded = frozenset(padded)
         self.originals = frozenset(originals) | self.padded
         self.anchored = 0
 
     def marker_text(self):
+        if self.marker_assembly is not None:
+            return self.marker_assembly
         return "".join(f"{self.directive} 0x{word:08x}\n" for word in self.marker_words)
 
     def marker_bytes(self):

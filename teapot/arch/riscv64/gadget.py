@@ -38,6 +38,10 @@ class RISCV64GadgetPatchesMixin:
 
     def report_gadget_snippet(self, gadget_type: str, addr_reg, tag_reg, stack_reg, *,
                               save_float_state: bool = False) -> str:
+        if getattr(self, "riscv_profile", "lp64d") == "lp64-pure":
+            # Proof-selected LP64 callbacks use only integer argument/state
+            # registers. Never inject F/D or FCSR access into that profile.
+            save_float_state = False
         saves = "\n".join(f"sd x{i}, {i * 8}(sp)" for i in _REPORT_CALLER_SAVED_GPRS)
         restores = "\n".join(f"ld x{i}, {i * 8}(sp)" for i in _REPORT_CALLER_SAVED_GPRS)
         float_base = 272

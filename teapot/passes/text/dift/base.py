@@ -421,7 +421,9 @@ attributes #0 = {{ "no-builtins" }}
                     ptr_type=self.DIFT_REG_TAGS_TYPE))
         else:
             if not clear_dest_tags:
-                self._or_register_tags_into_tag(tag, regs_read)
+                self._or_instruction_register_tags_into_tag(
+                    tag, inst, regs_read, capture_operands,
+                    capture_metadata=emit_capture)
 
                 if mem_read is not None:
                     mem_read_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_read,
@@ -478,6 +480,16 @@ attributes #0 = {{ "no-builtins" }}
                 self._load(self.TAG_TYPE, self._build_gep(
                     self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
                     ptr_type=self.DIFT_REG_TAGS_TYPE))), tag)
+
+    def _or_instruction_register_tags_into_tag(self, tag, inst, registers,
+                                                capture_operands, *, capture_metadata=True):
+        """Aggregate register tags, unless an ISA has a selected-value rule.
+
+        Keep the hook in this common builder: enforcing transient replay rebuilds
+        call the builder directly, and must reserve the same capture slots and
+        apply the same instruction semantics as ordinary/eager propagation.
+        """
+        self._or_register_tags_into_tag(tag, registers)
 
     def _or_shadow_mem_tag_into_tag(self, tag, mem_addr, *, offset=0, size=1):
         for idx in range(offset, offset + size):

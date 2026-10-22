@@ -10,6 +10,21 @@ from teapot.utils.misc import generate_distinct_label_name
 
 
 class RISCV64ControlFlowPatchesMixin:
+    def pure_marker_assembly(self):
+        """Spell the existing marker as code only in the proved pure profile.
+
+        A .word patch is executable data to the strict emitted-code proof.
+        These exact historical words are ordinary ADDI-to-zero instructions;
+        instruction spelling preserves their bytes and has no machine effect.
+        The two immediates cannot use a compressed encoding.
+        """
+        if getattr(self, 'riscv_profile', 'lp64d') != 'lp64-pure':
+            return None
+        from teapot.riscv_profile import RiscvProfileError
+        if tuple(self.MAGIC_WORDS) != (0x11400013, 0x51400013):
+            raise RiscvProfileError('pure software marker is not the exact reviewed ADDI pair')
+        return 'addi zero, zero, 276\naddi zero, zero, 1300\n'
+
     def direct_transfer_expression(self, block, instructions):
         # R_RISCV_CALL[_PLT] belongs to AUIPC, not the following JALR.
         # DDisasm may also represent the same pair with PCREL HI/LO.
@@ -198,9 +213,12 @@ class RISCV64ControlFlowPatchesMixin:
                     {checkpoint_epilogue}
                     {target_jump}
                 """
+            marker = self.pure_marker_assembly()
+            first_marker, second_marker = (marker.splitlines() if marker is not None else
+                [f'.word 0x{word:08x}' for word in self.MAGIC_WORDS])
             return f"""
-                .word 0x{self.MAGIC_WORDS[0]:08x}
-                .word 0x{self.MAGIC_WORDS[1]:08x}
+                {first_marker}
+                {second_marker}
                 {prologue}
                 {self.load_address(counter_reg, "checkpoint_cnt")}
                 ld {counter_reg}, 0({counter_reg})
@@ -289,7 +307,8 @@ class RISCV64ControlFlowPatchesMixin:
         from teapot.passes.transient.pad_transient_targets_pass import PadTransientTargetsPass
 
         return [PadTransientTargetsPass(transient_section, decoder, self.transient_pad_words(),
-                                        arch=self, pad_return_sites=True, state=state)]
+                                        arch=self, pad_return_sites=True, state=state,
+                                        marker_assembly=self.pure_marker_assembly())]
 
     def transient_anchor_passes(self, transient_section, state):
         """Design step 5: pads displaced by later passes move back to block starts."""
@@ -298,7 +317,8 @@ class RISCV64ControlFlowPatchesMixin:
         pads = state.pads.require("the transient anchor pass")
 
         return [AnchorTransientPadsPass(transient_section, self.transient_pad_words(),
-                                        padded=pads.padded_blocks, originals=pads.copy_blocks)]
+                                        padded=pads.padded_blocks, originals=pads.copy_blocks,
+                                        marker_assembly=self.pure_marker_assembly())]
 
     def indirect_branch_check_patch(self, operand_str: str, transient_start_symbol: gtirb.Symbol,
                                     transient_end_symbol: gtirb.Symbol, text_start_symbol: gtirb.Symbol,

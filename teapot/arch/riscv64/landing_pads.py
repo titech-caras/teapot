@@ -21,7 +21,9 @@ class RISCV64LandingPadPatchesMixin:
             entry_label = self.landing_pad_entry_label(block_uuid, normal_text=normal_text)
             restore_label = entry_label + "_restore"
             done_label = entry_label + "_done"
-            marker = "\n".join(f".word 0x{word:08x}" for word in self.MAGIC_WORDS) if preserve_marker else ""
+            marker = ((self.pure_marker_assembly() or
+                       "\n".join(f".word 0x{word:08x}" for word in self.MAGIC_WORDS))
+                      if preserve_marker else "")
             return f"""
                 {marker}
                 {self.load_address("tp", f"scratchpad+{RISCV64_LANDING_TEMP_OFFSET}")}

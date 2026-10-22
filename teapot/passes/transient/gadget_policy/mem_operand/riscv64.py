@@ -27,7 +27,7 @@ class RISCV64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase
             dift_layout=dift_layout, enable_asan_check=enable_asan_check)
         # Reports can now be reached from FP loads. Their C callback must not
         # disturb live FP registers or FCSR (without adding an FP taint model).
-        self.save_float_state = True
+        self.save_float_state = getattr(arch, "riscv_profile", "lp64d") != "lp64-pure"
 
     def _build_policy_patch(self, inst: CsInsn, inst_idx: int, inst_offset: int,
                             block: gtirb.CodeBlock, function: Function = None):
