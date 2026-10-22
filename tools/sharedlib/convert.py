@@ -564,10 +564,12 @@ class StartupImage:
             if section is None or section['sh_size'] == 0:
                 continue
             address, size = section['sh_addr'], section['sh_size']
-            pac = self.read(address, 4) == 0xd503233f
-            expected_size = (5 if is_init else 4) * 4 + (8 if pac else 0)
+            first = self.read(address, 4)
+            pac = first == 0xd503233f
+            nop = first == 0xd503201f  # One ordinary CRT hint, not a prefix-skipping loop.
+            expected_size = (5 if is_init else 4) * 4 + (8 if pac else 4 if nop else 0)
             self.check(size == expected_size, 'unrecognized ' + section.name + ' size')
-            pc = address + (4 if pac else 0)
+            pc = address + (4 if pac or nop else 0)
             self.word(pc, 0xa9bf7bfd)
             self.word(pc + 4, 0x910003fd)
             if is_init:
