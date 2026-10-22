@@ -171,12 +171,16 @@ def contract_identity(contract):
     # The coverage mode is in the fingerprint too, since it decides whether the
     # components push coverage guards (components always enable gadgets); it is
     # spelled out so that keys and manifests show it.
-    return {"version": contract.version, "fingerprint": contract.fingerprint, "coverage": contract.coverage,
+    result = {"version": contract.version, "fingerprint": contract.fingerprint, "coverage": contract.coverage,
             "shadow_mapping_enforcement": contract.shadow_mapping_enforcement,
             "fault_sites_version": contract.abi["fault_sites.version"],
             "fault_training_capable": "fault_training" in contract.capabilities,
             "fault_publishing_capable": "fault_publishing" in contract.capabilities,
             "fault_windows_version": contract.abi["fault_windows.version"]}
+    if 'riscv.profile' in contract.abi:
+        from teapot.riscv_profile import PURE_ABI
+        result['riscv_abi'] = {key: contract.abi[key] for key in PURE_ABI}
+    return result
 
 
 def run(root, name, command):

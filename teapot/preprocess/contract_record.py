@@ -52,6 +52,8 @@ def module_contract(contract, required_bits: int, options, component_id=None) ->
     }
     if component_id is not None:
         record["component"] = component_id
+    if contract.abi.get("riscv.profile") == "lp64-pure":
+        record["policy"]["riscv_profile"] = "lp64-pure"
     return record
 
 

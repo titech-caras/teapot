@@ -69,6 +69,8 @@ def validate_mode_contract(manifest, *, isa=None, mode=None, target_identificati
     if actual_isa not in TARGETS or actual_mode not in MODES:
         raise ValueError(f'unsupported manifest ISA/mode: {actual_isa}/{actual_mode}')
     expected = mode_metadata(actual_isa, actual_mode, manifest['target_identification'])
+    if expected.get('riscv_profile') == 'lp64-pure':
+        fields += ('riscv_profile', 'riscv_abi')
     if any(manifest[field] != expected[field] for field in fields):
         raise ValueError('manifest DIFT layout or tag storage does not match its build mode')
     if isa is not None and isa != actual_isa:
@@ -149,6 +151,15 @@ def validate_contract_records(elf, address, manifest):
     require(runtime["address"] == address("libcheckpoint_runtime_contract"),
             "libcheckpoint_runtime_contract is not the runtime record")
     abi = runtime["contract"].get("abi", {})
+    pure = manifest.get('riscv_profile') == 'lp64-pure'
+    if pure:
+        from teapot.riscv_profile import PURE_ABI
+        require(all(type(abi.get(key)) is type(value) and abi[key] == value
+                    for key, value in PURE_ABI.items()), 'linked runtime pure profile/ABI mismatch')
+        require(not runtime['capabilities'] & (1 << CAPABILITIES.index('riscv64_float_state')),
+                'pure link unexpectedly contains an FP-capable runtime')
+    else:
+        require('riscv.profile' not in abi, 'default component link contains a pure runtime')
     # Whether the linked runtime replays speculative coverage into a fuzzer.
     require(abi.get("coverage") in (0, 1), ("the runtime record has no coverage mode", abi.get("coverage")))
     coverage = bool(abi["coverage"])
@@ -179,6 +190,9 @@ def validate_contract_records(elf, address, manifest):
         require(isinstance(pushed, bool) and pushed == coverage,
                 ("a component's speculative coverage does not match the linked runtime's",
                  record["contract"].get("component"), pushed, coverage))
+        if pure:
+            policy = record['contract'].get('policy', {})
+            require(policy.get('riscv_profile') == 'lp64-pure', 'component record has another RV profile')
     recorded = manifest.get("runtime_contract")
     require(recorded is not None, "component manifest has no runtime contract; rebuild it with the current driver")
     require((recorded["version"], recorded["fingerprint"]) == (runtime["version"], runtime["fingerprint"]),

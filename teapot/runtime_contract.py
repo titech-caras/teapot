@@ -172,7 +172,7 @@ class RuntimeContract:
         return DiftLayout(name=self.abi["dift.layout"], arch=self.isa, xor_mask=self.abi["dift.xor_mask"],
                           asan_shadow_offset=self.abi["dift.asan_shadow_offset"], app_ranges=ranges)
 
-    def check(self, arch, abi, options, dift_layout_name=None) -> Tuple[int, DiftLayout]:
+    def check(self, arch, abi, options, dift_layout_name=None, *, riscv_profile="lp64d") -> Tuple[int, DiftLayout]:
         """Refuse a runtime Teapot does not emit for, or one the options need more of.
 
         Returns the module record's required capability bits and the runtime's
@@ -183,6 +183,15 @@ class RuntimeContract:
             raise RuntimeContractError(
                 f"{self.path} describes a {self.isa} runtime; this module is {arch.name}")
         expected = expected_abi(arch, abi)
+        from teapot.riscv_profile import PURE, PURE_ABI, profile_name
+        profile_name(riscv_profile)
+        pure = riscv_profile == PURE
+        if pure:
+            if arch.name != "riscv64":
+                raise RuntimeContractError("lp64-pure requires RV64")
+            expected.update(PURE_ABI)
+            if "riscv64_float_state" in self.capabilities:
+                raise RuntimeContractError("lp64-pure requires an integer-only runtime, not an FP-capable shortcut")
         if "shadow_mapping_enforcement" in self.abi:
             expected.update(SHADOW_MAPPING_ABI)
         expected.update({key: self.abi[key] for key in _CONFIGURED if key in self.abi})
@@ -222,9 +231,10 @@ class RuntimeContract:
         if arch.name == "x64" and _X64_VECTOR_CAPABILITY[options.x64_vector_state]:
             required.add(_X64_VECTOR_CAPABILITY[options.x64_vector_state])
         # A RISC-V rollback restores the FP registers and FCSR only in a runtime
-        # built to save them. Nothing proves a module free of FP state, so every
-        # RISC-V rewrite with checkpoints needs it.
-        if arch.name == "riscv64" and options.enable_checkpoints:
+        # built to save them. The default LP64D path still requires that state;
+        # only the explicitly selected pure ABI profile selects the
+        # integer-only emitter and the fail-closed pure runtime instead.
+        if arch.name == "riscv64" and options.enable_checkpoints and not pure:
             required.add("riscv64_float_state")
         if self.emits_coverage(options):
             required.add("coverage")
@@ -378,6 +388,14 @@ def load_runtime_contract(path) -> RuntimeContract:
     abi = data["abi"]
     _require(all(isinstance(value, (int, str)) and not isinstance(value, bool) for value in abi.values()),
              path, "ABI values must be integers or strings")
+    from teapot.riscv_profile import PURE_ABI
+    if set(PURE_ABI) & set(abi):
+        _require(abi.get("isa") == "riscv64" and
+                 all(type(abi.get(key)) is type(value) and abi[key] == value
+                     for key, value in PURE_ABI.items()), path,
+                 "partial, unknown or malformed pure RISC-V ABI/profile/FP policy")
+        _require(data["capabilities"].get("riscv64_float_state") is False, path,
+                 "lp64-pure cannot advertise floating-point checkpoint state")
     for key, kind in (("isa", str), ("dift.layout", str), ("tag_storage", str), ("dift.xor_mask", int),
                       ("dift.asan_shadow_offset", int)):
         _require(isinstance(abi.get(key), kind) and not isinstance(abi.get(key), bool), path,

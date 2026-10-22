@@ -26,6 +26,8 @@ MODES = {
     'aarch64-vma48': dict(isa='ARM64', layout='aarch64-vma48', tag_storage='shadow', asan='libasan.so.5'),
     'aarch64-vma48-mte': dict(isa='ARM64', layout='aarch64-vma48', tag_storage='mte', asan=None),
     'riscv64': dict(isa='RISCV64', layout='riscv64-sv39', tag_storage='shadow', asan='libasan.so.8'),
+    'riscv64-lp64-pure': dict(isa='RISCV64', layout='riscv64-sv39', tag_storage='shadow',
+                            asan='libasan.so.8', riscv_profile='lp64-pure'),
 }
 DEFAULT_MODE = {'X64': 'x64', 'ARM64': 'aarch64-vma42', 'RISCV64': 'riscv64'}
 TARGET_IDENTIFICATIONS = ('software', 'aarch64-bti-pac')
@@ -60,5 +62,9 @@ def for_machine(machine):
 def mode_metadata(isa, name=None, target_identification='software'):
     name, mode = mode_for(isa, name)
     target_for(isa, target_identification)
-    return dict(isa=isa, mode=name, dift_layout=mode['layout'], tag_storage=mode['tag_storage'],
-                target_identification=target_identification)
+    result = dict(isa=isa, mode=name, dift_layout=mode['layout'], tag_storage=mode['tag_storage'],
+                  target_identification=target_identification)
+    if mode.get('riscv_profile') == 'lp64-pure':
+        from teapot.riscv_profile import PURE_ABI
+        result.update(riscv_profile='lp64-pure', riscv_abi=dict(PURE_ABI))
+    return result

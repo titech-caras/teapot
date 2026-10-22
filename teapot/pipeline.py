@@ -183,7 +183,8 @@ def refuse_reserved_names(ir: gtirb.IR, options: "InstrumentationOptions", runti
 class TeapotPipeline:
     def __init__(self, ir: gtirb.IR, dift_layout_name=None,
                  options: InstrumentationOptions = InstrumentationOptions(), *,
-                 linked_component=None, runtime_contract=None, fault_training_sites=(), fault_training_threshold=2):
+                 linked_component=None, runtime_contract=None, fault_training_sites=(), fault_training_threshold=2,
+                 riscv_profile="lp64d"):
         self.ir = ir
         self.dift_layout_name = dift_layout_name
         self.options = options
@@ -193,6 +194,8 @@ class TeapotPipeline:
         # The libcheckpoint archive this rewrite will be linked with, as
         # teapot.runtime_contract.load_runtime_contract read it.
         self.runtime_contract = runtime_contract
+        from teapot.riscv_profile import profile_name
+        self.riscv_profile = profile_name(riscv_profile)
         self.reg_manager = None
         self.component_guard_base = None
         self.checkpoint_df_blocks = set()
@@ -206,6 +209,11 @@ class TeapotPipeline:
         self.state = RewriteState()
 
     def run(self):
+        from teapot.riscv_profile import RiscvProfileError
+        if self.riscv_profile == "lp64-pure" and (self.options.enable_fault_training or
+                                                  self.options.enable_fault_publishing):
+            raise RiscvProfileError("lp64-pure adaptive fault prechecks are not yet supported: "
+                                    "the pure profile has no adaptive backend")
         if not self.options.enable_fault_publishing and self.options.enable_fault_training != bool(self.fault_training_sites):
             raise ValueError("training-only mode requires explicit fault/stub symbol pairs; no backend yet")
         if self.options.enable_fault_publishing and (not self.options.enable_fault_training or self.fault_training_sites):
@@ -236,6 +244,11 @@ class TeapotPipeline:
         self.mode = validate_options(self.options, self.arch.name, component=self.linked_component is not None)
         if self.mode.architecture is not None:
             self.arch = self.mode.architecture()
+        from teapot.riscv_profile import PURE
+        if self.riscv_profile == PURE:
+            if self.arch.name != "riscv64":
+                raise RiscvProfileError("lp64-pure requires RV64")
+            object.__setattr__(self.arch, "riscv_profile", PURE)
         if self.runtime_contract is None:
             raise ValueError("select the runtime this rewrite will be linked with: the "
                              "lib<archive>.contract.json of its libcheckpoint archive (--runtime-contract)")
@@ -248,7 +261,8 @@ class TeapotPipeline:
         # Before anything is rewritten: the runtime must match what Teapot emits
         # and provide what the options need. Its DIFT layout is the rewrite's.
         self.contract_requirements, self.dift_layout = self.runtime_contract.check(
-            self.arch, self.abi, self.options, self.dift_layout_name)
+            self.arch, self.abi, self.options, self.dift_layout_name,
+            **(dict(riscv_profile=self.riscv_profile) if self.riscv_profile == PURE else {}))
         print(f"[teapot] speculative coverage: "
               f"{'pushed' if self.runtime_contract.emits_coverage(self.options) else 'none'} "
               f"(runtime coverage mode {int(self.runtime_contract.coverage)})", flush=True)
