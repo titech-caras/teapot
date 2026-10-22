@@ -281,7 +281,8 @@ def validate_rv_preinit(elf, address):
     return {'address': preinit['sh_addr'], 'size': preinit['sh_size'], 'load_gp': load_gp}
 
 
-def validate(binary, objects, *, isa=None, mode=None, target_identification=None):
+def validate(binary, objects, *, isa=None, mode=None, target_identification=None,
+             riscv_objdump='riscv64-unknown-linux-gnu-objdump'):
     manifest = json.loads((objects / "components.json").read_text())
     frontend_policy = validate_frontend_policy(manifest)
     isa, mode = validate_mode_contract(manifest, isa=isa, mode=mode,
@@ -298,6 +299,12 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
         require(elf["e_type"] == "ET_EXEC", 'check failed: elf["e_type"] == "ET_EXEC"')
         require(elf.elfclass == 64 and elf.little_endian,
                 'check failed: elf.elfclass == 64 and elf.little_endian')
+        if isa == 'RISCV64':
+            from teapot.riscv_profile import validate_flags, validate_elf_header
+            profile = manifest.get('riscv_profile', 'lp64d')
+            validate_flags(elf['e_flags'], profile)
+            if profile == 'lp64-pure':
+                validate_elf_header(elf, role='executable')
         validate_dynamic_symbol_names(elf)
         from tools.sharedlib.convert import validate_linked_copies, reconstructed_symbol_name
         validate_linked_copies(elf, inputs['executable'])
@@ -397,7 +404,7 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
         require(len(fdes) >= sum(len(item["application_fdes"])
                                  for item in [inputs["executable"]] + inputs["selected"]),
                 'check failed: the link has fewer FDEs than its inputs')
-    return {"status": "structural_checks_passed_behavior_still_required", "needed": needed, 'isa': isa,
+    result = {"status": "structural_checks_passed_behavior_still_required", "needed": needed, 'isa': isa,
             **frontend_policy,
             'mode': mode, 'target_identification': target_identification, 'bti_guard': bti_guard,
             'rv_preinit': rv_preinit,
@@ -406,6 +413,11 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
             "guard_slots_including_alignment": (guard_end - guard_start) // 4,
             "guard_slots_used": sum(c["guard_count"] for c in manifest["components"]),
             "fde_count": len(fdes), "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+    if manifest.get('riscv_profile') == 'lp64-pure':
+        from teapot.riscv_pure_link import check_pure_code
+        result['riscv_profile'] = 'lp64-pure'
+        result['riscv_instructions_checked'] = check_pure_code(binary, riscv_objdump)
+    return result
 
 
 def main():
@@ -417,9 +429,10 @@ def main():
     parser.add_argument('--mode', choices=tuple(MODES))
     parser.add_argument('--target-identification', choices=TARGET_IDENTIFICATIONS,
                         help='optional assertion against the recorded target-identification contract')
+    parser.add_argument('--riscv-objdump', default='riscv64-unknown-linux-gnu-objdump')
     args = parser.parse_args()
     result = validate(args.binary, args.objects, isa=args.isa, mode=args.mode,
-                      target_identification=args.target_identification)
+                      target_identification=args.target_identification, riscv_objdump=args.riscv_objdump)
     args.out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result), flush=True)
 

@@ -93,6 +93,13 @@ without compression, preserving the rewriter's four-byte padding alignment;
 compressed application instructions remain supported. Generated RISC snippets preserve any FP/SIMD
 registers and control state they use; this does not extend application DIFT
 tracking to vector registers. No RVV or SVE requirement is introduced.
+
+The optional RV64 `lp64-pure` profile is separate from that unchanged LP64D
+default. It uses a compiler whose recorded defaults match the integer card ISA
+(including Zicond), an LP64 loader, and a runtime configured with
+`-DTEAPOT_RISCV_PROFILE=lp64-pure -DTEAPOT_ENABLE_RISCV_FLOAT_STATE=OFF`. The
+profile/ABI contract distinguishes it from the default, which still requires
+FP checkpoint support. Check pure artifacts with the small objdump checker below.
 RISC DIFT propagation, operand capture and LLVM replay use liveness to select
 spare GPRs and omit unnecessary saves. Live fallback registers still use the
 existing spill areas; missing liveness is all-live, and FP/SIMD saves remain.
@@ -279,6 +286,35 @@ teapot --runtime-contract build-libcheckpoint/libcheckpoint.contract.json a.out.
 The DIFT address-space profile is a runtime build option (`-DTEAPOT_DIFT_LAYOUT=...`, profiles in
 `libcheckpoint/cmake/DiftLayoutData.cmake`); Teapot takes it from the contract. `--dift-layout NAME`
 only asserts which profile the runtime must have.
+
+For an integer-only LP64 input, add `--riscv-profile lp64-pure`. This selects
+integer LLVM/reporter code and an FP-free runtime contract. Replay patches use
+mcasm's supported `rv64ima`; original Zicond instructions stay in the input
+code for GNU as, not mcasm. Calling ABI, profile and FP policy are fingerprinted;
+mixed profiles cannot share a runtime or component cache entry.
+
+After linking, check the final ELF and built libraries with the selected
+toolchain's objdump:
+```shell
+python -m teapot.riscv_pure_link --objdump TOOLCHAIN-OBJDUMP a.inst libasan.so.8
+```
+This is a post-link disassembly check for FP/vector mnemonics and FP/vector CSR
+operands, not an IR seal or provider-closure attestation. It ignores harmless
+markers and text padding. There is no sysroot scan or named-provider exception.
+A real LP64 ASan runtime is still required; no dummy/no-ASan fallback is used.
+Pure adaptive fault training/publishing remains unsupported.
+
+Run the ELF directly with `-L SYSROOT` and its library search path:
+```shell
+qemu-riscv64 -R 0x4000000000 \
+  -cpu rv64,f=false,d=false,zfa=false,zfh=false,zfhmin=false,zicond=true \
+  -L SYSROOT -E LD_LIBRARY_PATH=LIBDIRS a.inst
+```
+FP/vector instructions are forbidden, and any
+SIGILL during pure speculation is fatal rather than a normal rollback.
+CACHE/PORT/MDS policies remain enabled. ROB is generated-module policy; the
+runtime never reads `ROB_LEN`.
+
 ASan shadow checks cover every granule touched by an access, including unaligned
 crossings. Checks up to eight bytes use an unrolled path; wider accesses use a
 range loop. AArch64 MTE uses the corresponding 16-byte granule checks in software.

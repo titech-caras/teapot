@@ -71,8 +71,16 @@ other warning rejects the conversion.
   Executable input must be `ET_EXEC`, shared inputs `ET_DYN`, and executable
   entry must name the preserved `_start`. All input/output machines must agree.
   Architecture-specific relocation numbers, interpreter, linker emulation and
-  cache identity are checked. RV64 requires LP64D with optional RVC; other ABI
-  flags are refused. Arm/RV GNU property notes require a separate preserved
+  cache identity are checked. RV64 defaults to LP64D with optional RVC;
+  explicit `--riscv-profile lp64-pure` instead uses LP64, the LP64 loader and
+  card-ISA attributes. Mixed or unknown ABI bits are refused. The pure profile
+  is recorded in cache recipes/output metadata. After linking, a small
+  toolchain objdump check rejects FP/vector code and CSR accesses.
+  There are no input/IR seals, sysroot scans or provider attestations.
+  Pure refusals use the ordinary structured `rejection.json`/exit-2 path.
+  This converter only reconstructs ordinary code;
+  it does not select Teapot's checkpoint capability or validate a final
+  instrumented runtime/ASan executable. Arm/RV GNU property notes require a separate preserved
   enforcement contract and are currently refused, not stripped.
 - Complete supplied dependency closure, unique selected SONAMEs and unambiguous
   strong global binding are required. Selected dependency cycles, unreachable

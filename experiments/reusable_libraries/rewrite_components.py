@@ -271,7 +271,8 @@ def component_bindings(item, converter, context):
 
 
 def validate_object(path, component_id, expected_exports, expected_fdes,
-                    machine='EM_X86_64', cfi_reader=None, target_identification='software'):
+                    machine='EM_X86_64', cfi_reader=None, target_identification='software', *,
+                    riscv_profile='lp64d'):
     isa, _ = for_machine(machine)
     target = target_for(isa, target_identification)
     with path.open("rb") as stream:
@@ -281,7 +282,10 @@ def validate_object(path, component_id, expected_exports, expected_fdes,
         require(elf.elfclass == 64 and elf.little_endian,
                 'check failed: elf.elfclass == 64 and elf.little_endian')
         if isa == 'RISCV64':
-            require(elf['e_flags'] & 6 == 4 and not elf['e_flags'] & ~5, 'RV64 LP64D required')
+            from teapot.riscv_profile import validate_flags, validate_elf_header
+            validate_flags(elf['e_flags'], riscv_profile)
+            if riscv_profile == 'lp64-pure':
+                validate_elf_header(elf)
         table = elf.get_section_by_name(".symtab")
         symbols = {s.name: s for s in table.iter_symbols() if s.name}
         for name in expected_exports:
@@ -310,6 +314,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     module = ir.modules[0]
     isa, target = for_machine(item['machine'])
     require(module_isa_name(module) == isa, 'check failed: module_isa_name(module) == isa')
+    pure = getattr(args, 'riscv_profile', 'lp64d') == 'lp64-pure'
     converter.record_frontend_diagnostics(module, item, directory, args.allow_ambiguous_data_pointers)
     require("liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data,
             'check failed: "liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data')
@@ -356,7 +361,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
             raise RuntimeError("selected export is not a uniquely recovered .text entry: " + name)
     context = LinkedComponent(component_id, selected_symbols, own_exports)
     pipeline = TeapotPipeline(ir, args.mode_layout, args.instrumentation_options, linked_component=context,
-                              runtime_contract=args.contract)
+                              runtime_contract=args.contract,
+                              **(dict(riscv_profile='lp64-pure') if pure else {}))
     started = time.monotonic()
     pipeline.run()
     rewrite_seconds = time.monotonic() - started
@@ -406,7 +412,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     run(directory, "assemble", component_assembler_argv(
         module, args.cc, assembly, directory / "component.o", isa, args.mode_tag_storage))
     validate_object(directory / "component.o", component_id, own_exports, len(item["application_fdes"]),
-                    item['machine'], converter.eh_cfi_entries, args.target_identification)
+                    item['machine'], converter.eh_cfi_entries, args.target_identification,
+                    riscv_profile=getattr(args, 'riscv_profile', 'lp64d'))
     recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "component.o",
                 "proven-data-decoder-warnings.json", "selected-version-bindings.json", "compaction.json",
                 "frontend-diagnostics.json", "lift/command.json", "lift/stderr", "lift/stdout", "lift/result.json"]
@@ -438,6 +445,8 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
     require(type(context.get('allow_ambiguous_data_pointers')) is bool and
             context['allow_ambiguous_data_pointers'] is args.allow_ambiguous_data_pointers,
             'request/component cache policy mismatch or missing policy')
+    if getattr(args, 'riscv_profile', 'lp64d') == 'lp64-pure':
+        context = dict(context, **converter.pure_cache_identity())
     bindings = component_bindings(item, converter, context)
     context = dict(context, bindings=bindings)
     # Use exactly the contract in the key; never instrument with the larger
@@ -480,7 +489,8 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
             require(sha(entry / name) == expected, "cached artifact hash mismatch: " + name)
         validate_object(entry / "component.o", key, exports(item, converter), len(item["application_fdes"]),
                         item['machine'], converter.eh_cfi_entries,
-                        context.get('target_identification', 'software'))
+                        context.get('target_identification', 'software'),
+                        riscv_profile=getattr(args, 'riscv_profile', 'lp64d'))
     return {**result, "cache_hit": True, "cache_path": str(entry), "input_path": item["path"]}
 
 
@@ -505,6 +515,7 @@ def verify_component_frontend(converter, item, directory, result, allow_ambiguou
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--executable", required=True, type=Path)
+    parser.add_argument('--riscv-profile', choices=('lp64d', 'lp64-pure'), default='lp64d')
     parser.add_argument("--select", action="append", default=[], type=Path)
     parser.add_argument("--external", action="append", default=[], type=Path)
     parser.add_argument("--out", required=True, type=Path)
@@ -565,9 +576,19 @@ def main():
     conversion_options = {name: getattr(args, name) for name in (
         "resolve_selected_versions", "preserve_selected_lifecycle",
         "preserve_nonlocal_jumps", "preserve_weak_imports")}
+    if args.riscv_profile == 'lp64-pure':
+        from teapot.riscv_profile import validate_compiler
+        dump(args.out / 'riscv-compiler.json', validate_compiler(args.cc))
+        conversion_options['riscv_profile'] = args.riscv_profile
     executable = converter.inspect(args.executable, "executable", **conversion_options)
     isa, target = for_machine(executable['machine'])
+    if args.riscv_profile == 'lp64-pure':
+        if isa != 'RISCV64':
+            parser.error('lp64-pure components require RV64')
+        if args.mode is None:
+            args.mode = 'riscv64-lp64-pure'
     args.mode, mode = mode_for(isa, args.mode)
+    require(mode.get('riscv_profile', 'lp64d') == args.riscv_profile, 'component mode/profile mismatch')
     args.mode_layout, args.mode_tag_storage = mode['layout'], mode['tag_storage']
     target_for(isa, args.target_identification)
     args.instrumentation_options = InstrumentationOptions(
@@ -577,11 +598,13 @@ def main():
     from gtirb_rewriting.abi import _ABIS
     probe = get_arch(gtirb.Module(name="contract-check", isa=getattr(gtirb.Module.ISA, isa)))
     try:
-        args.contract.check(probe, probe.register_abi(_ABIS), args.instrumentation_options, args.mode_layout)
+        args.contract.check(probe, probe.register_abi(_ABIS), args.instrumentation_options, args.mode_layout,
+                            **(dict(riscv_profile=args.riscv_profile) if args.riscv_profile == 'lp64-pure' else {}))
     except RuntimeContractError as error:
         parser.error(str(error))
     selected = [converter.inspect(path, "selected", **conversion_options) for path in args.select]
-    external = [converter.inspect(path, "external") for path in args.external]
+    external = [converter.inspect(path, "external", **({'riscv_profile': args.riscv_profile}
+                 if args.riscv_profile == 'lp64-pure' else {})) for path in args.external]
     order = converter.validate_closure(executable, selected, external)
     args.selected_sonames = {item["soname"] for item in selected}
     bindings = export_bindings(executable, selected, external, converter)
@@ -603,6 +626,8 @@ def main():
                "dift_layout": args.mode_layout, 'isa': isa,
                'component_targets_sha256': sha(args.teapot / 'experiments/reusable_libraries/targets.py'),
                'pointer_contract_producer_sha256': sha(args.teapot / 'tools/sharedlib/aarch64_return_abi.py')}
+    if args.riscv_profile == 'lp64-pure':
+        context.update(converter.pure_cache_identity())
     dump(args.out / "inputs.json", {"executable": executable, "selected": selected, "external": external})
     # Do the expensive reusable library work first. Keep final link order main,
     # then selected libraries, independently of the order of cache population.

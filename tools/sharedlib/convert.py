@@ -7,6 +7,7 @@ No source/original object/archive is accepted. Assembly is never text-filtered.
 """
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -81,6 +82,27 @@ class Unsupported(RuntimeError):
 
 def reject(code, path, detail):
     raise Unsupported('{}: {}: {}'.format(code, path, detail))
+
+
+@contextmanager
+def pure_refusal(path):
+    """Keep explicitly invoked pure-policy failures in the structured refusal path."""
+    try:
+        yield
+    except ValueError as error:
+        reject('PURE_PROFILE_REFUSAL', path, str(error))
+
+
+def pure_cache_identity():
+    from teapot.riscv_profile import PURE, PURE_ABI
+    return dict(riscv_profile=PURE, riscv_abi=dict(PURE_ABI), riscv_codegen_policy='integer-objdump-v1')
+
+
+def check_pure_final(path, compiler):
+    from teapot.riscv_profile import objdump_for
+    from teapot.riscv_pure_link import check_pure_code
+    with pure_refusal(path):
+        return check_pure_code(path, objdump_for(compiler))
 
 
 def sha(path):
@@ -1074,7 +1096,7 @@ def validate_x64_init_fini(init, fini, relocations, dynsym, path):
 
 
 def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifecycle=False,
-            preserve_nonlocal_jumps=False, preserve_weak_imports=False):
+            preserve_nonlocal_jumps=False, preserve_weak_imports=False, *, riscv_profile='lp64d'):
     path = Path(path)
     with path.open('rb') as stream:
         elf = ELFFile(stream)
@@ -1082,9 +1104,18 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
         if elf.elfclass != 64 or not elf.little_endian or machine not in ARCHITECTURES:
             reject('UNSUPPORTED_ARCH', path, 'only little-endian x64/AArch64/RV64 ELF64 is implemented')
         architecture = ARCHITECTURES[machine]
+        if riscv_profile not in ('lp64d', 'lp64-pure'):
+            reject('UNKNOWN_RISCV_PROFILE', path, str(riscv_profile))
+        if riscv_profile == 'lp64-pure':
+            from teapot.riscv_profile import INTERPRETERS, validate_elf_header
+            try:
+                validate_elf_header(elf, role=role)
+            except ValueError as error:
+                reject('UNSUPPORTED_PURE_PROFILE', path, str(error))
+            architecture = dict(architecture, interpreter=INTERPRETERS[riscv_profile])
         rv_executable = machine == 'EM_RISCV' and role == 'executable'
         flags = elf['e_flags']
-        if (machine == 'EM_RISCV' and (flags & ~5 or flags & 6 != 4)) or \
+        if (machine == 'EM_RISCV' and (flags & ~5 or flags & 6 != (0 if riscv_profile == 'lp64-pure' else 4))) or \
                 (machine != 'EM_RISCV' and flags != 0):
             reject('UNSUPPORTED_ABI_FLAGS', path, 'requires normal ELF64 ABI, RV64 LP64D with optional RVC')
         expected = 'ET_EXEC' if role == 'executable' else 'ET_DYN'
@@ -1112,6 +1143,9 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                   'preserve_weak_imports': preserve_weak_imports,
                   'symbolic_lookup': any(t.entry.d_tag == 'DT_SYMBOLIC' or
                       (t.entry.d_tag == 'DT_FLAGS' and t.entry.d_val & 2) for t in tags)}
+        if riscv_profile == 'lp64-pure':
+            from teapot.riscv_profile import PURE_ABI
+            result.update(riscv_profile=riscv_profile, riscv_abi=dict(PURE_ABI))
         if role == 'external':
             return result
         if role == 'executable':
@@ -1351,6 +1385,10 @@ def validate_closure(executable, selected, external):
     for item in selected + external:
         if item['machine'] != executable['machine']:
             reject('MIXED_ARCHITECTURES', item['path'], executable['machine'] + ' required')
+        if executable['machine'] == 'EM_RISCV' and (
+                item.get('riscv_profile', 'lp64d') != executable.get('riscv_profile', 'lp64d') or
+                item['elf_flags'] & 6 != executable['elf_flags'] & 6):
+            reject('MIXED_RISCV_ABI_PROFILE', item['path'], 'all providers must use the same calling ABI/profile')
     providers = {}
     for item in selected + external:
         if not item['soname']:
@@ -1753,6 +1791,8 @@ def ordinary_object_recipe(item, context, priority=None):
         reject('FRONTEND_POLICY', item['path'], 'ordinary cache context needs an explicit boolean policy')
     if item['role'] == 'selected':
         context.pop('executable', None)
+    if item.get('riscv_profile') == 'lp64-pure':
+        context.update(pure_cache_identity())
     return {'format': 3, 'stage': 'ordinary-et-rel', 'context': context,
             'input_sha256': item['sha256'], 'role': item['role'],
             'executable_interpositions': sorted(item.get('executable_interpositions', ())),
@@ -1765,6 +1805,8 @@ def recovered_ir_recipe(item, args):
               'input_sha256': item['sha256'], 'module_basename': Path(item['path']).name,
               'frontend_source_provenance': args.source_provenance_data, 'jobs': args.jobs,
               'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers}
+    if item.get('riscv_profile') == 'lp64-pure':
+        recipe.update(pure_cache_identity())
     return recipe
 
 
@@ -1866,8 +1908,15 @@ def reconstruct(item, args, out, index=0, priority=None):
         elf = ELFFile(stream)
         if elf['e_type'] != 'ET_REL' or elf['e_machine'] != item['machine']:
             raise RuntimeError('assembler did not create expected ET_REL')
-        if item['machine'] == 'EM_RISCV' and (elf['e_flags'] & 6 != 4 or elf['e_flags'] & ~5):
-            reject('ASSEMBLED_ABI_MISMATCH', item['path'], 'RV64 object must retain LP64D ABI')
+        if item['machine'] == 'EM_RISCV':
+            if item.get('riscv_profile') == 'lp64-pure':
+                from teapot.riscv_profile import validate_flags
+                try:
+                    validate_flags(elf['e_flags'], 'lp64-pure')
+                except ValueError as error:
+                    reject('ASSEMBLED_ABI_MISMATCH', item['path'], str(error))
+            elif elf['e_flags'] & 6 != 4 or elf['e_flags'] & ~5:
+                reject('ASSEMBLED_ABI_MISMATCH', item['path'], 'RV64 object must retain LP64D ABI')
         table = elf.get_section_by_name('.symtab')
         emitted = {s.name: s for s in table.iter_symbols() if s['st_shndx'] != 'SHN_UNDEF'}
         for symbol in item['symbols']:
@@ -1899,6 +1948,7 @@ def reconstruct(item, args, out, index=0, priority=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--executable', required=True, type=Path)
+    parser.add_argument('--riscv-profile', choices=('lp64d', 'lp64-pure'), default='lp64d')
     parser.add_argument('--select', action='append', default=[], type=Path)
     parser.add_argument('--external', action='append', default=[], type=Path)
     parser.add_argument('--out', required=True, type=Path)
@@ -1932,13 +1982,18 @@ def main():
     try:
         executable = inspect(args.executable, 'executable', args.resolve_selected_versions,
                              args.preserve_selected_lifecycle, args.preserve_nonlocal_jumps,
-                             args.preserve_weak_imports)
+                             args.preserve_weak_imports, riscv_profile=args.riscv_profile)
         architecture = ARCHITECTURES[executable['machine']]
+        if args.riscv_profile == 'lp64-pure':
+            from teapot.riscv_profile import INTERPRETERS, validate_compiler
+            architecture = dict(architecture, interpreter=INTERPRETERS[args.riscv_profile])
+            with pure_refusal(args.cc):
+                dump(args.out / 'riscv-compiler.json', validate_compiler(args.cc))
         selected = [inspect(path, 'selected', args.resolve_selected_versions,
                             args.preserve_selected_lifecycle, args.preserve_nonlocal_jumps,
-                            args.preserve_weak_imports) for path in args.select]
+                            args.preserve_weak_imports, riscv_profile=args.riscv_profile) for path in args.select]
         args.selected_sonames = {item['soname'] for item in selected}
-        external = [inspect(path, 'external') for path in args.external]
+        external = [inspect(path, 'external', riscv_profile=args.riscv_profile) for path in args.external]
         initialization_order = validate_closure(executable, selected, external)
         linked_external = external_load_order(executable, selected, external) if args.preserve_weak_imports else external
         args.source_provenance_data = json.loads(args.source_provenance)
@@ -1967,6 +2022,8 @@ def main():
             'external_order': [(i['soname'], i['sha256']) for i in external],
             'initialization_order': initialization_order,
             'instrumentation': None, 'runtime_layout': None}
+        if args.riscv_profile == 'lp64-pure':
+            args.cache_context.update(pure_cache_identity())
         # JSON canonicalization removes tuple/list distinctions on later cache reads.
         args.cache_context = json.loads(json.dumps(args.cache_context))
         args.cache = ArtifactCache(args.cache_dir) if args.cache_dir else None
@@ -2019,6 +2076,10 @@ def main():
             validate_linked_copies(elf, executable)
             if executable['machine'] == 'EM_RISCV':
                 validate_linked_riscv_startup(elf, output)
+        if args.riscv_profile == 'lp64-pure':
+            check_pure_final(output, args.cc)
+        with output.open('rb') as stream:
+            elf = ELFFile(stream)
             needed = [t.needed for t in elf.get_section_by_name('.dynamic').iter_tags()
                       if t.entry.d_tag == 'DT_NEEDED']
             selected_names = {item['soname'] for item in selected}

@@ -10,11 +10,14 @@ from teapot.configs.runtime import ASAN_TAG_STORAGES, ASAN_TAG_STORAGE_SHADOW
 from teapot.pipeline import InstrumentationOptions, TeapotPipeline
 from teapot.preprocess.runtime_names import RuntimeNameError
 from teapot.runtime_contract import RuntimeContractError, load_runtime_contract
+from teapot.riscv_profile import RiscvProfileError
 from teapot.utils.serialization import compact_for_pprinter, save_protobuf_ordered
 
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--riscv-profile", choices=("lp64d", "lp64-pure"), default="lp64d",
+                        help="Explicit RV calling ABI/FP policy; lp64d preserves the historical RV64GC path.")
     parser.add_argument("--adaptive-fault-precheck", action="store_true",
                         help="Emit validated scalar fault prechecks (requires an ISA-matched publishing runtime; "
                              "single-threaded only). TEAPOT_FAULT_ADAPTATION=0 disables activation at startup.")
@@ -176,10 +179,12 @@ def main():
         enable_fault_training=args.adaptive_fault_precheck,
         enable_fault_publishing=args.adaptive_fault_precheck,
     )
-    pipeline = TeapotPipeline(ir, args.dift_layout, options, runtime_contract=runtime_contract)
+    refusals = (RuntimeContractError, RuntimeNameError, RiscvProfileError)
     try:
+        pipeline = TeapotPipeline(ir, args.dift_layout, options, runtime_contract=runtime_contract,
+                                  riscv_profile=args.riscv_profile)
         pipeline.run()
-    except (RuntimeContractError, RuntimeNameError) as error:
+    except refusals as error:
         sys.exit(f"teapot: {error}")
     del pipeline
 
@@ -210,6 +215,10 @@ def main():
     print("[teapot] begin serialization", flush=True)
     save_protobuf_ordered(ir, args.output)
     print("[teapot] end serialization", flush=True)
+    if args.riscv_profile == "lp64-pure":
+        print("[teapot] After linking, check the pure final ELF and built libraries with "
+              "python -m teapot.riscv_pure_link --objdump TOOLCHAIN-OBJDUMP FILE... . "
+              "Use F/D-disabled QEMU for pure runs.", flush=True)
     if any("teapotFaultRiscAssemblyScopes" in module.aux_data for module in ir.modules):
         from teapot.fault_risc_assembly import fault_risc_assembler_flags
         flags = sorted({flag for module in ir.modules for flag in fault_risc_assembler_flags(module)})

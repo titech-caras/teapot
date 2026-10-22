@@ -36,6 +36,7 @@ must use (`targets.py`).
 | `aarch64-vma42-mte` | ARM64 | `aarch64-vma42` | MTE | none |
 | `aarch64-vma48-mte` | ARM64 | `aarch64-vma48` | MTE | none |
 | `riscv64` (RV64 default) | RISCV64 | `riscv64-sv39` | shadow | `libasan.so.8` |
+| `riscv64-lp64-pure` (explicit profile only) | RISCV64 | `riscv64-sv39` | shadow | real LP64 `libasan.so.8` |
 
 ## Rewriting
 
@@ -59,6 +60,18 @@ contract is the `libcheckpoint.contract.json` beside the libcheckpoint archive o
 fingerprint enters the key, so archives with the same ABI share components; each component's record lists
 the capabilities it needs, and `validate_link.py` compares every record with the runtime record the link
 holds. The conversion opt-in flags are the converter's.
+
+For integer-only LP64 inputs, explicitly pass `--riscv-profile lp64-pure`;
+`riscv64-lp64-pure` is then the default mode for that profile. The normal
+`riscv64` mode remains LP64D and does not accept a pure runtime. All executable,
+selected and external providers must have the same LP64 calling ABI/profile.
+Executables use the LP64 loader. The compiler's card-ISA defaults are
+checked, never replaced by a guessed `-march`.
+
+Pure cold builds use integer-only emission. Warm hits retain the ordinary
+artifact/ABI checks, without redundant object disassembly. The final ELF and
+built libraries are checked after linking. ABI/profile/FP policy and ROB enter cache keys;
+an LP64D/ROB250 entry cannot be relabelled pure or ROB128.
 
 ### AArch64 BTI+PAC (opt-in)
 
@@ -121,6 +134,13 @@ guards), the selected definitions, the reconstructed
 FDEs, and the ASan runtime's place in `DT_NEEDED` (or its absence in MTE modes), with no selected SONAME still
 needed. Passing it is a structural
 result, not behavior verification.
+For pure links, `--riscv-objdump TOOLCHAIN-OBJDUMP` selects the disassembler for
+the small final-code check. It rejects FP/vector instructions and FP/vector CSR
+operands; it requires no provider closure, archive certificate or command
+attestation. Use the real LP64 ASan runtime and run the final ELF directly with
+`qemu-riscv64 -R 0x4000000000 -cpu rv64,f=false,d=false,zfa=false,zfh=false,zfhmin=false,zicond=true`
+and the LP64 sysroot/library paths. Pure SIGILL is fatal. Pure adaptive fault
+training/publishing is not yet supported.
 For BTI it also verifies isolated RX guard pages, the probe/bound aliases, absence of unmatched
 native BTI/PAC landings in normal text, and the actual preinit pointer. Hardware enforcement
 is separately checked at startup on the final mapping.

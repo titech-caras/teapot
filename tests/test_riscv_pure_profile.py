@@ -94,6 +94,8 @@ def elf_fixture(code=NOP + RET, mappings=(("$x", 0),), *, flags=1, arch=ARCH,
             if pf_x_data is not None else b"")
     return ehdr + phdr + body[64 + len(phdr):] + b"".join(headers)
 
+from tools.sharedlib import convert
+
 
 class RiscvPureProfileTests(unittest.TestCase):
     def setUp(self):
@@ -213,6 +215,13 @@ class RiscvPureProfileTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_mode_contract(mixed)
         self.assertNotIn('riscv_profile', mode_metadata('RISCV64', 'riscv64'))
+
+    def test_closure_refuses_mixed_calling_abi_before_bindings(self):
+        executable = dict(machine='EM_RISCV', elf_flags=1, riscv_profile=PURE, path='main')
+        for provider in (dict(machine='EM_RISCV', elf_flags=5, path='lib'),
+                         dict(machine='EM_RISCV', elf_flags=1, riscv_profile=DEFAULT, path='lib')):
+            with self.assertRaisesRegex(convert.Unsupported, 'MIXED_RISCV_ABI_PROFILE'):
+                convert.validate_closure(executable, [], [provider])
 
 
 if __name__ == '__main__':
