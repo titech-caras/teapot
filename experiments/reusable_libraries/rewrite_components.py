@@ -429,6 +429,7 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     if isa == 'ARM64':
         recorded.append('pointer-return-contracts.json')
     result = {"component_id": component_id, "role": item["role"], "input_sha256": item["sha256"],
+              "allow_runtime_symbol_lookup": item.get("allow_runtime_symbol_lookup", False),
               "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
               "allow_executable_weak_callbacks": args.allow_executable_weak_callbacks,
               "executable_weak_callbacks": sorted(item.get('executable_weak_callbacks', ())),
@@ -449,6 +450,11 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
     # Provider names/types and dependency bytes affect the binding decision.
     # The executable's own bytes are deliberately not in a *library* key: a
     # different main with the same binding contract can reuse this exact object.
+    context = dict(context, allow_runtime_symbol_lookup=context.get('allow_runtime_symbol_lookup', False))
+    require(type(context['allow_runtime_symbol_lookup']) is bool and
+            context['allow_runtime_symbol_lookup'] is args.allow_runtime_symbol_lookup and
+            context['allow_runtime_symbol_lookup'] is item.get('allow_runtime_symbol_lookup', False),
+            'request/component runtime-lookup policy mismatch or missing policy')
     require(type(context.get('allow_ambiguous_data_pointers')) is bool and
             context['allow_ambiguous_data_pointers'] is args.allow_ambiguous_data_pointers,
             'request/component cache policy mismatch or missing policy')
@@ -485,6 +491,8 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
             fcntl.flock(lock, fcntl.LOCK_SH)
         require(json.loads((entry / "key.json").read_text()) == key_data, "cache key mismatch")
         result = json.loads((entry / "component.json").read_text())
+        require(result.get("allow_runtime_symbol_lookup", False) is context["allow_runtime_symbol_lookup"],
+                "component runtime-lookup policy mismatch")
         verify_component_frontend(converter, item, entry, result, args.allow_ambiguous_data_pointers)
         # Covered and uncovered objects are never interchangeable.
         require(result.get("coverage") == context["runtime_contract"]["coverage"],
@@ -548,6 +556,8 @@ def main():
     parser.add_argument("--preserve-weak-imports", action="store_true")
     parser.add_argument("--allow-executable-weak-callbacks", action="store_true", default=False,
                         help="explicitly retain executable weak callbacks after full binding-closure validation")
+    parser.add_argument('--allow-runtime-symbol-lookup', action='store_true', default=False,
+                        help='allow executable/selected-DSO loader imports; dynamically loaded code stays uninstrumented')
     parser.add_argument('--allow-ambiguous-data-pointers', action='store_true', default=False,
                         help='explicitly allow unproven heuristic data-pointer guesses; warn and retain diagnostics')
     args = parser.parse_args()
@@ -585,7 +595,7 @@ def main():
     dump(args.out / "tools.json", tools)
     conversion_options = {name: getattr(args, name) for name in (
         "resolve_selected_versions", "preserve_selected_lifecycle",
-        "preserve_nonlocal_jumps", "preserve_weak_imports", "allow_executable_weak_callbacks")}
+        "preserve_nonlocal_jumps", "preserve_weak_imports", "allow_executable_weak_callbacks", "allow_runtime_symbol_lookup")}
     if args.riscv_profile == 'lp64-pure':
         from teapot.riscv_profile import validate_compiler
         dump(args.out / 'riscv-compiler.json', validate_compiler(args.cc))
@@ -635,6 +645,7 @@ def main():
                "target_identification": args.target_identification,
                "liveness_contract": "standalone-ddisasm-abi-v1",
                "conversion_options": conversion_options,
+               "allow_runtime_symbol_lookup": args.allow_runtime_symbol_lookup,
                "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
                "dift_layout": args.mode_layout, 'isa': isa,
                'component_targets_sha256': sha(args.teapot / 'experiments/reusable_libraries/targets.py'),
@@ -660,6 +671,10 @@ def main():
         shutil.copyfile(Path(component["cache_path"]) / "component.o",
                         args.out / ("component-{:03d}.o".format(index)))
     dump(args.out / "components.json", {"components": components, "total_guards": total_guards,
+                                       "allow_runtime_symbol_lookup": args.allow_runtime_symbol_lookup,
+                                       "runtime_lookup_limitations": (
+                                           "loaded modules are uninstrumented; merged selected definitions need not be discoverable"
+                                           if args.allow_runtime_symbol_lookup else "no alternate runtime symbol lookup"),
                                        "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
                                        "pointer_inference": "unproven heuristic" if args.allow_ambiguous_data_pointers else "strict",
                                        **mode_metadata(isa, args.mode, args.target_identification),
@@ -672,6 +687,7 @@ def main():
                                           if isa == 'RISCV64' else {}),
                                        "status": "objects_ready_final_link_and_behavior_not_yet_verified"})
     print(json.dumps({"components": len(components), "cache_hits": sum(c["cache_hit"] for c in components),
+                      "allow_runtime_symbol_lookup": args.allow_runtime_symbol_lookup,
                       "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
                       "pointer_inference": "unproven heuristic" if args.allow_ambiguous_data_pointers else "strict",
                       "total_guards": total_guards}), flush=True)

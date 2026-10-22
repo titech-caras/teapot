@@ -32,7 +32,7 @@ class CacheIdentityTests(unittest.TestCase):
             return result
         with tempfile.TemporaryDirectory() as directory, patch.object(driver, "build_component", build), \
                 patch.object(driver, "validate_object", lambda *args, **kwargs: None):
-            args = SimpleNamespace(cache=Path(directory), allow_ambiguous_data_pointers=False)
+            args = SimpleNamespace(cache=Path(directory), allow_ambiguous_data_pointers=False, allow_runtime_symbol_lookup=False)
             converter = selected_converter
             paths = []
             for enabled in (False, True):
@@ -154,7 +154,7 @@ class CacheIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(driver, "build_component", build), \
                 patch.object(driver, "validate_object", lambda *args, **kwargs: None):
-            args = SimpleNamespace(cache=Path(directory), allow_ambiguous_data_pointers=False)
+            args = SimpleNamespace(cache=Path(directory), allow_ambiguous_data_pointers=False, allow_runtime_symbol_lookup=False)
             converter = selected_converter
             entries = {}
             for name in ("x64", "x64-coverage"):

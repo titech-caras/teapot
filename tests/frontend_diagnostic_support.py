@@ -28,5 +28,6 @@ def component_frontend_fields(directory, item, policy=False):
     lift_record(directory, item, policy)
     files = {name: converter.sha(directory / name) for name in converter.FRONTEND_DIAGNOSTIC_FILES}
     return {'allow_ambiguous_data_pointers': policy,
+            'allow_runtime_symbol_lookup': item.get('allow_runtime_symbol_lookup', False),
             'pointer_inference': 'unproven heuristic' if policy else 'strict',
             'frontend_diagnostics_sha256': files['frontend-diagnostics.json'], 'files': files}

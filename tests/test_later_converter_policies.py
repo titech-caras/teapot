@@ -102,5 +102,98 @@ class ComposedWeakCallbackTests(unittest.TestCase):
             self.assertEqual(list(directory.iterdir()), [])
 
 
+class ComposedConverterPolicyTests(unittest.TestCase):
+    def source(self, lookup=False):
+        return dict(path='/inputs/libselected.so', sha256='2' * 64, role='selected',
+                    machine='EM_RISCV', entry=0, allow_runtime_symbol_lookup=lookup,
+                    allow_executable_weak_callbacks=True,
+                    executable_weak_callbacks=['application_callback'],
+                    weak_callback_closure_validated=True)
+
+    def args(self, lookup=False):
+        return argparse.Namespace(
+            allow_runtime_symbol_lookup=lookup, allow_executable_weak_callbacks=True,
+            allow_ambiguous_data_pointers=False,
+            cache_context={'allow_runtime_symbol_lookup': lookup,
+                           'allow_executable_weak_callbacks': True,
+                           'allow_ambiguous_data_pointers': False, 'executable': 'caller'},
+            tool_identities={'ddisasm': {'sha256': 'frontend'}},
+            source_provenance_data={}, jobs=1)
+
+    def test_lookup_and_callback_identity_survive_the_composed_cache_recipe(self):
+        ordinary, lifted = [], []
+        for lookup in (False, True):
+            source, args = self.source(lookup), self.args(lookup)
+            original = copy.deepcopy(args.cache_context)
+            recipe = converter.ordinary_object_recipe(source, args.cache_context)
+            ordinary.append(converter.content_key(recipe))
+            lifted.append(converter.content_key(converter.recovered_ir_recipe(source, args)))
+            self.assertIs(recipe['context']['allow_runtime_symbol_lookup'], lookup)
+            self.assertEqual(recipe['executable_weak_callbacks'], ['application_callback'])
+            self.assertNotIn('executable', recipe['context'])
+            self.assertEqual(args.cache_context, original)
+            changed = dict(source, executable_weak_callbacks=['another_callback'])
+            self.assertNotEqual(ordinary[-1], converter.content_key(
+                converter.ordinary_object_recipe(changed, args.cache_context)))
+        self.assertNotEqual(ordinary[0], ordinary[1])
+        self.assertNotEqual(lifted[0], lifted[1])
+
+    def test_ordinary_cache_rejects_nonboolean_and_mismatched_lookup_policy(self):
+        source = self.source(True)
+        for policy in (False, None, 0, 1, 'true'):
+            ctx = dict(self.args(True).cache_context, allow_runtime_symbol_lookup=policy)
+            with self.subTest(policy=policy), self.assertRaisesRegex(
+                    converter.Unsupported, 'RUNTIME_SYMBOL_LOOKUP'):
+                converter.ordinary_object_recipe(source, ctx)
+        legacy = self.args(False).cache_context
+        legacy.pop('allow_runtime_symbol_lookup')
+        self.assertFalse(converter.ordinary_object_recipe(self.source(False), legacy)
+                         ['context']['allow_runtime_symbol_lookup'])
+        self.assertNotIn('allow_runtime_symbol_lookup', legacy)
+
+    def test_actual_reconstruct_rejects_request_context_mismatch_before_lift(self):
+        source, args = self.source(True), self.args(False)
+        args.cache_context['allow_runtime_symbol_lookup'] = True
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(converter, 'run', side_effect=AssertionError('must not lift')) as run:
+            with self.assertRaisesRegex(converter.Unsupported, 'request/cache policy mismatch'):
+                converter.reconstruct(source, args, Path(temporary))
+            run.assert_not_called()
+
+    def test_actual_inspect_rejects_malformed_options_before_opening_elf(self):
+        for key in ('allow_runtime_symbol_lookup', 'allow_executable_weak_callbacks'):
+            for bad in (None, 0, 1, 'true', [], {}):
+                with self.subTest(key=key, bad=bad), self.assertRaisesRegex(
+                        converter.Unsupported, 'explicit boolean'):
+                    converter.inspect('/must-not-open', 'executable', **{key: bad})
+        for bad in ('.L_constant', ('.L_constant',), [''], ['b', 'a'], ['a', 'a'], [1], True):
+            with self.subTest(names=bad), self.assertRaisesRegex(converter.Unsupported, 'canonical list'):
+                converter.inspect('/must-not-open', 'executable', allow_integral_constant_symbols=bad)
+        with self.assertRaisesRegex(converter.Unsupported, 'explicit callback opt-in'):
+            converter.inspect('/must-not-open', 'selected',
+                              executable_weak_callbacks=['application_callback'])
+
+    def test_named_integral_permission_does_not_admit_other_diagnostics(self):
+        warning = 'WARNING: Found integral symbol pointing into existing block: .L_constant\n'
+        for lookup in (False, True):
+            source = dict(self.source(lookup), role='executable', entry=1)
+            with self.subTest(lookup=lookup):
+                with self.assertRaises(converter.Unsupported):
+                    converter.validate_frontend_diagnostics(None, source, warning)
+                source['allow_integral_constant_symbols'] = ['.L_constant']
+                rows = converter.validate_frontend_diagnostics(None, source, warning)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['category'], 'integral-constant')
+                self.assertEqual(rows[0]['symbol'], '.L_constant')
+                self.assertFalse(rows[0]['constant_value_preservation_claimed'])
+                for bad in (
+                    warning.replace('.L_constant', '.L_other'),
+                    warning.replace('.L_constant', '.L_constant trailing'),
+                    'WARNING: unrelated\n', 'ERROR: unrelated\n',
+                ):
+                    with self.subTest(diagnostic=bad), self.assertRaises(converter.Unsupported):
+                        converter.validate_frontend_diagnostics(None, source, bad)
+
+
 if __name__ == '__main__':
     unittest.main()

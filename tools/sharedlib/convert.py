@@ -1115,11 +1115,13 @@ def require_callback_closure(item):
 
 def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifecycle=False,
             preserve_nonlocal_jumps=False, preserve_weak_imports=False, *, riscv_profile='lp64d',
-            allow_executable_weak_callbacks=False, executable_weak_callbacks=(), allow_integral_constant_symbols=None):
+            allow_executable_weak_callbacks=False, executable_weak_callbacks=(), allow_runtime_symbol_lookup=False, allow_integral_constant_symbols=None):
     if type(allow_executable_weak_callbacks) is not bool:
         reject('WEAK_BINDING', path, 'callback policy must be an explicit boolean')
     if executable_weak_callbacks and (role != 'selected' or not allow_executable_weak_callbacks):
         reject('WEAK_BINDING', path, 'selected callback context requires the explicit callback opt-in')
+    if type(allow_runtime_symbol_lookup) is not bool:
+        reject('RUNTIME_SYMBOL_LOOKUP', path, 'lookup policy must be an explicit boolean')
     path = Path(path)
     integral_names = [] if allow_integral_constant_symbols is None else allow_integral_constant_symbols
     if (type(integral_names) is not list or
@@ -1175,6 +1177,7 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                   'allow_executable_weak_callbacks': allow_executable_weak_callbacks,
                   'executable_weak_callbacks': sorted(weak_exports),
                   'static_symbols': static,
+                  'allow_runtime_symbol_lookup': allow_runtime_symbol_lookup,
                   'symbolic_lookup': any(t.entry.d_tag == 'DT_SYMBOLIC' or
                       (t.entry.d_tag == 'DT_FLAGS' and t.entry.d_val & 2) for t in tags)}
         if integral_names:
@@ -1199,7 +1202,9 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
             if segment['p_type'] == 'PT_GNU_STACK' and segment['p_flags'] & 1:
                 reject('EXECUTABLE_STACK', path, 'stack-execution contract not supported')
         all_names = {s['name'].split('@')[0] for s in symbols + static}
-        if all_names & LOOKUP:
+        lookup = [s for s in symbols + static if s['name'].split('@')[0] in LOOKUP]
+        if lookup and (not allow_runtime_symbol_lookup or
+                       any(s['section'] != 'SHN_UNDEF' for s in lookup)):
             reject('RUNTIME_SYMBOL_LOOKUP', path, ', '.join(sorted(all_names & LOOKUP)))
         unsupported_unwind = set(UNWIND_UNSUPPORTED)
         if preserve_selected_lifecycle:
@@ -1857,6 +1862,10 @@ def ordinary_object_recipe(item, context, priority=None):
     This exemption does NOT apply to resolved instrumented-object caches.
     """
     context = dict(context)
+    context.setdefault('allow_runtime_symbol_lookup', False)
+    if type(context['allow_runtime_symbol_lookup']) is not bool or \
+            context['allow_runtime_symbol_lookup'] is not item.get('allow_runtime_symbol_lookup', False):
+        reject('RUNTIME_SYMBOL_LOOKUP', item['path'], 'request/ordinary cache policy mismatch or missing policy')
     if type(context.get('allow_ambiguous_data_pointers')) is not bool:
         reject('FRONTEND_POLICY', item['path'], 'ordinary cache context needs an explicit boolean policy')
     if item['role'] == 'selected':
@@ -1875,6 +1884,7 @@ def recovered_ir_recipe(item, args):
     recipe = {'format': 2, 'stage': 'recovered-ir', 'frontend': args.tool_identities['ddisasm'],
               'input_sha256': item['sha256'], 'module_basename': Path(item['path']).name,
               'frontend_source_provenance': args.source_provenance_data, 'jobs': args.jobs,
+              'allow_runtime_symbol_lookup': item.get('allow_runtime_symbol_lookup', False),
               'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers}
     if item.get('riscv_profile') == 'lp64-pure':
         recipe.update(pure_cache_identity())
@@ -1887,6 +1897,8 @@ def reconstruct(item, args, out, index=0, priority=None):
     directory.mkdir()
     object_recipe = ordinary_object_recipe(item, args.cache_context, priority)
     lift_recipe = recovered_ir_recipe(item, args)
+    if args.cache_context['allow_runtime_symbol_lookup'] is not args.allow_runtime_symbol_lookup:
+        reject('RUNTIME_SYMBOL_LOOKUP', item['path'], 'request/cache policy mismatch')
     if args.cache_context['allow_ambiguous_data_pointers'] is not args.allow_ambiguous_data_pointers:
         reject('FRONTEND_POLICY', item['path'], 'request/cache policy mismatch')
     if args.cache and args.cache.restore('objects', object_recipe, directory):
@@ -1897,6 +1909,7 @@ def reconstruct(item, args, out, index=0, priority=None):
                                     args.allow_ambiguous_data_pointers, verify=True)
         dump(directory / 'cache.json', {'object': 'hit', 'object_key': content_key(object_recipe),
             'lift_key': content_key(lift_recipe), 'lift': 'included-in-object-hit', 'instrumented': False,
+            'allow_runtime_symbol_lookup': item.get('allow_runtime_symbol_lookup', False),
             'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
             'frontend_diagnostics_sha256': sha(directory / 'frontend-diagnostics.json')})
         return directory / 'reconstructed.o'
@@ -1937,6 +1950,7 @@ def reconstruct(item, args, out, index=0, priority=None):
                'data_blocks': len(list(module.data_blocks)),
                'live_register_entries': len(liveness.data), 'cfi_starts': len(starts),
                'application_fdes_checked': len(item['application_fdes']),
+               'allow_runtime_symbol_lookup': item.get('allow_runtime_symbol_lookup', False),
                'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
                'frontend_diagnostics_sha256': sha(directory / 'frontend-diagnostics.json')}
     dump(directory / 'ir-summary.json', summary)
@@ -2012,6 +2026,7 @@ def reconstruct(item, args, out, index=0, priority=None):
     dump(directory / 'cache.json', {'object': 'miss' if args.cache else 'disabled',
         'object_key': content_key(object_recipe), 'lift_key': content_key(lift_recipe),
         'lift': 'hit' if lift_hit else ('miss' if args.cache else 'disabled'), 'instrumented': False,
+        'allow_runtime_symbol_lookup': item.get('allow_runtime_symbol_lookup', False),
         'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
         'frontend_diagnostics_sha256': sha(directory / 'frontend-diagnostics.json')})
     return obj
@@ -2042,6 +2057,8 @@ def main():
                         help='retain undefined weak bindings and the pinned original external lookup scope')
     parser.add_argument('--allow-executable-weak-callbacks', action='store_true', default=False,
                         help='explicitly retain executable-defined weak function callbacks after full binding-closure validation')
+    parser.add_argument('--allow-runtime-symbol-lookup', action='store_true', default=False,
+                        help='allow executable/selected-DSO loader imports; dynamically loaded code stays uninstrumented')
     parser.add_argument('--allow-ambiguous-data-pointers', action='store_true', default=False,
                         help='explicitly allow unproven heuristic data-pointer guesses; warn and retain diagnostics')
     parser.add_argument('--source-provenance', default='{}',
@@ -2057,7 +2074,8 @@ def main():
         executable = inspect(args.executable, 'executable', args.resolve_selected_versions,
                              args.preserve_selected_lifecycle, args.preserve_nonlocal_jumps,
                              args.preserve_weak_imports, riscv_profile=args.riscv_profile,
-                             allow_executable_weak_callbacks=args.allow_executable_weak_callbacks)
+                             allow_executable_weak_callbacks=args.allow_executable_weak_callbacks,
+                             allow_runtime_symbol_lookup=args.allow_runtime_symbol_lookup)
         architecture = ARCHITECTURES[executable['machine']]
         if args.riscv_profile == 'lp64-pure':
             from teapot.riscv_profile import INTERPRETERS, validate_compiler
@@ -2068,7 +2086,8 @@ def main():
                             args.preserve_selected_lifecycle, args.preserve_nonlocal_jumps,
                             args.preserve_weak_imports, riscv_profile=args.riscv_profile,
                             allow_executable_weak_callbacks=args.allow_executable_weak_callbacks,
-                            executable_weak_callbacks=executable['executable_weak_callbacks']) for path in args.select]
+                            executable_weak_callbacks=executable['executable_weak_callbacks'],
+                            allow_runtime_symbol_lookup=args.allow_runtime_symbol_lookup) for path in args.select]
         args.selected_sonames = {item['soname'] for item in selected}
         external = [inspect(path, 'external', riscv_profile=args.riscv_profile) for path in args.external]
         initialization_order = validate_closure(executable, selected, external)
@@ -2094,6 +2113,7 @@ def main():
             'preserve_nonlocal_jumps': args.preserve_nonlocal_jumps,
             'preserve_weak_imports': args.preserve_weak_imports,
             'allow_executable_weak_callbacks': args.allow_executable_weak_callbacks,
+            'allow_runtime_symbol_lookup': args.allow_runtime_symbol_lookup,
             'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
             'executable': executable['sha256'],
             'selected_order': [(i['soname'], i['sha256']) for i in selected],
@@ -2106,6 +2126,7 @@ def main():
         args.cache_context = json.loads(json.dumps(args.cache_context))
         args.cache = ArtifactCache(args.cache_dir) if args.cache_dir else None
         manifest = {'contract': CONTRACT, 'script_sha256': sha(__file__),
+                    'allow_runtime_symbol_lookup': args.allow_runtime_symbol_lookup,
                     'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
                     'pointer_inference': 'unproven heuristic' if args.allow_ambiguous_data_pointers else 'strict',
                     'executable': executable, 'selected': selected, 'external': external,
@@ -2114,7 +2135,9 @@ def main():
                     'linked_external_order': [item['soname'] for item in linked_external],
                     'tools': args.tool_identities, 'cache_context': args.cache_context,
                     'assumptions': ['single thread', 'no LD_PRELOAD/LD_AUDIT/interposers',
-                                    'no alternate runtime symbol lookup',
+                                    ('runtime lookup uses libc; loaded modules are uninstrumented; '
+                                     'merged selected definitions need not be discoverable'
+                                     if args.allow_runtime_symbol_lookup else 'no alternate runtime symbol lookup'),
                                     'validated ' + architecture['name'] + ' glibc process startup',
                                     'no hot-swapped dependency providers'],
                     'instrumentation': 'none; ordinary reconstruction only'}
@@ -2175,6 +2198,7 @@ def main():
                         if expected not in defined:
                             raise RuntimeError('missing selected body/data: ' + expected)
             dump(args.out / 'result.json', {'status': 'ordinary_link_ready_not_yet_behavior_verified',
+                'allow_runtime_symbol_lookup': args.allow_runtime_symbol_lookup,
                 'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
                 'pointer_inference': 'unproven heuristic' if args.allow_ambiguous_data_pointers else 'strict',
                 'elf_type': elf['e_type'], 'needed': needed,
@@ -2182,6 +2206,7 @@ def main():
                 'archive_members': [{'name': p.name, 'sha256': sha(p), 'type': 'ET_REL'} for p in members]})
     except Unsupported as error:
         dump(args.out / 'rejection.json', {'status': 'unsupported', 'reason': str(error),
+                                         'allow_runtime_symbol_lookup': args.allow_runtime_symbol_lookup,
                                          'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers})
         print(str(error), file=sys.stderr)
         return 2

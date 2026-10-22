@@ -49,7 +49,7 @@ class LibraryBindingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(driver, 'build_component', side_effect=build) as builder, \
                 patch.object(driver, 'validate_object'):
-            args = SimpleNamespace(cache=Path(directory), allow_ambiguous_data_pointers=False)
+            args = SimpleNamespace(cache=Path(directory), allow_ambiguous_data_pointers=False, allow_runtime_symbol_lookup=False)
             cold = driver.cached_component(args, converter, item, context, set(), 100)
             other = dict(context, bindings=context['bindings'][:2] + [('unrelated_B', 'executable')])
             original_sha = driver.sha

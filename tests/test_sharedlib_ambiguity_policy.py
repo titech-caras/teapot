@@ -27,8 +27,8 @@ def item(role='executable'):
 
 
 def args(policy, cache=None):
-    return SimpleNamespace(allow_ambiguous_data_pointers=policy, ddisasm='ddisasm', jobs=1,
-                           cache=cache, cache_context={'allow_ambiguous_data_pointers': policy},
+    return SimpleNamespace(allow_runtime_symbol_lookup=False, allow_ambiguous_data_pointers=policy, ddisasm='ddisasm', jobs=1,
+                           cache=cache, cache_context={'allow_ambiguous_data_pointers': policy, 'allow_runtime_symbol_lookup': False},
                            tool_identities={'ddisasm': {'sha256': 'frontend'}},
                            source_provenance_data={}, preserve_selected_lifecycle=False)
 

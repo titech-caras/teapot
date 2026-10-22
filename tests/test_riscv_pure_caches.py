@@ -30,8 +30,8 @@ class PureCacheTests(unittest.TestCase):
                          riscv_profile=PURE)
 
     def test_converter_warm_hit_and_profile_identity(self):
-        args = SimpleNamespace(cache_context={'allow_ambiguous_data_pointers': False},
-            allow_ambiguous_data_pointers=False, tool_identities={'ddisasm': {'sha256': 'frontend'}},
+        args = SimpleNamespace(cache_context={'allow_ambiguous_data_pointers': False, 'allow_runtime_symbol_lookup': False},
+            allow_ambiguous_data_pointers=False, allow_runtime_symbol_lookup=False, tool_identities={'ddisasm': {'sha256': 'frontend'}},
             source_provenance_data={}, jobs=1, cache=convert.ArtifactCache(self.root / 'cache'),
             ddisasm='declared-frontend', pprinter='declared-printer', cc='declared-gcc',
             selected_sonames=set(), resolve_selected_versions=False, preserve_selected_lifecycle=False)
