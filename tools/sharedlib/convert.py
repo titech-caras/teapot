@@ -39,7 +39,7 @@ UNWIND_UNSUPPORTED = {'__cxa_throw', '__cxa_rethrow', '__cxa_atexit',
                       '_Unwind_Resume'} | NONLOCAL_JUMPS
 CRT_WEAK = {'__gmon_start__', '_ITM_registerTMCloneTable',
             '_ITM_deregisterTMCloneTable', '__cxa_finalize'}
-RELOCS_X64 = {1, 6, 7, 8}  # 64, GLOB_DAT, JUMP_SLOT, RELATIVE; COPY is excluded.
+RELOCS_X64 = {1, 6, 7, 8}  # 64, GLOB_DAT, JUMP_SLOT, RELATIVE; COPY is resolved separately.
 ARCHITECTURES = {
     'EM_X86_64': {'name': 'x64', 'relocations': RELOCS_X64, 'copy': 5,
                  'relative': 8, 'got': 6, 'plt': 7, 'emulation': 'elf_x86_64',
@@ -279,6 +279,71 @@ def dynamic_symbol_records(elf):
 def version_node_symbol(item, symbol):
     return (symbol['section'] == 'SHN_ABS' and any(
         symbol['name'] == version['name'] for version in item.get('version_definitions', ())))
+
+
+def copy_relocation_symbol(elf, section, relocation, symbols, path, role):
+    """A loader COPY is an executable data import, not a selected definition."""
+    table = elf.get_section(section['sh_link'])
+    if role != 'executable' or table['sh_type'] != 'SHT_DYNSYM' or relocation.entry.get('r_addend', 0):
+        reject('COPY_RELOCATION', path, 'unsupported COPY source/table/addend')
+    raw = sym_record(table.get_symbol(relocation['r_info_sym']))
+    matches = [symbol for symbol in symbols if all(symbol[key] == value for key, value in raw.items())]
+    # LLD may retain both the versioned and unversioned spelling in dynsym.
+    # Only identical complete identities describe one COPY destination.
+    if len(matches) > 1 and all(symbol == matches[0] for symbol in matches):
+        matches = matches[:1]
+    if (len(matches) != 1 or raw['type'] != 'STT_OBJECT' or raw['binding'] != 'STB_GLOBAL'
+            or raw['visibility'] != 'STV_DEFAULT' or not isinstance(raw['section'], int)
+            or raw['address'] != relocation['r_offset'] or raw['size'] <= 0):
+        reject('COPY_RELOCATION', path, 'COPY must name its defined, sized data destination')
+    target = elf.get_section(raw['section'])
+    if (target['sh_flags'] & 3 != 3 or raw['address'] < target['sh_addr']
+            or raw['address'] + raw['size'] > target['sh_addr'] + target['sh_size']):
+        reject('COPY_RELOCATION', path, 'COPY destination is not writable allocated data')
+    return matches[0]
+
+
+def validate_copy_forwarding(module, item):
+    """Keep DDisasm's external references; a plain copied BSS label is not an import."""
+    forwarding = module.aux_data.get('symbolForwarding')
+    info = module.aux_data.get('elfSymbolInfo')
+    for copy in item.get('copy_relocations', ()):
+        symbol = copy['symbol']
+        matches = [source for source, target in (forwarding.data.items() if forwarding else ())
+                   if isinstance(source.referent, gtirb.DataBlock)
+                   and source.referent.address == copy['address'] and not source.at_end
+                   and isinstance(target.referent, gtirb.ProxyBlock)
+                   and target.name.split('@')[0] == symbol['name']
+                   and info and info.data.get(source, ())[:4] ==
+                   (symbol['size'], 'OBJECT', 'GLOBAL', 'DEFAULT')]
+        if len(matches) != 1:
+            reject('COPY_RELOCATION', item['path'], 'missing external COPY forwarding: ' + symbol['name'])
+
+
+def validate_linked_copies(elf, executable):
+    """The final loader must still initialize every admitted COPY destination."""
+    copies = executable.get('copy_relocations', ())
+    if not copies:
+        return
+    symbols, _, _ = dynamic_symbol_records(elf)
+    actual = []
+    for section in elf.iter_sections():
+        if not isinstance(section, RelocationSection):
+            continue
+        if not section['sh_flags'] & 2 and elf.get_section(section['sh_link'])['sh_type'] == 'SHT_SYMTAB':
+            continue
+        for relocation in section.iter_relocations():
+            if relocation['r_info_type'] == ARCHITECTURES[elf['e_machine']]['copy']:
+                actual.append(copy_relocation_symbol(elf, section, relocation, symbols,
+                                                     executable['path'], 'executable'))
+    needed = {tag.needed for tag in elf.get_section_by_name('.dynamic').iter_tags()
+              if tag.entry.d_tag == 'DT_NEEDED'}
+    for copy in copies:
+        symbol = copy['symbol']
+        matches = [candidate for candidate in actual if all(candidate.get(key) == symbol.get(key)
+                   for key in ('name', 'version', 'size'))]
+        if len(matches) != 1 or copy['provider'] not in needed:
+            reject('COPY_RELOCATION', executable['path'], 'final loader COPY lost: ' + symbol['name'])
 
 
 def selected_version_name(soname, name, version):
@@ -1032,8 +1097,10 @@ def inspect(path, role, resolve_selected_versions=False, preserve_selected_lifec
                 rtype = relocation['r_info_type']
                 counts[rtype] += 1
                 if rtype == architecture['copy']:
-                    reject('COPY_RELOCATION', path, hex(relocation['r_offset']))
-                if rtype not in architecture['relocations']:
+                    symbol = copy_relocation_symbol(elf, sec, relocation, symbols, path, role)
+                    result.setdefault('copy_relocations', []).append({
+                        'address': relocation['r_offset'], 'symbol': symbol})
+                elif rtype not in architecture['relocations']:
                     reject('UNSUPPORTED_RELOCATION', path, str(rtype))
                 relocations[relocation['r_offset']] = dict(relocation.entry)
                 if machine == 'EM_AARCH64' and any(
@@ -1189,12 +1256,38 @@ def validate_closure(executable, selected, external):
         for needed in item['needed']:
             if needed not in providers:
                 reject('INCOMPLETE_DEPENDENCY_CLOSURE', item['path'], needed)
+    # A COPY source must be a uniquely resolved, retained external object.
+    # It cannot be folded into a selected object, nor guessed from an unrelated DSO.
+    copies = executable.get('copy_relocations', ())
+    reachable = set()
+    pending = list(executable['needed']) if copies else []
+    for name in pending:
+        if name not in reachable:
+            reachable.add(name)
+            pending.extend(providers[name]['needed'])
+    for copy in copies:
+        symbol = copy['symbol']
+        matches = [(item, candidate) for name, item in providers.items() if name in reachable
+                   for candidate in item['symbols']
+                   if candidate['name'] == symbol['name'] and candidate['section'] != 'SHN_UNDEF'
+                   and candidate['visibility'] == 'STV_DEFAULT'
+                   and candidate['binding'] in ('STB_GLOBAL', 'STB_WEAK')
+                   and (candidate.get('version') == symbol.get('version') if symbol.get('version')
+                        else not candidate.get('version') or candidate.get('version_default'))]
+        if (len(matches) != 1 or matches[0][0]['role'] != 'external'
+                or matches[0][1]['type'] != 'STT_OBJECT' or matches[0][1]['size'] != symbol['size']
+                or not isinstance(matches[0][1]['section'], int)
+                or symbol.get('version_library') not in (None, matches[0][0]['soname'])):
+            reject('COPY_RELOCATION', executable['path'], 'COPY provider is not an exact external object: ' + symbol['name'])
+        copy['provider'] = matches[0][0]['soname']
     # No silently changed ELF search-order/weak/preemption policy. Duplicate
     # definitions among selected inputs or versus retained external providers
     # require a richer resolver and are rejected in this prototype.
     definitions = {}
     for item in [executable] + selected + external:
         for symbol in item['symbols']:
+            if item is executable and any(symbol == copy['symbol'] for copy in copies):
+                continue  # loader-owned external import, not an ordinary input definition
             if version_node_symbol(item, symbol):
                 continue
             if symbol['section'] == 'SHN_UNDEF' or symbol['binding'] == 'STB_LOCAL':
@@ -1485,6 +1578,7 @@ def reconstruct(item, args, out, index=0, priority=None):
     if len(ir.modules) != 1:
         reject('MULTIMODULE_INPUT', item['path'], 'one module per ELF required')
     module = ir.modules[0]
+    validate_copy_forwarding(module, item)
     # This standalone converter reconstructs uninstrumented ELF only. It does
     # not own the adaptive RV assembler-option preparation stage; refuse an
     # already-instrumented input rather than silently dropping that contract.
@@ -1692,6 +1786,7 @@ def main():
             elf = ELFFile(stream)
             if elf['e_type'] != 'ET_EXEC' or elf['e_machine'] != executable['machine']:
                 raise RuntimeError('output is not the expected architecture/non-PIE ET_EXEC')
+            validate_linked_copies(elf, executable)
             if executable['machine'] == 'EM_RISCV':
                 validate_linked_riscv_startup(elf, output)
             needed = [t.needed for t in elf.get_section_by_name('.dynamic').iter_tags()

@@ -44,6 +44,22 @@ def validate_dynamic_symbol_names(elf):
             'dynamic symbol name is outside its string table', offset, len(strings)))
 
 
+def unique_symbol_address(symbols, name, copy_names):
+    """Resolve a final definition; only already-validated COPY aliases may coalesce."""
+    matches = symbols.get(name, [])
+    if not matches and name in copy_names:
+        # LLD may use the base spelling. The loader version was checked first.
+        matches = symbols.get(copy_names[name], [])
+    if len(matches) > 1:
+        matches = [symbol for symbol in matches if symbol['st_info']['bind'] != 'STB_LOCAL']
+    identities = [{key: value for key, value in symbol.entry.items() if key != 'st_name'}
+                  for symbol in matches]
+    if name in copy_names and matches and all(identity == identities[0] for identity in identities):
+        matches = matches[:1]
+    require(len(matches) == 1, ('symbol is not a unique definition', name))
+    return matches[0]['st_value']
+
+
 def validate_mode_contract(manifest, *, isa=None, mode=None, target_identification=None):
     """Derive the build contract and refuse requests or components that differ."""
     fields = ('isa', 'mode', 'dift_layout', 'tag_storage', 'target_identification')
@@ -232,20 +248,18 @@ def validate(binary, objects, *, isa=None, mode=None, target_identification=None
         require(elf.elfclass == 64 and elf.little_endian,
                 'check failed: elf.elfclass == 64 and elf.little_endian')
         validate_dynamic_symbol_names(elf)
+        from tools.sharedlib.convert import validate_linked_copies, reconstructed_symbol_name
+        validate_linked_copies(elf, inputs['executable'])
         symbols = {}
         for symbol in elf.get_section_by_name(".symtab").iter_symbols():
             if symbol["st_shndx"] != "SHN_UNDEF":
                 symbols.setdefault(symbol.name, []).append(symbol)
+        copy_names = {alias: copy['symbol']['name']
+                      for copy in inputs['executable'].get('copy_relocations', ())
+                      for alias in (copy['symbol']['name'], reconstructed_symbol_name(copy['symbol']))}
 
         def address(name):
-            matches = symbols.get(name, [])
-            if len(matches) > 1:
-                # A same-named LOCAL definition in another component takes no part in
-                # symbol resolution (e.g. libssl's internal WPACKET_* copy next to the
-                # export-all libcrypto's global WPACKET_* exports).
-                matches = [s for s in matches if s["st_info"]["bind"] != "STB_LOCAL"]
-            require(len(matches) == 1, ("symbol is not a unique definition", name))
-            return matches[0]["st_value"]
+            return unique_symbol_address(symbols, name, copy_names)
 
         needed = [tag.needed for tag in elf.get_section_by_name(".dynamic").iter_tags()
                   if tag.entry.d_tag == "DT_NEEDED"]

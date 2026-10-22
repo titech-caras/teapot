@@ -73,8 +73,9 @@ other warning rejects the conversion.
   non-CRT weak imports are refused.
   The executable's standard `data_start` alias is recognized explicitly.
 - Default/local/hidden definitions, ordinary GOT/PLT calls and data relocations
-  are reconstructed symbolically. COPY relocations and protected/internal
-  visibility are refused. Dynamic symbol interposition via `LD_PRELOAD`, audit
+  are reconstructed symbolically. Executable COPY imports require a validated
+  destination, exact external provider, recovered forwarding and final loader
+  relocation. Other COPY shapes and protected/internal visibility are refused. Dynamic symbol interposition via `LD_PRELOAD`, audit
   modules or hot-swapped providers is outside the contract.
 - External version requirements are retained with `.symver`; selected version
   definitions/references require the explicit resolver above. There is no
