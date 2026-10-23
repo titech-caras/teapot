@@ -34,7 +34,7 @@ FROM scratch AS ddisasm-src
 ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#08e80dab30c1441de6011f232d217950dbcd2a4b /
 
 FROM scratch AS rewriting-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#e47b9e40b2ac2475a52193dcd4cb9def80154caf /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#a00f36ba66f22e80941e740b0b801d64c2e74fbe /
 
 FROM scratch AS lra-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#3116e33fdcfbf1e1c5213d84b478ca31b3651790 /
@@ -210,8 +210,8 @@ COPY --from=lra-src / /tmp/gtirb-live-register-analysis/
 # Their default stages use exactly the revisions pinned in requirements.txt.
 # A GitHub source stage keeps a shallow .git without tags, from which
 # setuptools-scm cannot derive gtirb-rewriting's version. Without tags, use the
-# version a full clone of the pinned commit derives (v0.4.1-11-ge47b9e4).
-ARG GTIRB_REWRITING_VERSION=0.4.2.dev11+ge47b9e40b
+# version a full clone of the pinned commit derives (v0.4.1-12-ga00f36b).
+ARG GTIRB_REWRITING_VERSION=0.4.2.dev12+ga00f36b
 # The fork stages, the requirements.txt pins and the version above must agree, or
 # the image installs other forks than `pip install -r requirements.txt` would.
 # Only a stage's Git HEAD is compared, not its working tree. A stage without
