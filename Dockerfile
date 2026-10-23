@@ -31,7 +31,7 @@ FROM scratch AS pprinter-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#f90fc0baee88a35148e874a2245e73aa54c9b988 /
 
 FROM scratch AS ddisasm-src
-ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#9d524325d2de18d17a58c1e6e2c3fd5fe1dbec3d /
+ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#08e80dab30c1441de6011f232d217950dbcd2a4b /
 
 FROM scratch AS rewriting-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#e47b9e40b2ac2475a52193dcd4cb9def80154caf /
@@ -137,7 +137,7 @@ RUN cmake -S /src/ddisasm -B /build/ddisasm -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
-    -DDDISASM_BUILD_REVISION=b509ae48a6778807115147238e67c782e074ec94 \
+    -DDDISASM_BUILD_REVISION=08e80dab30c1441de6011f232d217950dbcd2a4b \
     -DDDISASM_ENABLE_TESTS=OFF -DDDISASM_GENERATE_MANY=ON \
     -DDDISASM_X86_64=ON -DDDISASM_ARM_64=ON \
     -DDDISASM_RISCV_32=ON -DDDISASM_RISCV_64=ON \
