@@ -336,6 +336,7 @@
     "libcheckpoint_enabled",
     "libcheckpoint_prepare_aarch64_bti_components",
     "libcheckpoint_prepare_aarch64_bti_pac_components",
+    "libcheckpoint_report_channel_init",
     "libcheckpoint_runtime_contract",
     "libcheckpoint_set_vector_state",
     "log2__dift_wrapper__",
