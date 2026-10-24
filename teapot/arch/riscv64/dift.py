@@ -1,4 +1,5 @@
 from capstone import CS_OP_IMM, CS_OP_REG
+from gtirb_live_register_analysis.arch.riscv64 import riscv64_link_register
 from gtirb_rewriting.assembly import Register
 
 
@@ -11,6 +12,9 @@ class RISCV64DiftPatchesMixin:
 
     def dift_should_skip_instruction(self, inst) -> bool:
         mnemonic = inst.mnemonic.lower()
+        if mnemonic in {"jal", "jalr"}:
+            # The decoder expands C.JALR/JR/J too. Only x0 discards the link.
+            return riscv64_link_register(inst) == "zero"
         if self._writes_only_zero(inst):
             return True
         if self.is_stack_pointer_update(inst):
@@ -27,7 +31,8 @@ class RISCV64DiftPatchesMixin:
     @staticmethod
     def dift_clears_destination_tags(inst) -> bool:
         mnemonic = inst.mnemonic.lower()
-        if mnemonic in {"lui", "auipc"}:
+        if mnemonic in {"lui", "auipc", "jal", "jalr"}:
+            # A link is PC + instruction size, not data from the jump target.
             return True
         operands = inst.operands
         if (mnemonic in {"addi", "addiw"} and len(operands) == 3 and operands[1].type == CS_OP_REG and
