@@ -473,6 +473,7 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
     # caller-specific export set and then cache under a narrowed identity.
     selected_symbols = frozenset(name for name, _ in bindings)
     key_data = {"format": "teapot-components-v3", "input_sha256": item["sha256"],
+                "module_basename": Path(item["path"]).name,
                 "executable_interpositions": sorted(item.get('executable_interpositions', ())),
                 "executable_weak_callbacks": sorted(item.get('executable_weak_callbacks', ())),
                 "role": item["role"], "priority": priority, "context": context}

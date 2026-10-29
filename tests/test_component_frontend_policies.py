@@ -42,6 +42,37 @@ class ComponentFrontendPoliciesTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'input identity mismatch'):
                 validate_frontend_policy(manifest)
 
+    def test_component_basename_separates_entries_but_parent_directory_does_not(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, source = Path(temporary), item('selected')
+            source['path'] = '/input/libtest.so.1.2'
+            request = args(False, root)
+            context = {'allow_ambiguous_data_pointers': False, 'bindings': [],
+                       'selected_libraries': [], 'runtime_contract': {'coverage': False}}
+            built = []
+            def build(req, conv, src, key_data, key, selected, priority, directory):
+                built.append(src['path'])
+                result = {'component_id': key, 'coverage': False,
+                          **component_frontend_fields(directory, src, False)}
+                driver.dump(directory / 'key.json', key_data)
+                driver.dump(directory / 'component.json', result)
+                return result
+            with patch.object(driver, 'build_component', side_effect=build), \
+                    patch.object(driver, 'validate_object'):
+                cold = driver.cached_component(request, converter, source, context, frozenset(), 0)
+                moved = driver.cached_component(request, converter,
+                    dict(source, path='/elsewhere/libtest.so.1.2'), context, frozenset(), 0)
+                renamed = driver.cached_component(request, converter,
+                    dict(source, path='/input/libtest.so.1'), context, frozenset(), 0)
+                warm = driver.cached_component(request, converter,
+                    dict(source, path='/input/libtest.so.1'), context, frozenset(), 0)
+            self.assertFalse(cold['cache_hit'])
+            self.assertTrue(moved['cache_hit'])
+            self.assertFalse(renamed['cache_hit'])
+            self.assertTrue(warm['cache_hit'])
+            self.assertNotEqual(cold['component_id'], renamed['component_id'])
+            self.assertEqual(built, ['/input/libtest.so.1.2', '/input/libtest.so.1'])
+
     def test_component_narrowing_separates_cold_and_warm_cache_entries(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, source = Path(temporary), item('selected')
