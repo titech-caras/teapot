@@ -7,9 +7,23 @@ from teapot.fault_risc import (VERSION, ENTRY_SIZE, FLAGS, ISOLATION, ORIG, DEAD
 from teapot.preprocess.fault_sites import MAGIC, HEADER_SIZE
 
 
+def _direct_target(isa, insn):
+    import capstone as cap
+    if isa == "riscv64":
+        raw = int.from_bytes(insn.bytes, "little")
+        direct = raw & 127 in (0x63, 0x6f) if insn.size == 4 else \
+                 raw & 3 == 1 and raw >> 13 in (5, 6, 7)
+    else:
+        direct = cap.CS_GRP_JUMP in insn.groups or cap.CS_GRP_CALL in insn.groups
+    immediate = [op.imm for op in insn.operands if op.type == cap.CS_OP_IMM]
+    if direct and immediate:
+        # Capstone 6 reports absolute branch targets for both RISC backends.
+        return immediate[-1]
+    return None
+
+
 def validate_risc_windows(elf, address):
     from teapot.fault_sites import require, resolve, extent, access_bytes
-    import capstone as cap
     require(elf.elfclass == 64 and elf.little_endian and
             elf["e_machine"] in ("EM_AARCH64", "EM_RISCV"), "v4 requires supported little-endian RISC ELF64")
     isa = "aarch64" if elf["e_machine"] == "EM_AARCH64" else "riscv64"
@@ -208,16 +222,8 @@ def validate_risc_windows(elf, address):
         instructions = tuple(decoder.disasm(access_bytes(elf, begin, finish - begin), begin))
         require(sum(i.size for i in instructions) == finish - begin, "RISC final block not completely decoded")
         for insn in instructions:
-            if isa == "riscv64":
-                raw = int.from_bytes(insn.bytes, "little")
-                direct = raw & 127 in (0x63, 0x6f) if insn.size == 4 else \
-                         raw & 3 == 1 and raw >> 13 in (5, 6, 7)
-            else:
-                direct = cap.CS_GRP_JUMP in insn.groups or cap.CS_GRP_CALL in insn.groups
-            immediate = [op.imm for op in insn.operands if op.type == cap.CS_OP_IMM]
-            if direct and immediate:
-                # Capstone RV immediates are relative; A64 branch operands are absolute.
-                target = immediate[-1] + (insn.address if isa == "riscv64" else 0)
+            target = _direct_target(isa, insn)
+            if target is not None:
                 require(not interior(target) and not in_stub(target), "incoming transfer enters a RISC instruction/island")
         return instructions[-1]
     terminals = set()
