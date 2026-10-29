@@ -11,10 +11,15 @@ from teapot.configs.slots import (
 )
 from teapot.passes.text.dift.base import (
     TextDiftLLVMBase,
+    TextDiftInstructionEffects,
     TEXT_DIFT_LLVM_ORIGINAL_SP_SLOT,
     TEXT_DIFT_LLVM_SCRATCH_SAVE_OFFSET,
     TEXT_DIFT_LLVM_STACK_SP_OFFSET,
 )
+
+
+class _ConditionalZeroEffects(TextDiftInstructionEffects):
+    """A value-dependent tag select can change even an aliased register."""
 
 
 class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase):
@@ -66,7 +71,7 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase):
                 raise ValueError(f"pure-LP64 LLVM DIFT replay contains FP/vector/control state: {line}")
 
     def _czero_operands(self, inst):
-        if not self._pure_lp64 or inst.mnemonic not in {"czero.eqz", "czero.nez"}:
+        if inst.mnemonic not in {"czero.eqz", "czero.nez"}:
             return None
         if len(inst.operands) != 3 or any(op.type != CS_OP_REG for op in inst.operands):
             raise ValueError(f"Malformed RISC-V conditional-zero operands: {inst.op_str}")
@@ -77,16 +82,20 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase):
         effects = super()._instruction_effects(block, inst)
         operands = self._czero_operands(inst)
         if operands is not None:
+            effects = _ConditionalZeroEffects(**vars(effects))
             _, source, condition = operands
             # These results are constants regardless of the condition's value
             # or tag. Mark them before the generic no-change/alias skip rule.
             if (source.name == "zero"
-                    or (condition.name == "zero" and inst.mnemonic == "czero.eqz")
-                    or (inst.mnemonic == "czero.nez" and source == condition)):
-                # NEZ rd,rs,rs is zero for either value of rs, including the
-                # triple-alias case that otherwise hits the unchanged-tag skip.
+                    or (condition.name == "zero" and inst.mnemonic == "czero.eqz")):
                 effects = replace(effects, clear_dest_tags=True)
         return effects
+
+    @staticmethod
+    def _should_skip_effects(effects):
+        if isinstance(effects, _ConditionalZeroEffects):
+            return not effects.regs_write
+        return TextDiftLLVMBase._should_skip_effects(effects)
 
     def _or_instruction_register_tags_into_tag(self, tag, inst, registers,
                                                 capture_operands, *, capture_metadata=True):
@@ -120,12 +129,12 @@ class RISCV64TextDiftPropagationLLVMPass(TextDiftLLVMBase):
                 self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
                 ptr_type=self.DIFT_REG_TAGS_TYPE))
 
-        # The condition can influence either outcome. The value source cannot
-        # influence the zero arm; do not promote its tag on that arm.
-        source_tag, condition_tag = register_tag(source), register_tag(condition)
+        # Lin's rule propagates only the selected source's label. The
+        # condition's label contributes to neither arm.
+        source_tag = register_tag(source)
         selected_tag = self._build_inst(
             f"select i1 {selected}, {self.TAG_TYPE} {source_tag}, {self.TAG_TYPE} 0")
-        self._store(self.TAG_TYPE, self._or(self.TAG_TYPE, condition_tag, selected_tag), tag)
+        self._store(self.TAG_TYPE, selected_tag, tag)
 
     def _get_register_usage(self, asm: str):
         regs = {}
