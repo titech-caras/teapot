@@ -117,7 +117,6 @@ RUN cmake -S /src/pprinter -B /build/pprinter -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DGTIRB_PPRINTER_BUILD_SHARED_LIBS=ON -DGTIRB_PPRINTER_STATIC_DRIVERS=OFF \
     -DGTIRB_PPRINTER_ENABLE_TESTS=OFF \
-    -DGTIRB_PPRINTER_BUILD_REVISION=0107fb639ab60a51a021c60ed93477cfb41557e1 \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
     && cmake --build /build/pprinter --target gtirb-pprinter gtirb-layout \
