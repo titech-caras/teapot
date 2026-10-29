@@ -13,6 +13,7 @@ from teapot.arch.decoders import x64_decoder
 from teapot.configs.runtime import SCRATCHPAD_SIZE
 from teapot.configs.slots import ScratchpadSlots
 from teapot.configs.tags import TAG_ATTACKER, TAG_ATTACKER_INDIRECT, TAG_SECRET, TAG_SECRET_INDIRECT
+from teapot.passes.transient.gadget_policy.mem_operand.x64 import FAST_PATH_TAG_MASK
 
 # (name, encoding, setup turning the address argument in rdi into the operand's registers)
 FORMS = (
@@ -243,7 +244,7 @@ class FastPathDifferentialTests(unittest.TestCase):
                     for (int reg = 0; reg < 15; reg++)
                         if (reg != {fast}) assert(regs_before[reg] == regs_after[reg]);
                     cases++;
-                    fast_cases += !((tags[t] | (id_second >= 0 ? seconds[u] : 0)) & 0x32) && !offset && !granule0[g0];
+                    fast_cases += !((tags[t] | (id_second >= 0 ? seconds[u] : 0)) & {FAST_PATH_TAG_MASK}) && !offset && !granule0[g0];
                 }}
             }}
 
