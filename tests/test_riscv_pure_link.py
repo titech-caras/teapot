@@ -1,10 +1,39 @@
 """Functional objdump text classification, without provider/proof machinery."""
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 import unittest
 
-from teapot.riscv_pure_link import check_disassembly
+from teapot.riscv_pure_link import check_disassembly, check_pure_code
 
 
 class RiscvPureLinkTests(unittest.TestCase):
+    def test_integer_instructions_and_fences_are_accepted(self):
+        self.assertEqual(check_disassembly("  100: add a0,a1,a2\n  104: fence iorw,iorw\n"
+                                           "  108: csrrs a0,cycle,zero\n  10c: ecall"), 4)
+
+    def test_unknown_executable_encodings_are_rejected(self):
+        for instruction in ('.insn 4, 0xf2000053', '.word 0xf2000053',
+                            '.2byte 0xffff', '0xffffffff', '<unknown>', '(bad)'):
+            with self.subTest(instruction=instruction), self.assertRaisesRegex(ValueError, "unknown"):
+                check_disassembly("  100: " + instruction, "fixture")
+
+    @unittest.skipUnless(all(shutil.which('riscv64-linux-gnu-' + tool)
+                             for tool in ('as', 'ld', 'objdump')), 'RISC-V binutils required')
+    def test_integer_isa_elf_with_encoded_fp_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, obj, elf = (root / name for name in ('encoded.s', 'encoded.o', 'encoded.elf'))
+            source.write_text('.text\n.globl _start\n_start:\n.insn 4, 0xf2000053\n'
+                              'addi a0, zero, 0\naddi a7, zero, 93\necall\n')
+            subprocess.run(['riscv64-linux-gnu-as', '-march=rv64ima', '-mabi=lp64',
+                            '-o', str(obj), str(source)], check=True, capture_output=True, timeout=10)
+            subprocess.run(['riscv64-linux-gnu-ld', '--no-relax', '-z', 'separate-code',
+                            '-o', str(elf), str(obj)], check=True, capture_output=True, timeout=10)
+            with self.assertRaisesRegex(ValueError, 'unknown|forbidden'):
+                check_pure_code(elf, 'riscv64-linux-gnu-objdump')
+
     def test_all_float_vector_and_csr_forms_are_rejected(self):
         instructions = ("flw fa0,0(a0)", "fld fa0,0(a0)", "flq fa0,0(a0)",
                         "fadd.h fa0,fa1,fa2", "fmv.x.w a0,fa0", "c.fld fa0,0(a0)",

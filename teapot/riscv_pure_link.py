@@ -6,11 +6,11 @@ import subprocess
 FP_VECTOR_CSRS = {1, 2, 3, 8, 9, 10, 15, 0xc20, 0xc21, 0xc22}
 FP_VECTOR_NAMES = {"fflags", "frm", "fcsr", "vstart", "vxsat", "vxrm", "vcsr",
                    "vl", "vtype", "vlenb"}
-INSTRUCTION = re.compile(r"^\s*[0-9a-f]+:\s+([\w.]+)\s*(.*)$", re.I)
+INSTRUCTION = re.compile(r"^\s*[0-9a-f]+:\s+(\S+)\s*(.*)$", re.I)
 
 
 def check_disassembly(text, source="<disassembly>"):
-    """Reject FP/vector instructions or CSR access; return instruction count."""
+    """Reject unknown encodings, FP/vector instructions or CSR access; return instruction count."""
     count = 0
     for line in text.splitlines():
         match = INSTRUCTION.match(line)
@@ -18,6 +18,11 @@ def check_disassembly(text, source="<disassembly>"):
             continue
         count += 1
         mnemonic, operands = match[1].lower(), match[2].split("#", 1)[0].lower()
+        # Objdump emits directives or raw numbers for encodings it cannot
+        # decode under the ELF's declared ISA. They are executable bytes, so
+        # accepting them would bypass the integer-only check.
+        if not re.fullmatch(r"[a-z][a-z0-9_.]*", mnemonic):
+            raise ValueError(f"{source}: unknown pure instruction: {line.strip()}")
         forbidden = (mnemonic.startswith(("c.f", "v")) or
                      mnemonic.startswith("f") and not mnemonic.startswith("fence"))
         if mnemonic.startswith("csr"):
