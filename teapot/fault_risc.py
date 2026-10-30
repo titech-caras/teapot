@@ -2,7 +2,7 @@
 
 Only the final emitter consumes these recipes. Covered loads and non-relocated
 template words are raw data; relocation-bearing words use ordinary instruction
-relocations. The same pure encoder reconstructs expected final-link bytes.
+relocations. The runtime checks the linked template at startup.
 """
 from dataclasses import dataclass, replace
 import struct

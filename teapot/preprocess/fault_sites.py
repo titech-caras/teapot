@@ -1,7 +1,7 @@
 """Training-only fault metadata. No executable instructions are emitted here.
 
-The final ELF, not GTIRB's provisional layout, is authoritative: a final-link
-validator and the runtime reject reordering, relative overflow or bad bounds.
+The final ELF, not GTIRB's provisional layout, is authoritative: the runtime's
+startup check rejects reordering, relative overflow or bad bounds.
 Every relative value is anchored at its own field; entries need no dynamic
 relocations. The descriptor is retained through the module contract pointer.
 """
@@ -33,7 +33,7 @@ def add_fault_site_table(module, sites, threshold, text_start, text_end):
 
     No NOP slots: a later backend overwrites the access itself. This format
     describes originals and exact copies, but remains training-only. Final
-    validation proves one patchable memory instruction at each PC.
+    startup validation checks one patchable memory instruction at each PC.
     """
     if type(threshold) is not int or not 0 <= threshold <= 255:
         raise ValueError("fault threshold must be an integer in 0..255")

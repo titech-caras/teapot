@@ -80,8 +80,8 @@ def _relative(module, interval, offset, width, target, addend=0, *, anchor=None)
 
 
 def _label(module, block, role, at_end=False):
-    # The block directory must survive assembly in .symtab for final-link
-    # incoming-transfer checks. GNU as deliberately discards .L locals.
+    # Keep the block directory in .symtab for assembly/debug inspection.
+    # GNU as deliberately discards .L locals.
     name = ("__teapot_fault_" if role.startswith(("bb_", "be_")) else ".L__teapot_fault_") + role
     if tuple(module.symbols_named(name)): raise ValueError("duplicate adaptive-fault label")
     symbol = gtirb.Symbol(name=name, payload=block, at_end=at_end, module=module,
@@ -454,7 +454,7 @@ def add_fault_windows(module, section, text_bounds, *, threshold=2, marker=b""):
             disp, end, expr = site.rip
             # ELF cannot encode target-original_pc in a third section. Keep
             # the operand zero in the byte record and carry its self-relative
-            # target separately. Both validators rebuild the original disp32.
+            # target separately. Startup validation rebuilds the original disp32.
             contents[begin + 64 + disp:begin + 64 + disp + 4] = bytes(4)
             _relative(module, table_interval, begin + 88, 4, expr.symbol, expr.offset)
         else:

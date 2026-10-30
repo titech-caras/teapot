@@ -7,7 +7,7 @@ single-threaded, as is the rest of libcheckpoint's scratch storage.
 
 Raw bytes are intentional: printing an instruction can shorten its encoding.
 Relative fields, including a displaced RIP-relative operand, remain symbolic.
-Both final-link and startup validation use the template, not a promise in JSON.
+Startup validation uses the template, not a promise in JSON.
 """
 from dataclasses import dataclass
 from bisect import bisect_left, bisect_right

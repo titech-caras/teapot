@@ -362,14 +362,14 @@ pipeline source-line emission remains unsupported. Adaptive prechecks currently
 require whole-program rewriting and reject component mode explicitly. The
 component assembly driver also uses the same preparation if it receives owned
 scope metadata; the standalone ELF-to-component converter refuses that input.
-Final ELF width, template, reach and page-isolation
-validation remains mandatory. No-scope output passes through byte-identically.
+The runtime checks the linked fault table at startup. No-scope output passes
+through byte-identically.
 For emitted RV v4 output only, `-Wa,--no-pad-sections` is required so GNU as
 does not append bytes beyond the final aligned isolation marker. The metadata-
 checked flag helper is shared by supported assembly entrypoints; ordinary and
 disabled output keep their existing assembler arguments. Link own RV output with
 `-Wl,--no-relax -Wl,-z,separate-code`. Omitting the RV assembler
-flag can produce a linked section that the mandatory final validator refuses.
+flag can produce a linked section that the runtime's startup check refuses.
 Assembly preparation adds no global assembler relaxation flag and changes no
 runtime compilation flags; final-link no-relax is a separate owned-output policy.
 
@@ -383,7 +383,7 @@ Synchronous kernel-generated memory faults at copied loads are transient-only
 and go directly to rollback; asynchronous faults and application notifications
 keep baseline instrumentation-context routing. Handlers that modify interrupted speculative context remain
 unsupported. Later low mappings/address-mode changes while adaptation is on,
-multiple application threads, and unvalidated final ELF files are unsupported;
+multiple application threads, and fault tables rejected at startup are unsupported;
 `TEAPOT_FAULT_ADAPTATION=0` retains original access execution (including required
 RV encoding widening). QEMU checks correctness, never native cache/migration or speed.
 
