@@ -9,6 +9,7 @@ https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst#result-retu
 from collections import defaultdict
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import gtirb
