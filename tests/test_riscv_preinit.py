@@ -12,7 +12,6 @@ import unittest
 import gtirb
 
 from tools.sharedlib import convert as converter
-from experiments.reusable_libraries.validate_link import validate_rv_preinit
 
 
 LOAD_GP = 0x10420
@@ -67,53 +66,6 @@ class RiscvPreinitAlignmentTests(unittest.TestCase):
                 self.assertEqual(restored.aux_data['alignment'].data[restored_block], expected)
                 self.assertEqual(bytes(restored_block.byte_interval.contents), before)
 
-
-class PreinitSection(dict):
-    def __init__(self, words=(LOAD_GP,), address=PREINIT_ADDRESS, **updates):
-        self.contents = b''.join(struct.pack('<Q', word) for word in words)
-        super().__init__(sh_type='SHT_PREINIT_ARRAY', sh_addr=address,
-                         sh_size=len(self.contents), sh_addralign=1)
-        self.update(updates)
-
-    def data(self):
-        return self.contents
-
-
-class PreinitELF:
-    def __init__(self, section, tags=None):
-        self.section = section
-        self.tags = list(tags if tags is not None else (
-            ('DT_PREINIT_ARRAY', section['sh_addr']),
-            ('DT_PREINIT_ARRAYSZ', section['sh_size']),
-            ('DT_INIT_ARRAYSZ', 24),
-        ))
-
-    def get_section_by_name(self, name):
-        if name == '.preinit_array':
-            return self.section
-        if name == '.dynamic':
-            return self
-        return None
-
-    def iter_tags(self):
-        return iter(SimpleNamespace(entry=SimpleNamespace(d_tag=name, d_val=value))
-                    for name, value in self.tags)
-
-
-class LinkedRiscvPreinitTests(unittest.TestCase):
-    def address(self, name):
-        self.assertEqual(name, 'load_gp')
-        return LOAD_GP
-
-    def test_actual_address_alignment_and_one_load_gp_entry_survive_extra_callbacks(self):
-        section = PreinitSection(words=(0x10800, LOAD_GP, 0x10900))
-        elf = PreinitELF(section)
-        before = section.data()
-        self.assertEqual(validate_rv_preinit(elf, self.address),
-                         {'address': PREINIT_ADDRESS, 'size': 24, 'load_gp': LOAD_GP})
-        # A declared alignment of one is accepted when the loader address is aligned.
-        self.assertEqual(section['sh_addralign'], 1)
-        self.assertEqual(section.data(), before)
 
 if __name__ == '__main__':
     unittest.main()

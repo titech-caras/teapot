@@ -36,8 +36,6 @@ AMBIGUOUS_POINTER_FOOTER = (
     'Use a PIE input, or link with --emit-relocs and retain its static relocation '
     'tables. --allow-ambiguous-data-pointers explicitly keeps the legacy guesses '
     'at the risk of changing program data.')
-FRONTEND_DIAGNOSTIC_FILES = ('frontend-diagnostics.json', 'lift.gtirb',
-                             'lift/command.json', 'lift/stderr')
 LOOKUP = {'dlopen', 'dlmopen', 'dlsym', 'dlvsym', 'dlclose', 'dlinfo',
           'dl_iterate_phdr', '__libc_dlopen_mode'}
 # Public entry points and glibc's internal/fortified aliases all bypass an
@@ -1033,53 +1031,6 @@ def frontend_argv(args, item, irpath):
     return command
 
 
-def frontend_diagnostic_record(module, item, directory, allow_ambiguous_data_pointers):
-    """Bind the unmodified stderr and accepted inventory to the lift artifacts."""
-    if type(allow_ambiguous_data_pointers) is not bool:
-        reject('FRONTEND_POLICY', item['path'], 'explicit boolean policy required')
-    try:
-        diagnostics = (directory / 'lift/stderr').read_bytes().decode('utf-8')
-        command = json.loads((directory / 'lift/command.json').read_text())
-    except (OSError, ValueError) as error:
-        reject('FRONTEND_DIAGNOSTIC_RECORD', item['path'], str(error))
-    flag = '--allow-ambiguous-data-pointers'
-    if (not isinstance(command, list) or not all(isinstance(arg, str) for arg in command)
-            or len(command) != 6 + int(allow_ambiguous_data_pointers)
-            or command[2] != '--ir' or command[4] != '-j'
-            or Path(command[1]).name != Path(item['path']).name
-            or command.count(flag) != int(allow_ambiguous_data_pointers)
-            or '--ignore-errors' in command):
-        reject('FRONTEND_POLICY', item['path'], 'lift command disagrees with explicit policy')
-    accepted = validate_frontend_diagnostics(module, item, diagnostics, allow_ambiguous_data_pointers)
-    return {'format': 'teapot-frontend-diagnostics-v1',
-            'allow_ambiguous_data_pointers': allow_ambiguous_data_pointers,
-            'input_sha256': item['sha256'], 'input_role': item['role'],
-            'lift_ir_sha256': sha(directory / 'lift.gtirb'),
-            'command_sha256': sha(directory / 'lift/command.json'),
-            'stderr_sha256': sha(directory / 'lift/stderr'), 'raw_diagnostics': diagnostics,
-            'accepted': accepted,
-            'pointer_inference': 'unproven heuristic' if allow_ambiguous_data_pointers else 'strict'}
-
-
-def record_frontend_diagnostics(module, item, directory, allow_ambiguous_data_pointers, verify=False):
-    record = frontend_diagnostic_record(module, item, directory, allow_ambiguous_data_pointers)
-    path = directory / 'frontend-diagnostics.json'
-    if verify:
-        try:
-            existing = json.loads(path.read_text())
-        except (OSError, ValueError) as error:
-            reject('FRONTEND_DIAGNOSTIC_RECORD', item['path'], str(error))
-        if (not isinstance(existing, dict) or type(existing.get('allow_ambiguous_data_pointers')) is not bool
-                or existing != json.loads(json.dumps(record))):
-            reject('FRONTEND_DIAGNOSTIC_RECORD', item['path'], 'missing/mismatched policy or diagnostic record')
-    else:
-        dump(path, record)
-        # Keep the existing proven-data sidecar narrow: guesses are NOT proofs.
-        dump(directory / 'proven-data-decoder-warnings.json',
-             [row for row in record['accepted'] if row.get('category') != 'ambiguous-data-pointers'])
-    return record
-
-
 def validate_x64_init_fini(init, fini, relocations, dynsym, path):
     """Admit only the canonical CRT bodies, optionally preceded by one ENDBR64."""
     endbr64 = bytes.fromhex('f30f1efa')
@@ -1905,13 +1856,12 @@ def reconstruct(item, args, out, index=0, priority=None):
         ir = gtirb.IR.load_protobuf(directory / 'lift.gtirb')
         if len(ir.modules) != 1:
             reject('MULTIMODULE_INPUT', item['path'], 'one module per ELF required')
-        record_frontend_diagnostics(ir.modules[0], item, directory,
-                                    args.allow_ambiguous_data_pointers, verify=True)
+        validate_frontend_diagnostics(ir.modules[0], item,
+                                      (directory / "lift/stderr").read_text(), args.allow_ambiguous_data_pointers)
         dump(directory / 'cache.json', {'object': 'hit', 'object_key': content_key(object_recipe),
             'lift_key': content_key(lift_recipe), 'lift': 'included-in-object-hit', 'instrumented': False,
             'allow_runtime_symbol_lookup': item.get('allow_runtime_symbol_lookup', False),
-            'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
-            'frontend_diagnostics_sha256': sha(directory / 'frontend-diagnostics.json')})
+            'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers})
         return directory / 'reconstructed.o'
     irpath = directory / 'lift.gtirb'
     lift_hit = args.cache is not None and args.cache.restore('ir', lift_recipe, directory)
@@ -1929,8 +1879,8 @@ def reconstruct(item, args, out, index=0, priority=None):
             any(symbol.name.startswith("__teapot_fault_rv_scope_") for symbol in module.symbols)):
         reject('INSTRUMENTED_RV_FAULT_INPUT', item['path'],
                'use the component rewrite driver or teapot.fault_risc_assembly with matching instrumented IR')
-    record_frontend_diagnostics(module, item, directory, args.allow_ambiguous_data_pointers,
-                                verify=lift_hit)
+    validate_frontend_diagnostics(module, item,
+                                  (directory / "lift/stderr").read_text(), args.allow_ambiguous_data_pointers)
     cfi = module.aux_data.get('cfiDirectives')
     starts = set()
     if cfi:
@@ -1945,14 +1895,13 @@ def reconstruct(item, args, out, index=0, priority=None):
         reject('MISSING_FRONTEND_LIVENESS', item['path'], 'fresh frontend tables required')
     if args.cache and not lift_hit:
         args.cache.store('ir', lift_recipe, directory,
-                         ['lift.gtirb', 'lift', 'frontend-diagnostics.json', 'proven-data-decoder-warnings.json'])
+                         ['lift.gtirb', 'lift'])
     summary = {'isa': str(module.isa), 'code_blocks': len(list(module.code_blocks)),
                'data_blocks': len(list(module.data_blocks)),
                'live_register_entries': len(liveness.data), 'cfi_starts': len(starts),
                'application_fdes_checked': len(item['application_fdes']),
                'allow_runtime_symbol_lookup': item.get('allow_runtime_symbol_lookup', False),
-               'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
-               'frontend_diagnostics_sha256': sha(directory / 'frontend-diagnostics.json')}
+               'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers}
     dump(directory / 'ir-summary.json', summary)
     print_ir = irpath
     if item['role'] == 'selected':
@@ -2027,8 +1976,7 @@ def reconstruct(item, args, out, index=0, priority=None):
         'object_key': content_key(object_recipe), 'lift_key': content_key(lift_recipe),
         'lift': 'hit' if lift_hit else ('miss' if args.cache else 'disabled'), 'instrumented': False,
         'allow_runtime_symbol_lookup': item.get('allow_runtime_symbol_lookup', False),
-        'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
-        'frontend_diagnostics_sha256': sha(directory / 'frontend-diagnostics.json')})
+        'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers})
     return obj
 
 

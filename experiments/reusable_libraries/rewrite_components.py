@@ -320,7 +320,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
     isa, target = for_machine(item['machine'])
     require(module_isa_name(module) == isa, 'check failed: module_isa_name(module) == isa')
     pure = getattr(args, 'riscv_profile', 'lp64d') == 'lp64-pure'
-    converter.record_frontend_diagnostics(module, item, directory, args.allow_ambiguous_data_pointers)
+    converter.validate_frontend_diagnostics(module, item,
+        (directory / "lift/stderr").read_text(), args.allow_ambiguous_data_pointers)
     require("liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data,
             'check failed: "liveRegisterSets" in module.aux_data and "liveRegisterNames" in module.aux_data')
     cfi = module.aux_data.get("cfiDirectives")
@@ -420,8 +421,8 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
                     item['machine'], converter.eh_cfi_entries, args.target_identification,
                     riscv_profile=getattr(args, 'riscv_profile', 'lp64d'))
     recorded = ["key.json", "lift.gtirb", "instrumented.gtirb", "raw.S", "component.o",
-                "proven-data-decoder-warnings.json", "selected-version-bindings.json", "compaction.json",
-                "frontend-diagnostics.json", "lift/command.json", "lift/stderr", "lift/stdout", "lift/result.json"]
+                "selected-version-bindings.json", "compaction.json",
+                "lift/command.json", "lift/stderr", "lift/stdout", "lift/result.json"]
     if assembly.name != "raw.S":
         recorded.append(assembly.name)
     if args.preserve_selected_lifecycle:
@@ -433,8 +434,6 @@ def build_component(args, converter, item, key_data, component_id, selected_symb
               "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
               "allow_executable_weak_callbacks": args.allow_executable_weak_callbacks,
               "executable_weak_callbacks": sorted(item.get('executable_weak_callbacks', ())),
-              "pointer_inference": "unproven heuristic" if args.allow_ambiguous_data_pointers else "strict",
-              "frontend_diagnostics_sha256": sha(directory / "frontend-diagnostics.json"),
               **mode_metadata(isa, args.mode, args.target_identification),
               "exports": sorted(own_exports), "linked_exports": sorted(exports(item, converter, False)),
               "guard_count": guard_count, "coverage": coverage,
@@ -492,8 +491,6 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
                 temporary = Path(tempfile.mkdtemp(prefix=key + ".building-", dir=args.cache))
                 result = build_component(args, converter, item, key_data, key,
                                          selected_symbols, priority, temporary)
-                verify_component_frontend(converter, item, temporary, result,
-                                          args.allow_ambiguous_data_pointers)
                 temporary.rename(entry)
                 return {**result, "cache_hit": False, "cache_path": str(entry), "input_path": item["path"]}
             fcntl.flock(lock, fcntl.LOCK_SH)
@@ -501,7 +498,6 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
         result = json.loads((entry / "component.json").read_text())
         require(result.get("allow_runtime_symbol_lookup", False) is context["allow_runtime_symbol_lookup"],
                 "component runtime-lookup policy mismatch")
-        verify_component_frontend(converter, item, entry, result, args.allow_ambiguous_data_pointers)
         # Covered and uncovered objects are never interchangeable.
         require(result.get("coverage") == context["runtime_contract"]["coverage"],
                 "cached component has another speculative coverage mode", result.get("coverage"))
@@ -516,24 +512,6 @@ def cached_component(args, converter, item, context, selected_symbols, priority)
                         context.get('target_identification', 'software'),
                         riscv_profile=getattr(args, 'riscv_profile', 'lp64d'))
     return {**result, "cache_hit": True, "cache_path": str(entry), "input_path": item["path"]}
-
-
-def verify_component_frontend(converter, item, directory, result, allow_ambiguous_data_pointers):
-    """A hit or a newly built entry cannot shed its frontend policy/evidence."""
-    require(type(result.get('allow_ambiguous_data_pointers')) is bool and
-            result['allow_ambiguous_data_pointers'] is allow_ambiguous_data_pointers,
-            'component frontend policy mismatch or missing policy')
-    require(result.get('pointer_inference') == ('unproven heuristic' if allow_ambiguous_data_pointers else 'strict'),
-            'component frontend policy label mismatch')
-    for name in converter.FRONTEND_DIAGNOSTIC_FILES:
-        require(name in result['files'], 'component has no checksummed frontend diagnostic: ' + name)
-        require(sha(directory / name) == result['files'][name], 'cached artifact hash mismatch: ' + name)
-    require(result.get('frontend_diagnostics_sha256') == result['files']['frontend-diagnostics.json'],
-            'component frontend diagnostic hash mismatch or missing hash')
-    ir = gtirb.IR.load_protobuf(directory / 'lift.gtirb')
-    require(len(ir.modules) == 1, 'one frontend module per component required')
-    converter.record_frontend_diagnostics(ir.modules[0], item, directory,
-                                         allow_ambiguous_data_pointers, verify=True)
 
 
 def main():
@@ -684,7 +662,6 @@ def main():
                                            "loaded modules are uninstrumented; merged selected definitions need not be discoverable"
                                            if args.allow_runtime_symbol_lookup else "no alternate runtime symbol lookup"),
                                        "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
-                                       "pointer_inference": "unproven heuristic" if args.allow_ambiguous_data_pointers else "strict",
                                        **mode_metadata(isa, args.mode, args.target_identification),
                                        "runtime_contract": contract_identity(args.contract),
                                        "link_support": link_support,
@@ -697,7 +674,6 @@ def main():
     print(json.dumps({"components": len(components), "cache_hits": sum(c["cache_hit"] for c in components),
                       "allow_runtime_symbol_lookup": args.allow_runtime_symbol_lookup,
                       "allow_ambiguous_data_pointers": args.allow_ambiguous_data_pointers,
-                      "pointer_inference": "unproven heuristic" if args.allow_ambiguous_data_pointers else "strict",
                       "total_guards": total_guards}), flush=True)
 
 

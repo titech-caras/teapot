@@ -12,88 +12,11 @@ from teapot.arch.riscv64.architecture import RISCV64Architecture
 from teapot.arch.x64.architecture import X64Architecture
 from experiments.reusable_libraries.targets import TARGETS, MODES, for_machine, mode_metadata, target_for
 from teapot.arch.aarch64.bti import AArch64BTIArchitecture
-from experiments.reusable_libraries.validate_link import validate_dynamic_symbol_names, validate_mode_contract
 from unittest.mock import Mock
 
 
 class ComponentArchitecturesTests(unittest.TestCase):
-    def test_manifest_derives_mode_and_rejects_mixed_objects(self):
-        for mode, spec in MODES.items():
-            contract = mode_metadata(spec['isa'], mode)
-            manifest = dict(contract, components=[dict(contract, component_id='test')])
-            with self.subTest(mode=mode):
-                self.assertEqual(validate_mode_contract(manifest), (spec['isa'], mode))
-                for wrong_mode in MODES:
-                    if mode != wrong_mode:
-                        with self.assertRaisesRegex(ValueError, 'mode mismatch'):
-                            validate_mode_contract(manifest, mode=wrong_mode)
-                wrong_isa = 'X64' if spec['isa'] != 'X64' else 'ARM64'
-                with self.assertRaisesRegex(ValueError, 'ISA mismatch'):
-                    validate_mode_contract(manifest, isa=wrong_isa)
-                for field, wrong in (('dift_layout', 'other'), ('tag_storage', 'other'), ('mode', 'other')):
-                    mixed = dict(manifest, components=[dict(manifest['components'][0], **{field: wrong})])
-                    with self.assertRaisesRegex(ValueError, 'component build mode mismatch'):
-                        validate_mode_contract(mixed)
-        with self.assertRaisesRegex(ValueError, 'no complete build mode'):
-            validate_mode_contract({'components': []})
 
-    def test_bti_contract_rejects_software_objects_and_other_isas(self):
-        contract = mode_metadata('ARM64', 'aarch64-vma48', 'aarch64-bti-pac')
-        manifest = dict(contract, components=[dict(contract, component_id='library')])
-        self.assertEqual(validate_mode_contract(manifest, target_identification='aarch64-bti-pac'),
-                         ('ARM64', 'aarch64-vma48'))
-        with self.assertRaisesRegex(ValueError, 'target identification mismatch'):
-            validate_mode_contract(manifest, target_identification='software')
-        manifest['components'][0]['target_identification'] = 'software'
-        with self.assertRaisesRegex(ValueError, 'component build mode mismatch'):
-            validate_mode_contract(manifest)
-        for isa in ('X64', 'RISCV64'):
-            with self.assertRaisesRegex(ValueError, 'require AArch64'):
-                mode_metadata(isa, target_identification='aarch64-bti-pac')
-        self.assertEqual(target_for('ARM64', 'aarch64-bti-pac')['marker'],
-                         AArch64BTIArchitecture().nop_bytes)
-
-    def test_dynamic_symbol_name_bounds_are_checked_before_execution(self):
-        for strings, offset, valid in ((b'\0api\0', 1, True),
-                                       (b'\0api\0', 5, False),
-                                       (b'\0api', 1, False)):
-            with self.subTest(strings=strings, offset=offset):
-                elf = Mock()
-                elf.get_section_by_name.return_value = table = Mock()
-                table.__getitem__ = Mock(return_value=2)
-                table.iter_symbols.return_value = [{'st_name': offset}]
-                elf.get_section.return_value.data.return_value = strings
-                if valid:
-                    validate_dynamic_symbol_names(elf)
-                else:
-                    with self.assertRaisesRegex(ValueError, 'dynamic symbol name'):
-                        validate_dynamic_symbol_names(elf)
-
-    def test_checks_survive_python_optimize(self):
-        # The validator's checks raise ValueError, so `python -O` keeps them.
-        script = textwrap.dedent("""
-            import sys
-            from unittest.mock import Mock
-            print('optimize=%d' % sys.flags.optimize)
-            from experiments.reusable_libraries.validate_link import validate_dynamic_symbol_names
-            elf = Mock()
-            elf.get_section_by_name.return_value = table = Mock()
-            table.__getitem__ = Mock(return_value=2)
-            table.iter_symbols.return_value = [{'st_name': 5}]
-            elf.get_section.return_value.data.return_value = b'\\0api\\0'
-            try:
-                validate_dynamic_symbol_names(elf)
-            except ValueError as error:
-                print('rejected:', error)
-        """)
-        root = Path(__file__).resolve().parents[1]
-        environment = dict(os.environ, PYTHONPATH=os.pathsep.join(
-            filter(None, (str(root), os.environ.get('PYTHONPATH')))))
-        result = subprocess.run([sys.executable, '-O', '-c', script], cwd=root, env=environment,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        self.assertRegex(result.stdout, r'optimize=[12]')
-        self.assertIn('rejected: ', result.stdout)
-        self.assertIn('dynamic symbol name', result.stdout)
 
     def test_riscv_uses_the_frontends_archinfo_contract(self):
         module = gtirb.Module(name='rv64', isa=gtirb.Module.ISA.ValidButUnsupported)

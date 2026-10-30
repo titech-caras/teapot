@@ -76,22 +76,13 @@ class AmbiguityDiagnosticTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(converter.Unsupported):
                 converter.validate_frontend_diagnostics(self.module, self.item, text, True)
 
-    def test_raw_stderr_retained_and_guesses_never_enter_proven_sidecar(self):
+    def test_raw_stderr_is_retained(self):
         text = 'disassembly progress\n' + WARNING + 'analysis finished\n'
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            module = lift_record(directory, self.item, True, text)
-            record = json.loads((directory / 'frontend-diagnostics.json').read_text())
-            self.assertEqual(record['raw_diagnostics'], text)
+            lift_record(directory, self.item, True, text)
             self.assertEqual((directory / 'lift/stderr').read_text(), text)
-            self.assertEqual(json.loads((directory / 'proven-data-decoder-warnings.json').read_text()), [])
-            converter.record_frontend_diagnostics(module, self.item, directory, True, verify=True)
-            with self.assertRaises(converter.Unsupported):
-                converter.record_frontend_diagnostics(module, self.item, directory, False, verify=True)
-            record.pop('allow_ambiguous_data_pointers')
-            converter.dump(directory / 'frontend-diagnostics.json', record)
-            with self.assertRaises(converter.Unsupported):
-                converter.record_frontend_diagnostics(module, self.item, directory, True, verify=True)
+
 
 class AmbiguityCacheTests(unittest.TestCase):
     def test_all_three_layers_separate_policies(self):

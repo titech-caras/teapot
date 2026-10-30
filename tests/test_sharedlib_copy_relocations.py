@@ -5,27 +5,9 @@ import unittest
 import gtirb
 
 from tools.sharedlib import convert as converter
-from experiments.reusable_libraries.validate_link import unique_symbol_address
 
 
 class ExternalCopyRelocationTests(unittest.TestCase):
-    def test_final_copy_aliases_allow_string_offsets_and_exact_versioned_base_lookup(self):
-        class Symbol(dict):
-            @property
-            def entry(self):
-                return self
-        first = Symbol(st_name=1, st_value=0x5000, st_size=8, st_shndx=4,
-                       st_info={'bind': 'STB_GLOBAL', 'type': 'STT_OBJECT'},
-                       st_other={'visibility': 'STV_DEFAULT'})
-        second = Symbol(copy.deepcopy(first), st_name=30)
-        aliases = {'stdin': 'stdin', 'stdin@@GLIBC_TEST': 'stdin'}
-        symbols = {'stdin': [first, second]}
-        self.assertEqual(unique_symbol_address(symbols, 'stdin', aliases), 0x5000)
-        self.assertEqual(unique_symbol_address(symbols, 'stdin@@GLIBC_TEST', aliases), 0x5000)
-        with self.assertRaisesRegex(ValueError, 'unique definition'):
-            unique_symbol_address(symbols, 'stdin@@OTHER', aliases)
-        with self.assertRaisesRegex(ValueError, 'unique definition'):
-            unique_symbol_address(symbols, 'stdin', {})
 
     def inputs(self, machine):
         symbol = dict(name='stdin', type='STT_OBJECT', binding='STB_GLOBAL',

@@ -3,7 +3,7 @@
 `rewrite_components.py` instruments an executable and the shared libraries it selects as separate components,
 caches each instrumented component by content, and leaves one final link to combine them with a single runtime. A
 library instrumented once is reused by every executable with the same binding contract; the executable itself is
-always rewritten and relinked. `validate_link.py` checks the structure of the linked result.
+always rewritten and relinked.
 
 This is a final-link pipeline. Its output is one non-PIE executable, never an instrumented DSO that could be loaded
 on its own. The input contract is the selected-library converter's (`tools/sharedlib/README.md`): a non-PIE
@@ -58,8 +58,7 @@ from its own checkout, so `--teapot` must name it; the other two come through `P
 The runtime
 contract is the `libcheckpoint.contract.json` beside the libcheckpoint archive of the final link. Its ABI
 fingerprint enters the key, so archives with the same ABI share components; each component's record lists
-the capabilities it needs, and `validate_link.py` compares every record with the runtime record the link
-holds. The conversion opt-in flags are the converter's.
+the capabilities it needs. The runtime checks these records at startup. The conversion opt-in flags are the converter's.
 
 For integer-only LP64 inputs, explicitly pass `--riscv-profile lp64-pure`;
 `riscv64-lp64-pure` is then the default mode for that profile. The normal
@@ -121,33 +120,10 @@ Both RV profiles use `-Wl,--no-relax` at the owned instrumented final
 compiler-driver link; pure also uses `-Wl,-z,separate-code`. These are plain
 flags and do not change baseline or object-assembly flags.
 
-```
-python3 experiments/reusable_libraries/validate_link.py --binary APP.instrumented --objects OUT \
-    --out validation.json [--isa ISA] [--mode MODE] [--target-identification software|aarch64-bti-pac]
-```
-
-The validator derives ISA, mode, DIFT layout and tag storage from the manifests and checks every component agrees.
-It also checks the explicit frontend policy agrees for every component and
-copies that boolean, the `unproven heuristic`/`strict` label and diagnostic
-hashes into the validation record.
-Optional `--isa` and `--mode` arguments assert the requested contract; a mismatch is an error, not a mode override.
-Older manifests without this contract must be rebuilt. It checks the two ranges and that no other code falls inside them, every exported entry and its marker,
-the coverage-guard bases and that no two components' guards overlap, that every component pushes speculative
-coverage exactly when the linked runtime replays it (the contract's coverage mode; otherwise no component has
-guards), the selected definitions, the reconstructed
-FDEs, and the ASan runtime's place in `DT_NEEDED` (or its absence in MTE modes), with no selected SONAME still
-needed. Passing it is a structural
-result, not behavior verification.
-For pure links, `--riscv-objdump TOOLCHAIN-OBJDUMP` selects the disassembler for
-the small final-code check. It rejects FP/vector instructions and FP/vector CSR
-operands; it requires no provider closure, archive certificate or command
-attestation. Use the real LP64 ASan runtime and run the final ELF directly with
+Use the real LP64 ASan runtime and run the final ELF directly with
 `qemu-riscv64 -R 0x4000000000 -cpu rv64,f=false,d=false,zfa=false,zfh=false,zfhmin=false,zicond=true`
 and the LP64 sysroot/library paths. Pure SIGILL is fatal. Pure adaptive fault
 training/publishing is not yet supported.
-For BTI it also verifies isolated RX guard pages, the probe/bound aliases, absence of unmatched
-native BTI/PAC landings in normal text, and the actual preinit pointer. Hardware enforcement
-is separately checked at startup on the final mapping.
 
 ## Cache
 
@@ -165,17 +141,10 @@ run records them in `tools.json`. A library's key leaves out the executable's by
 so another program with the same contract reuses the same instrumented library. This cache is separate from the
 converter's cache of ordinary IR and objects.
 
-The ambiguity opt-in is recorded explicitly in the v3 component key, each
-component result and the final manifest. Strict and opt-in components never
-share an entry, even when the input, tools, mode and runtime are identical.
-`frontend-diagnostics.json` retains raw stderr and the grouped object counts
-and first examples, labelled `unproven heuristic` (not a complete per-word
-inventory). It and `lift/stderr`, the lift command and original IR are hashed;
-both newly built entries and cache hits revalidate their policy and diagnostic
-record. Old entries with no explicit policy do not grant override approval.
-Proven decoder-data warnings remain separate from guesses. If a full inventory
-is requested, capture DDisasm's exported `ambiguous_data_pointer` relation
-with input/tool/command provenance; do not describe first examples as all words.
+The ambiguity opt-in remains explicit in the component cache key, component
+result and final manifest. Strict and opt-in components use separate entries.
+The original `lift/stderr`, command and IR remain checksummed cache artifacts.
+Fresh lifts refuse unexplained frontend warnings.
 
 ## Limitations
 

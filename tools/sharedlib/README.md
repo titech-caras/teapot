@@ -151,13 +151,7 @@ fails with `CACHE_INTEGRITY`. Manifests are trusted local metadata, not signatur
 `ET_REL` key is deliberately conservative: even a change of executable or binding order invalidates object reuse, while
 unchanged library IR can still be reused.
 
-The explicit ambiguity boolean enters both stage keys and all result/summary
-records. `frontend-diagnostics.json` binds the original `lift/stderr`, command,
-input and IR hashes. Both IR and object hits revalidate it; missing policy,
-changed diagnostics or a strict/opt-in mismatch fail closed. The existing
-`proven-data-decoder-warnings.json` contains only independently proven decoder
-data warnings, never ambiguity guesses. The new sidecar keeps raw stderr and
-grouped object counts/first examples (not a complete per-word inventory).
-For a full inventory request, capture DDisasm's exported
-`ambiguous_data_pointer` relation with input/tool/command provenance. The
-instrumented-component cache uses the same explicit policy separation.
+The explicit ambiguity boolean enters both stage keys. Strict and opt-in lifts
+use separate cache entries. The original `lift/stderr` and lift command remain
+cached artifacts; unexplained frontend warnings are refused on fresh lifts and
+cache hits. The instrumented-component cache uses the same policy separation.
