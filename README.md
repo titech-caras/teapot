@@ -393,6 +393,15 @@ alike, so an ordinary link works.
 ```shell
 gcc -o a.inst a.inst.S -no-pie -nostartfiles -lcheckpoint -lasan
 ```
+AArch64 adaptive (`--adaptive-fault-precheck`) whole-program links require
+`-Wl,-T,/path/to/teapot/scripts/AArch64AdaptiveFault.ld`. The fragment owns
+`.__transient_end__teapot__`, includes linker-generated thunks in the fault
+copy's bounds, and rounds the final `.teapot_transient` extent to 64 KiB before
+`.plt`. Use the script from the source checkout (it is not included in the
+Python wheel). Omitting it leaves the end symbol undefined and the link fails.
+This fragment is for adaptive software mode; the BTI/PAC layout below has its
+own linker script.
+
 For Teapot-owned RV final links (LP64D and pure), append `-Wl,--no-relax`;
 pure final executables also need `-Wl,-z,separate-code`. This applies to the
 coverage link below as well. Baselines and `-c` assembly commands stay unchanged.

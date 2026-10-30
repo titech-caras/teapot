@@ -56,9 +56,9 @@ class RiscWindowEmissionTests(unittest.TestCase):
             interval, = section.byte_intervals
             self.assertEqual(module.aux_data["alignment"].data[interval], 65536)
             self.assertEqual(interval.size % 65536, 0)
-            self.assertEqual(bounds[1].referent.offset, interval.size)
-            self.assertEqual(module.aux_data["alignment"].data[bounds[1].referent], 65536)
             if isa == "riscv64":
+                self.assertEqual(bounds[1].referent.offset, interval.size)
+                self.assertEqual(module.aux_data["alignment"].data[bounds[1].referent], 65536)
                 self.assertEqual([site.offset for site in sites], [2, 6])
                 self.assertEqual(interval.contents[:2], original[:2])  # input c.nop; none added
                 self.assertEqual(len(module.aux_data[AUX].data), 1)      # one scope for adjacent stubs
@@ -66,6 +66,12 @@ class RiscWindowEmissionTests(unittest.TestCase):
                 self.assertTrue(all(module.aux_data["alignment"].data[site] == 2 for site in sites))
             else:
                 self.assertNotIn(AUX, module.aux_data)
+                self.assertIsInstance(bounds[1].referent, gtirb.ProxyBlock)
+                self.assertEqual(module.aux_data["elfSymbolInfo"].data[bounds[1]],
+                                 (0, "NOTYPE", "GLOBAL", "HIDDEN", 0))
+                for offset in (32, 48):
+                    self.assertIs(table.referent.byte_interval.symbolic_expressions[offset].symbol1,
+                                  bounds[1])
 
     def test_no_original_dead_proof_leaves_alias_uncovered(self):
         for isa in ("aarch64", "riscv64"):

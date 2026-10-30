@@ -219,6 +219,11 @@ def main():
         print("[teapot] Own RV final executable links require -Wl,--no-relax "
               "(lp64-pure also -Wl,-z,separate-code). "
               "Input baselines and assembly-only flags are unchanged.", flush=True)
+    if args.adaptive_fault_precheck and any(module.isa == gtirb.Module.ISA.ARM64 for module in ir.modules):
+        print("[teapot] A64 adaptive final links require "
+              "-Wl,-T,/path/to/teapot/scripts/AArch64AdaptiveFault.ld "
+              "from the Teapot source checkout. The linker owns the final rounded copy end, "
+              "including thunks; omitting the script leaves the end symbol undefined.", flush=True)
     if args.riscv_profile == "lp64-pure":
         print("[teapot] After linking, check the pure final ELF and built libraries with "
               "python -m teapot.riscv_pure_link --objdump TOOLCHAIN-OBJDUMP FILE... . "

@@ -224,15 +224,23 @@ def add_risc_fault_windows(module, section, text_bounds, reg_manager, isa, *, th
     # can intentionally retain interior alignment residues which only the
     # printer resolves. Do not run global layout or modify their metadata here.
     # All new cross-block references are symbolic; the printer/linker establish
-    # their final addresses and the read-only ELF validator checks both ends.
+    # their final addresses. A64 linker thunks must remain inside the copy.
     padding = -interval.size % ISOLATION
     if padding:
         begin = interval.size
         interval.contents = bytes(interval.contents).ljust(begin, b"\0") + bytes(padding)
         interval.size += padding
         gtirb.DataBlock(size=padding, offset=begin, byte_interval=interval)
-    text_bounds[1].referent.offset = interval.size
-    align.data[text_bounds[1].referent] = ISOLATION  # after printed compression/relaxation too
+    if isa == "aarch64":
+        # An input-section end precedes linker-created erratum/range thunks.
+        # Keep every bound reference on this undefined symbol so assembly
+        # cannot fold it into a local section+offset relocation. The required
+        # AArch64AdaptiveFault.ld fragment supplies the final rounded extent.
+        text_bounds[1].referent = gtirb.ProxyBlock(module=module)
+        module.aux_data["elfSymbolInfo"].data[text_bounds[1]] = (0, "NOTYPE", "GLOBAL", "HIDDEN", 0)
+    else:
+        text_bounds[1].referent.offset = interval.size
+        align.data[text_bounds[1].referent] = ISOLATION  # after printed compression/relaxation too
     table_section = gtirb.Section(name=TABLE_SECTION, module=module, flags={
         gtirb.Section.Flag.Readable, gtirb.Section.Flag.Loaded, gtirb.Section.Flag.Initialized})
     set_elf_section_properties(table_section, 1, 2)
