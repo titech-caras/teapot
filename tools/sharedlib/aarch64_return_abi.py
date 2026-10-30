@@ -2,7 +2,7 @@
 
 This is an opt-in proof producer, not a function-name allowlist. Unsupported
 types, split ranges, custom conventions and ambiguous definitions stay unknown.
-The target record is non-loaded metadata with ordinary symbol relocations.
+The component driver carries these records into instrumentation metadata.
 See AAPCS64, "Result return": a 64-bit pointer result is returned in x0.
 https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst#result-return
 """
@@ -10,20 +10,12 @@ from collections import defaultdict
 import hashlib
 import json
 from pathlib import Path
-import re
-import struct
 
 import gtirb
 from elftools.dwarf.descriptions import describe_form_class
 from elftools.elf.elffile import ELFFile
 
-from teapot.utils.return_abi import POINTER_RETURNS, SCHEMA, function_fingerprint
-from teapot.utils.serialization import save_protobuf_ordered
 
-
-SECTION = '.teapot_function_abi'
-RECORD = struct.Struct('<8s32sQQQ')
-MAGIC = b'TPABI001'
 
 
 def sha(path):
@@ -200,172 +192,3 @@ def produce(binary, original_ir):
             rows.append({'id': digest(value), **value})
     return {'format': 'teapot-aarch64-pointer-abi-v1', 'records': rows, 'rejected': rejected,
             'source_elf_sha256': binary_hash, 'source_ir_sha256': ir_hash}
-
-
-def assembly(manifest):
-    result = ['.pushsection ' + SECTION + ',"",%progbits', '.balign 8']
-    for row in manifest['records']:
-        if row['id'] != digest({k: v for k, v in row.items() if k != 'id'}):
-            raise ValueError('ABI manifest identity mismatch')
-        if not re.fullmatch(r'[A-Za-z_.$][A-Za-z0-9_.$]*', row['name']):
-            raise ValueError('unsupported ABI assembly symbol')
-        result += ['.ascii "' + MAGIC.decode() + '"',
-                   '.byte ' + ','.join(str(b) for b in bytes.fromhex(row['id'])),
-                   '.quad ' + row['name'], '.quad .L__teapot_abi_end_' + row['id'], '.quad 1']
-    return '\n'.join(result + ['.popsection', ''])
-
-
-def annotate_assembly(text, manifest):
-    """Bind the actual printed .size endpoint, including printer padding.
-
-    Endpoints cannot be inferred by adding the original ELF size: an ordinary
-    printer can include alignment NOPs or expand an instruction. This inserts
-    only local labels and a non-loaded section into the exact original output.
-    """
-    if '.L__teapot_abi_end_' in text or SECTION in text:
-        raise ValueError('reserved ABI assembly marker collision')
-    rows = {r['name']: r for r in manifest['records']}
-    if len(rows) != len(manifest['records']):
-        raise ValueError('ambiguous ABI assembly names')
-    seen = set()
-    def replace(match):
-        name = match.group(1)
-        if name not in rows:
-            return match.group(0)
-        if match.group(2) != name or name in seen:
-            raise ValueError('ambiguous printed ABI function endpoint')
-        seen.add(name)
-        return '.L__teapot_abi_end_' + rows[name]['id'] + ':\n' + match.group(0)
-    annotated = re.sub(r'^\s*\.size\s+([A-Za-z_.$][A-Za-z0-9_.$]*),[ \t]*\.[ \t]*-[ \t]*'
-                       r'([A-Za-z_.$][A-Za-z0-9_.$]*)[ \t]*$', replace, text, flags=re.MULTILINE)
-    if seen != set(rows):
-        raise ValueError('missing printed ABI function endpoints: ' + str(sorted(set(rows) - seen)[:5]))
-    recovered = re.sub(r'^\.L__teapot_abi_end_[0-9a-f]{64}:\n', '', annotated, flags=re.MULTILINE)
-    if recovered != text:
-        raise ValueError('ABI annotation changed ordinary assembly')
-    return annotated + '\n' + assembly(manifest)
-
-
-def bind(binary, manifest, ir):
-    binary_hash = sha(binary)
-    if len(ir.modules) != 1 or ir.modules[0].isa != gtirb.Module.ISA.ARM64:
-        raise ValueError('one linked AArch64 module required')
-    module = ir.modules[0]
-    if POINTER_RETURNS in module.aux_data:
-        raise ValueError('pointer ABI evidence already present')
-    wanted = {row['id']: row for row in manifest['records']}
-    if len(wanted) != len(manifest['records']) or any(
-            key != digest({k: v for k, v in row.items() if k != 'id'}) for key, row in wanted.items()):
-        raise ValueError('duplicate or altered ABI records')
-    contracts, seen = {}, set()
-    blocks_at, entry_owners = defaultdict(list), defaultdict(list)
-    for block in module.code_blocks:
-        blocks_at[block.address].append(block)
-    for function, entries in module.aux_data['functionEntries'].data.items():
-        for entry in entries:
-            entry_owners[entry].append(function)
-    with Path(binary).open('rb') as stream:
-        elf = ELFFile(stream)
-        checked_elf(elf, executable=True)
-        regions = executable_regions(elf)
-        section = elf.get_section_by_name(SECTION)
-        if section is None or section['sh_type'] != 'SHT_PROGBITS' or section['sh_flags'] or section['sh_size'] % RECORD.size:
-            raise ValueError('missing, loaded or malformed ABI metadata')
-        begin_file, end_file = section['sh_offset'], section['sh_offset'] + section['sh_size']
-        if any(s['p_type'] == 'PT_LOAD' and max(begin_file, s['p_offset']) < min(end_file, s['p_offset'] + s['p_filesz'])
-               for s in elf.iter_segments()):
-            raise ValueError('ABI evidence overlaps a loaded segment')
-        table = elf.get_section_by_name('.symtab')
-        for magic, identity, begin, end, mask in RECORD.iter_unpack(section.data()):
-            identity = identity.hex()
-            if magic != MAGIC or identity not in wanted or identity in seen or mask != 1:
-                raise ValueError('unknown/duplicate ABI identity or return kind')
-            seen.add(identity)
-            row = wanted[identity]
-            symbols = [s for s in table.get_symbol_by_name(row['name']) or () if
-                       s['st_info']['type'] == 'STT_FUNC' and s['st_value'] == begin and s['st_size'] == end - begin]
-            entries = blocks_at[begin]
-            owners = list({key for entry in entries for key in entry_owners[entry]})
-            if end <= begin or len(symbols) != 1 or len(entries) != 1 or len(owners) != 1:
-                raise ValueError('ABI relocation does not identify one printed function extent')
-            members = module.aux_data['functionBlocks'].data[owners[0]]
-            outside = [b for b in members if b.address is None or
-                       not begin <= b.address < b.address + b.size <= end]
-            # DDisasm may assign unreachable inter-function alignment to the
-            # preceding function. Permit only a contiguous, edgeless NOP tail;
-            # it cannot contain an additional return or observed value use.
-            cursor = end
-            roots = module.aux_data['functionEntries'].data[owners[0]]
-            for block in sorted(outside, key=lambda b: b.address if b.address is not None else -1):
-                if (block.address != cursor or block.section != entries[0].section or block in roots or
-                        block.size <= 0 or block.size % 4 or list(block.incoming_edges) or
-                        bytes(block.contents) != bytes.fromhex('1f2003d5') * (block.size // 4)):
-                    raise ValueError('ABI function membership crosses the recorded extent')
-                cursor += block.size
-            for block in members:
-                if bytes(block.contents) != source_bytes(regions, block.address, block.size):
-                    raise ValueError('linked ABI function bytes disagree with current IR')
-            if owners[0] in contracts:
-                raise ValueError('multiple ABI records claim one function')
-            contracts[owners[0]] = (function_fingerprint(module, owners[0]),
-                                   digest({'record': row, 'linked_elf_sha256': binary_hash}))
-    if seen != set(wanted):
-        raise ValueError('missing linked ABI records')
-    module.aux_data[POINTER_RETURNS] = gtirb.AuxData(contracts, SCHEMA)
-    return {'bound_pointer_returns': len(contracts), 'linked_elf_sha256': binary_hash,
-            'scope': 'only verified pointer64 functions; all unknown/aggregate types stay unannotated'}
-
-
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description=__doc__)
-    modes = parser.add_subparsers(dest='mode', required=True)
-    producer = modes.add_parser('produce')
-    producer.add_argument('--binary', type=Path, required=True)
-    producer.add_argument('--ir', type=Path, required=True)
-    producer.add_argument('--manifest', type=Path, required=True)
-    producer.add_argument('--assembly', type=Path, required=True)
-    annotator = modes.add_parser('annotate')
-    annotator.add_argument('--manifest', type=Path, required=True)
-    annotator.add_argument('--input-assembly', type=Path, required=True)
-    annotator.add_argument('--output-assembly', type=Path, required=True)
-    consumer = modes.add_parser('bind')
-    consumer.add_argument('--binary', type=Path, required=True)
-    consumer.add_argument('--manifest', type=Path, required=True)
-    consumer.add_argument('--source-binary', type=Path, required=True)
-    consumer.add_argument('--source-ir', type=Path, required=True)
-    consumer.add_argument('--input-ir', type=Path, required=True)
-    consumer.add_argument('--output-ir', type=Path, required=True)
-    consumer.add_argument('--audit', type=Path, required=True)
-    args = parser.parse_args()
-    if args.mode == 'produce':
-        if args.manifest.exists() or args.assembly.exists():
-            raise ValueError('ABI producer output already exists')
-        result = produce(args.binary, args.ir)
-        args.manifest.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
-        args.assembly.write_text(assembly(result))
-        print(json.dumps({'pointer_records': len(result['records']), 'rejected': len(result['rejected'])}))
-    elif args.mode == 'annotate':
-        if args.output_assembly.exists():
-            raise ValueError('ABI annotated assembly output already exists')
-        manifest = json.loads(args.manifest.read_text())
-        args.output_assembly.write_text(annotate_assembly(args.input_assembly.read_text(), manifest))
-        print(json.dumps({'annotated_functions': len(manifest['records']),
-                          'original_assembly_sha256': sha(args.input_assembly)}))
-    else:
-        if args.output_ir.exists() or args.audit.exists():
-            raise ValueError('ABI consumer output already exists')
-        manifest = json.loads(args.manifest.read_text())
-        if (sha(args.source_binary), sha(args.source_ir)) != (
-                manifest['source_elf_sha256'], manifest['source_ir_sha256']):
-            raise ValueError('ABI source artifacts changed')
-        ir = gtirb.IR.load_protobuf(args.input_ir)
-        result = bind(args.binary, manifest, ir)
-        args.output_ir.parent.mkdir(parents=True, exist_ok=True)
-        save_protobuf_ordered(ir, args.output_ir)
-        args.audit.write_text(json.dumps(result, indent=2) + '\n')
-        print(json.dumps(result))
-
-
-if __name__ == '__main__':
-    main()

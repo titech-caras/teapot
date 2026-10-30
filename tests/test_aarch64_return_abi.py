@@ -1,6 +1,4 @@
 """Debug return contracts are object-bound, narrow and fail closed."""
-import copy
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,14 +9,13 @@ import gtirb
 from elftools.elf.elffile import ELFFile
 
 from tools.sharedlib.aarch64_return_abi import (
-    SECTION, annotate_assembly, bind, digest, produce, dwarf_pointer_definitions)
-from teapot.utils.return_abi import POINTER_RETURNS, SCHEMA, has_pointer_return_contract
+    produce, dwarf_pointer_definitions)
 
 
 class AArch64ReturnAbiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        for executable in ('aarch64-linux-gnu-gcc', 'ddisasm', 'qemu-aarch64'):
+        for executable in ('aarch64-linux-gnu-gcc', 'ddisasm'):
             if shutil.which(executable) is None:
                 raise unittest.SkipTest('required native gate tool missing: ' + executable)
         cls.temporary = tempfile.TemporaryDirectory(prefix='aarch64-return-abi-')
@@ -47,14 +44,6 @@ void _start(void) {
         cls.manifest = produce(cls.root / 'original', cls.root / 'original.gtirb')
         if {r['name'] for r in cls.manifest['records']} != {'pointer_result'}:
             raise AssertionError(cls.manifest)
-        cls.run_command([os.environ.get('PPRINTER_PATH', 'gtirb-pprinter'), '--ir', cls.root / 'original.gtirb',
-                         '--asm', cls.root / 'plain.S', '--policy', 'complete', '--shared', 'no'])
-        cls.plain = (cls.root / 'plain.S').read_text()
-        (cls.root / 'marked.S').write_text(annotate_assembly(cls.plain, cls.manifest))
-        for variant in ('plain', 'marked'):
-            cls.run_command(['aarch64-linux-gnu-gcc', *cls.flags, '-x', 'assembler', cls.root / (variant + '.S'),
-                             '-o', cls.root / variant])
-        cls.run_command(['ddisasm', cls.root / 'marked', '--ir', cls.root / 'linked.gtirb', '-j', '1'])
 
     @classmethod
     def tearDownClass(cls):
@@ -66,9 +55,6 @@ void _start(void) {
         if result.returncode:
             raise AssertionError(str(argv) + '\n' + result.stderr.decode(errors='replace'))
         return result
-
-    def current_ir(self):
-        return gtirb.IR.load_protobuf(self.root / 'linked.gtirb')
 
     def test_linked_emit_relocs_does_not_relocate_dwarf_twice(self):
         binary = self.root / 'retained-relocations'
@@ -82,169 +68,20 @@ void _start(void) {
         self.assertEqual({r['name'] for r in rows}, {'pointer_result'})
         self.assertEqual(rows[0]['address'], self.manifest['records'][0]['address'])
 
-    def test_native_roundtrip_loaded_bytes_and_execution_unchanged(self):
-        def allocated(path):
-            with path.open('rb') as stream:
-                elf = ELFFile(stream)
-                return {s.name: (s['sh_addr'], s['sh_size'], s['sh_flags'],
-                                None if s.name == '.note.gnu.build-id' else s.data())
-                        for s in elf.iter_sections() if s['sh_flags'] & 2}
-        self.assertEqual(allocated(self.root / 'plain'), allocated(self.root / 'marked'))
-        for variant in ('original', 'plain', 'marked'):
-            result = self.run_command(['qemu-aarch64', self.root / variant])
-            self.assertEqual(result.stdout, b'')
-        ir = self.current_ir()
-        result = bind(self.root / 'marked', self.manifest, ir)
-        self.assertEqual(result['bound_pointer_returns'], 1)
-        module = ir.modules[0]
-        function = next(iter(module.aux_data[POINTER_RETURNS].data))
-        self.assertTrue(has_pointer_return_contract(module, function))
-        self.assertEqual(module.aux_data['functionNames'].data[function].name, 'pointer_result')
+    def test_only_dwarf_proved_pointer_returns_are_produced(self):
+        self.assertEqual({row['name'] for row in self.manifest['records']}, {'pointer_result'})
 
-    def test_aggregate_and_integer_returns_remain_unknown(self):
-        ir = self.current_ir()
-        bind(self.root / 'marked', self.manifest, ir)
-        m = ir.modules[0]
-        for key, name in m.aux_data['functionNames'].data.items():
-            if name.name in ('pair_result', 'integer_result'):
-                self.assertFalse(has_pointer_return_contract(m, key))
-
-    def test_absent_link_records_are_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'missing, loaded or malformed'):
-            bind(self.root / 'plain', self.manifest, self.current_ir())
-
-    def test_changed_manifest_identity_rejected(self):
-        manifest = copy.deepcopy(self.manifest)
-        manifest['records'][0]['return_kind'] = 'pretend-aggregate-is-pointer'
-        with self.assertRaisesRegex(ValueError, 'altered ABI records'):
-            bind(self.root / 'marked', manifest, self.current_ir())
-
-    def test_new_manifest_digest_cannot_match_an_old_link_record(self):
-        manifest = copy.deepcopy(self.manifest)
-        row = manifest['records'][0]
-        row['source_elf_sha256'] = 'e' * 64
-        row['id'] = digest({k: v for k, v in row.items() if k != 'id'})
-        with self.assertRaisesRegex(ValueError, 'unknown/duplicate ABI'):
-            bind(self.root / 'marked', manifest, self.current_ir())
-
-    def test_edited_function_bytes_cannot_reuse_a_contract(self):
-        ir = self.current_ir()
-        bind(self.root / 'marked', self.manifest, ir)
-        m = ir.modules[0]
-        function = next(iter(m.aux_data[POINTER_RETURNS].data))
-        block = next(iter(m.aux_data['functionEntries'].data[function]))
-        block.byte_interval.contents[block.offset] ^= 1
-        with self.assertRaisesRegex(ValueError, 'stale pointer-return'):
-            has_pointer_return_contract(m, function)
-
-    def test_changed_current_ir_rejected_before_annotation(self):
-        ir = self.current_ir()
-        block = next(ir.modules[0].symbols_named('pointer_result')).referent
-        block.byte_interval.contents[block.offset] ^= 1
-        with self.assertRaisesRegex(ValueError, 'bytes disagree'):
-            bind(self.root / 'marked', self.manifest, ir)
-        self.assertNotIn(POINTER_RETURNS, ir.modules[0].aux_data)
-
-    def test_extra_return_is_not_treated_as_alignment_padding(self):
-        ir = self.current_ir()
-        module = ir.modules[0]
-        entry = next(module.symbols_named('pointer_result')).referent
-        owner = next(k for k, v in module.aux_data['functionEntries'].data.items() if entry in v)
-        padding = next(b for b in module.aux_data['functionBlocks'].data[owner] if b is not entry)
-        self.assertEqual(bytes(padding.contents), bytes.fromhex('1f2003d5'))
-        padding.byte_interval.contents[padding.offset:padding.offset + 4] = bytes.fromhex('c0035fd6')
-        with self.assertRaisesRegex(ValueError, 'membership crosses'):
-            bind(self.root / 'marked', self.manifest, ir)
-        self.assertNotIn(POINTER_RETURNS, module.aux_data)
-
-    def test_missing_or_duplicate_printed_endpoint_rejected(self):
-        line = next(line for line in self.plain.splitlines() if '.size pointer_result,' in line)
-        for assembly in (self.plain.replace(line, ''), self.plain + '\n' + line + '\n'):
-            with self.assertRaisesRegex(ValueError, 'ABI function endpoint'):
-                annotate_assembly(assembly, self.manifest)
-
-    def test_debug_bound_table_survives_normalization_and_large_growth(self):
-        from gtirb_rewriting._modify.edit import edit_byte_interval
-        from gtirb_rewriting.abi import _ABIS
-        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
-        from teapot.arch.aarch64.architecture import AArch64Architecture
-        from teapot.pipeline import TeapotPipeline
-        from teapot.passes.preprocessing.widen_aarch64_byte_jump_tables_pass import WidenAArch64ByteJumpTablesPass
-
-        with tempfile.TemporaryDirectory(prefix='typed-table-') as directory:
-            root = Path(directory)
-            source = root / 'fixture.c'
-            source.write_text(r'''
-int selected[2];
-__attribute__((noinline, noclone)) void *pointer_switch(unsigned index) {
-    register void *result __asm__("x0");
-    __asm__ volatile(
-        "mov w8,w0\n"
-        "adrp x1,pointer_table\n"
-        "add x1,x1,:lo12:pointer_table\n"
-        "cmp w8,#1\n"
-        "b.hi pointer_case0\n"
-        "ldrb w9,[x1,w8,uxtw]\n"
-        "adr x11,pointer_case0\n"
-        "add x9,x11,w9,sxtb #2\n"
-        "br x9\n"
-        "pointer_case0:\n"
-        "adrp x0,selected\n"
-        "add x0,x0,:lo12:selected\n"
-        "b pointer_return\n"
-        "pointer_case1:\n"
-        "adrp x0,selected\n"
-        "add x0,x0,:lo12:selected\n"
-        "add x0,x0,#4\n"
-        "pointer_return:\n"
-        ".pushsection .rodata\n"
-        ".type pointer_table,%%object\n"
-        "pointer_table: .byte 0,(pointer_case1-pointer_case0)/4\n"
-        ".size pointer_table,.-pointer_table\n"
-        ".popsection\n"
-        : "=r"(result) : "0"((unsigned long)index) : "x1", "x8", "x9", "x11", "cc");
-    return result;
-}
-void _start(void) {
-    long failed = pointer_switch(0) != &selected[0] || pointer_switch(1) != &selected[1]
-                  || pointer_switch(2) != &selected[0];
-    register long status __asm__("x0") = failed;
-    register long call __asm__("x8") = 93;
-    __asm__ volatile("svc #0" : "+r"(status) : "r"(call) : "memory");
-    __builtin_unreachable();
-}
-''')
-            self.run_command(['aarch64-linux-gnu-gcc', *self.flags, '-O1', '-g', source,
-                              '-o', root / 'original'])
-            self.run_command(['ddisasm', root / 'original', '--ir', root / 'original.gtirb', '-j', '1'])
-            manifest = produce(root / 'original', root / 'original.gtirb')
-            self.assertEqual({r['name'] for r in manifest['records']}, {'pointer_switch'})
-            printer = os.environ.get('PPRINTER_PATH', 'gtirb-pprinter')
-            self.run_command([printer, '--ir', root / 'original.gtirb', '--asm', root / 'plain.S'])
-            (root / 'marked.S').write_text(annotate_assembly((root / 'plain.S').read_text(), manifest))
-            self.run_command(['aarch64-linux-gnu-gcc', *self.flags, '-x', 'assembler', root / 'marked.S',
-                              '-o', root / 'marked'])
-            self.run_command(['ddisasm', root / 'marked', '--ir', root / 'linked.gtirb', '-j', '1'])
-            ir = gtirb.IR.load_protobuf(root / 'linked.gtirb')
-            module = ir.modules[0]
-            with self.assertRaisesRegex(ValueError, 'return value'):
-                WidenAArch64ByteJumpTablesPass().end_module(module, [])
-            bind(root / 'marked', manifest, ir)
-            pipeline = TeapotPipeline(ir)
-            pipeline.module = module
-            pipeline.arch = AArch64Architecture()
-            pipeline.abi = pipeline.arch.register_abi(_ABIS)
-            pipeline.decoder = CachedGtirbInstructionDecoder(module.isa)
-            pipeline._run_normalize_passes()
-            self.assertNotIn(POINTER_RETURNS, module.aux_data)
-            block = next(module.symbols_named('pointer_case0')).referent
-            edit_byte_interval(block.byte_interval, block.offset + 4, 0, bytes.fromhex('1f2003d5') * 512)
-            ir.save_protobuf(root / 'grown.gtirb')
-            self.run_command([printer, '--ir', root / 'grown.gtirb', '--asm', root / 'grown.S'])
-            self.run_command(['aarch64-linux-gnu-gcc', *self.flags, '-x', 'assembler', root / 'grown.S',
-                              '-o', root / 'grown'])
-            for variant in ('original', 'marked', 'grown'):
-                self.run_command(['qemu-aarch64', root / variant])
+    def test_changed_original_ir_bytes_are_refused(self):
+        ir = gtirb.IR.load_protobuf(self.root / 'original.gtirb')
+        symbol = next(ir.modules[0].symbols_named('pointer_result'))
+        block = symbol.referent
+        interval = block.byte_interval
+        interval.contents[block.offset] ^= 1
+        path = self.root / 'changed.gtirb'
+        ir.save_protobuf(path)
+        result = produce(self.root / 'original', path)
+        self.assertEqual(result['records'], [])
+        self.assertIn(['pointer_result', 'original IR function bytes changed'], result['rejected'])
 
 
 if __name__ == '__main__':
