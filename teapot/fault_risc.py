@@ -326,26 +326,3 @@ def guard_template(load, recipe):
     return Template(load.isa, struct.pack("<" + "I" * len(words), *words), tuple(relocs), copy, fail)
 
 
-def resolve_template(template, start, targets):
-    """Reconstruct expected bytes for validation/tests, not an ELF mutator."""
-    code = bytearray(template.code)
-    for reloc in template.relocations:
-        word = struct.unpack_from("<I", code, reloc.offset)[0]
-        target = targets[reloc.target]
-        if reloc.kind == "branch":
-            word = branch(template.isa, start + reloc.offset, target)
-        elif reloc.kind == "page":
-            delta = (target >> 12) - ((start + reloc.offset) >> 12)
-            if not -(1 << 20) <= delta < (1 << 20):
-                raise ValueError("A64 ADRP range")
-            word |= (delta & 3) << 29 | ((delta >> 2) & 0x7ffff) << 5
-        elif reloc.kind == "lo12":
-            word |= (target & 4095) << 10
-        else:
-            delta = target - (start + reloc.anchor)
-            high = (delta + 0x800) >> 12
-            if not -(1 << 19) <= high < (1 << 19):
-                raise ValueError("RV AUIPC range")
-            word |= (high & 0xfffff) << 12 if reloc.kind == "hi" else (delta & 4095) << 20
-        struct.pack_into("<I", code, reloc.offset, word)
-    return bytes(code)

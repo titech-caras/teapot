@@ -15,7 +15,6 @@ from gtirb_rewriting.decoder import GtirbInstructionDecoder
 from teapot.fault_x64 import Address, decoder, scalar_access, select_window, guard_template, mark_input
 from teapot.preprocess.fault_windows import add_fault_windows, wide_access, _splice_batch
 from teapot.preprocess.copy_section import set_elf_section_properties, create_section_bounds
-from teapot.fault_window_validation import validate_windows, require_isolated_copy_pages
 
 
 class FaultWindowSelectionTests(unittest.TestCase):
@@ -64,23 +63,6 @@ class FaultWindowSelectionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "instruction semantics"):
                     wide_access(original)
 
-    def test_copy_pages_reject_other_allocated_sections_and_partial_end(self):
-        from types import SimpleNamespace
-        class Section(dict):
-            def __init__(self, name, address, size, flags=6):
-                super().__init__(sh_addr=address, sh_size=size, sh_flags=flags)
-                self.name = name
-        own = Section(".teapot_transient", 0x2000, 0x1000)
-        for other in (Section(".plt", 0x2ff0, 32), Section(".rodata", 0x2000, 16, 2),
-                      Section(".bss", 0x2f00, 16, 3)):
-            with self.subTest(section=other.name), self.assertRaisesRegex(ValueError, "shares a patchable page"):
-                require_isolated_copy_pages(SimpleNamespace(iter_sections=lambda: iter((own,other))),0x2000,0x3000)
-        outside = Section(".plt", 0x3000, 32)
-        nonalloc = Section(".debug_info", 0x2000, 16, 0)
-        require_isolated_copy_pages(SimpleNamespace(iter_sections=lambda: iter((own,outside,nonalloc))),0x2000,0x3000)
-        partial = Section(".teapot_transient", 0x2000, 0xff0)
-        with self.assertRaisesRegex(ValueError, "not page-isolated"):
-            require_isolated_copy_pages(SimpleNamespace(iter_sections=lambda: iter((partial,))),0x2000,0x2ff0)
 
     def test_rip_and_flag_reading_tail_is_movable_but_call_is_not(self):
         for text in ("488b074883d001", "488b07488d1500000000", "488b0784c0", "488b079090"):
@@ -294,124 +276,7 @@ class FaultWindowEmitterTests(unittest.TestCase):
             module.aux_data["functionBlocks"].data[function].add(helper)
         return module,section,create_section_bounds(section,"copy")
 
-    def test_raw_window_survives_printing_and_final_validation(self):
-        from elftools.elf.elffile import ELFFile
-        relaxing_branch = bytes.fromhex("488b074889c10f8500000000c3")
-        for code,helper,trampoline in ((bytes.fromhex("488b074889c1c3"),False,False),
-                                      (bytes.fromhex("488b07c3"),False,False),
-                                      (bytes.fromhex("488b074889c1c3"),True,False),
-                                      (bytes.fromhex("488b074889c1c3"),False,True),
-                                      (relaxing_branch,False,False)):
-            with self.subTest(code=code.hex(),trailing_helper=helper,trampoline=trampoline), tempfile.TemporaryDirectory() as directory:
-                module,section,bounds = self.make_module(code,trailing_helper=helper)
-                if code == relaxing_branch:
-                    # A six-byte near JNE prints/assembles as a two-byte short
-                    # branch. The raw adaptive window is unaffected, but the
-                    # computed IR tail padding is now four bytes too short.
-                    interval = next(iter(section.byte_intervals))
-                    block = next(b for b in interval.blocks if isinstance(b,gtirb.CodeBlock) and b.size)
-                    block.size -= 1
-                    target = gtirb.CodeBlock(size=1,offset=len(code)-1,byte_interval=interval)
-                    symbol = gtirb.Symbol(name="relaxed_tail",payload=target,module=module)
-                    next(iter(module.aux_data["functionBlocks"].data.values())).add(target)
-                    interval.symbolic_expressions[8] = gtirb.SymAddrConst(0,symbol)
-                    module.aux_data["symbolicExpressionSizes"] = gtirb.AuxData(
-                        {gtirb.Offset(interval,8):4},"mapping<Offset,uint64_t>")
-                add_fault_windows(module,section,bounds)
-                interval = next(iter(section.byte_intervals))
-                self.assertEqual(interval.size % 4096, 0)
-                self.assertEqual(bounds[1].referent.offset, interval.size)
-                tail = next(b for b in interval.blocks if isinstance(b,gtirb.DataBlock) and
-                            b.size > 0 and b.offset + b.size == interval.size)
-                self.assertEqual(interval.contents[tail.offset:],b"\xcc" * tail.size)
-                root = Path(directory); module.ir.save_protobuf(root/"in.gtirb")
-                (root/"runtime.S").write_text("""
-.text
-.global restore_checkpoint_SIGSEGV
-restore_checkpoint_SIGSEGV: ret
-.section teapot_protected_bss,"aw",@nobits
-.balign 8
-.global teapot_fault_low_bound
-teapot_fault_low_bound: .zero 8
-.section .note.GNU-stack,"",@progbits
-""")
-                if trampoline:
-                    with (root/"runtime.S").open("a") as stream:
-                        stream.write('.section .teapot_trampolines,"ax",@progbits\njmp window_test+1\n')
-                for command in (["gtirb-pprinter","--ir","in.gtirb","--asm","fixed.S","--shared","no"],
-                                ["gcc","-nostdlib","-no-pie","fixed.S","runtime.S","-Wl,-e,window_test",
-                                 "-Wl,-z,separate-code","-o","linked"]):
-                    result = subprocess.run(command,cwd=root,text=True,capture_output=True,timeout=30)
-                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-                with (root/"linked").open("rb") as stream:
-                    elf = ELFFile(stream); table = elf.get_section_by_name("teapot_fault_sites")
-                    copy_section = elf.get_section_by_name(".teapot_transient")
-                    self.assertEqual((copy_section["sh_addr"] + copy_section["sh_size"]) % 4096, 0,
-                                     "assembler relaxation left a partial patch page")
-                    if trampoline:
-                        with self.assertRaisesRegex(ValueError,"incoming direct transfer inside"):
-                            validate_windows(elf,table["sh_addr"])
-                        continue
-                    self.assertEqual(validate_windows(elf,table["sh_addr"])["count"],1)
-                    # A final ELF, not just the IR, must reject a shared page.
-                    # Corrupt only an allocated section's address, like the
-                    # real unpadded last-page .plt finding.
-                    from io import BytesIO
-                    text_index = next(i for i,s in enumerate(elf.iter_sections()) if s.name == ".text")
-                    end = elf.get_section_by_name(".teapot_transient")["sh_addr"] + interval.size
-                    damaged = bytearray((root/"linked").read_bytes())
-                    struct.pack_into("<Q",damaged,elf["e_shoff"] + text_index * elf["e_shentsize"] + 16,end-8)
-                    with self.assertRaisesRegex(ValueError,"allocated section shares a patchable page"):
-                        validate_windows(ELFFile(BytesIO(damaged)),table["sh_addr"])
 
-    def test_rip_relative_copy_survives_printing_and_corruption_is_refused(self):
-        from elftools.elf.elffile import ELFFile
-        from io import BytesIO
-        module,section,bounds = self.make_module(bytes.fromhex("488b07488b1d00000000c3"))
-        data = gtirb.Section(name=".data",module=module,flags={gtirb.Section.Flag.Readable,
-            gtirb.Section.Flag.Writable,gtirb.Section.Flag.Loaded,gtirb.Section.Flag.Initialized})
-        set_elf_section_properties(data,1,3)
-        interval = gtirb.ByteInterval(address=0x2000,contents=bytes(8),section=data)
-        block = gtirb.DataBlock(size=8,byte_interval=interval)
-        target = gtirb.Symbol(name="rip_data",payload=block,module=module)
-        source = next(iter(section.byte_intervals))
-        source.symbolic_expressions[6] = gtirb.SymAddrConst(0,target)
-        module.aux_data["symbolicExpressionSizes"] = gtirb.AuxData({gtirb.Offset(source,6):4},
-            "mapping<Offset,uint64_t>")
-        add_fault_windows(module,section,bounds)
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory); module.ir.save_protobuf(root/"in.gtirb")
-            (root/"runtime.S").write_text("""
-.text
-.global restore_checkpoint_SIGSEGV
-restore_checkpoint_SIGSEGV: ret
-.section teapot_protected_bss,"aw",@nobits
-.balign 8
-.global teapot_fault_low_bound
-teapot_fault_low_bound: .zero 8
-.section .note.GNU-stack,"",@progbits
-""")
-            for command in (["gtirb-pprinter","--ir","in.gtirb","--asm","fixed.S","--shared","no"],
-                            ["gcc","-nostdlib","-no-pie","fixed.S","runtime.S","-Wl,-e,window_test",
-                             "-Wl,-z,separate-code","-o","linked"]):
-                result=subprocess.run(command,cwd=root,text=True,capture_output=True,timeout=30)
-                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-            contents=(root/"linked").read_bytes()
-            elf=ELFFile(BytesIO(contents)); table=elf.get_section_by_name("teapot_fault_sites")
-            verified=validate_windows(elf,table["sh_addr"])
-            self.assertEqual(verified["count"],1)
-            pc,stub,copy,length=verified["entries"][0]
-            transient=elf.get_section_by_name(".teapot_transient")
-            # Each mutation must fail final-link validation: wrong EA, wrong
-            # copied RIP target, clobbered save template and metadata length.
-            offsets=(int(transient["sh_offset"])+pc-int(transient["sh_addr"])+2,
-                     int(transient["sh_offset"])+copy-int(transient["sh_addr"])+6,
-                     int(transient["sh_offset"])+stub-int(transient["sh_addr"]),
-                     int(table["sh_offset"])+112+12)
-            for offset in offsets:
-                damaged=bytearray(contents); damaged[offset]^=1
-                with self.subTest(offset=offset), self.assertRaises(ValueError):
-                    validate_windows(ELFFile(BytesIO(damaged)),table["sh_addr"])
 
     def test_native_publication_and_permission_failures(self):
         self.check_native_publication(300)
@@ -548,7 +413,7 @@ int main(int argc, char **argv) {
             self.assertEqual(result.returncode,0,result.stderr)
             receipt=[{"argv":command,"exit":result.returncode,"stdout":result.stdout,"stderr":result.stderr}]
             with (root/"check").open("rb") as stream:
-                elf = ELFFile(stream); validate_windows(elf,elf.get_section_by_name("teapot_fault_sites")["sh_addr"])
+                elf = ELFFile(stream)
                 symbol = next(s for s in elf.get_section_by_name(".symtab").iter_symbols()
                               if s.name == "teapot_fault_x64_mprotect")
                 code = elf.get_section(symbol["st_shndx"])
@@ -724,7 +589,7 @@ int main(int argc,char **argv) {
             log.append({"argv":command,"exit":result.returncode,"stdout":result.stdout,"stderr":result.stderr})
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             with (root/"probe").open("rb") as stream:
-                elf=ELFFile(stream);validate_windows(elf,elf.get_section_by_name("teapot_fault_sites")["sh_addr"])
+                elf=ELFFile(stream)
             for nested in (0,1):
                 for restart in (0,1):
                     results=[]

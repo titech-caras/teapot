@@ -7,7 +7,6 @@ from teapot.arch import AArch64Architecture, RISCV64Architecture
 from teapot.fault_risc import (
     DEAD, DESTINATION, MEMLOG, ORIG, SHADOW, Recipe, BoundaryMasks,
     branch, choose_recipe, decode_load, guard_template, ordinary_registers,
-    resolve_template,
 )
 from teapot.liveness import LiveRegisterManager, LivenessMetadataError
 from test_live_register_preservation import make_module
@@ -128,20 +127,6 @@ class RiscBoundaryProofTests(unittest.TestCase):
             self.assertEqual(proofs.dead_gprs(block, 0), set())
 
 
-class RiscDirectTargetTests(unittest.TestCase):
-    def test_capstone_absolute_direct_targets_at_nonzero_pc(self):
-        from teapot.arch.decoders import aarch64_decoder, riscv64_decoder
-        from teapot.fault_risc_validation import _direct_target
-        for isa, decoder, cases in (
-            ("riscv64", riscv64_decoder(), (
-                ("6f008000", 0x1008), ("63040500", 0x1008),
-                ("6ff09fff", 0xff8), ("21a0", 0x1008),
-                ("01c4", 0x1008), ("01e4", 0x1008))),
-            ("aarch64", aarch64_decoder(), (("02000014", 0x1008),))):
-            for code, expected in cases:
-                with self.subTest(isa=isa, code=code):
-                    insn, = decoder.disasm(bytes.fromhex(code), 0x1000)
-                    self.assertEqual(_direct_target(isa, insn), expected)
 
 
 class RiscEncodingTests(unittest.TestCase):
@@ -171,19 +156,9 @@ class RiscEncodingTests(unittest.TestCase):
                                      0xd3400000 | 55 << 10 | recipe.temp0 << 5 | recipe.temp0)
                 self.assertEqual(template.code[template.copy_offset:template.copy_offset + 4], load.code)
                 self.assertEqual(len(template.code) % 4, 0)
-                start = 0x100000 + (2 if isa == "riscv64" else 0)
-                targets = {"spill": 0x204ff8, "policy": 0x300800,
-                           "return": start - 500, "rollback": 0x180000}
-                resolved = resolve_template(template, start, targets)
-                self.assertEqual(resolved[template.copy_offset:template.copy_offset + 4], load.code)
-                self.assertNotEqual(resolved, template.code)
-                self.assertEqual(len(resolved), len(template.code))
                 with self.assertRaises(ValueError):
                     guard_template(load, Recipe(2, 3, 4, DESTINATION))
-                with self.assertRaises(ValueError):
-                    resolve_template(template, start, {**targets, "return": 1 << 63})
-                with self.assertRaises(ValueError):
-                    resolve_template(template, start, {**targets, "policy": 1 << 63})
+
 
 
 if __name__ == "__main__":

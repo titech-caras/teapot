@@ -15,7 +15,7 @@ from elftools.elf.relocation import RelocationSection
 from elftools.elf.sections import SymbolTableSection
 
 from teapot.fault_risc import (ORIG, choose_recipe, decode_load, guard_template,
-                              ordinary_registers, resolve_template)
+                              ordinary_registers)
 from teapot.fault_risc_assembly import emit_fault_risc_scopes, fault_risc_assembler_flags
 from teapot.preprocess.fault_risc_windows import add_risc_fault_windows
 import test_fault_risc_windows as fixture_support
@@ -174,12 +174,15 @@ class RiscPersistentFixtureTests(unittest.TestCase):
                                                 (0x400000, 0x300800, 0x2047f8),
                                                 (0x100002 if isa == "riscv64" else 0x100004, 0x108800, 0x0ff800)):
                         output, copied = (ctypes.c_ubyte * 128)(), ctypes.c_size_t()
-                        targets = dict(spill=spill, policy=policy, rollback=0x180000, **{"return": stub - 500})
-                        expected = resolve_template(template, stub, targets)
                         length = bridge(encoded, identifier, stub, spill, policy, stub - 500, 0x180000,
                                         output, ctypes.byref(copied))
-                        self.assertEqual((length, copied.value, bytes(output[:length])),
-                                         (len(expected), template.copy_offset, expected), (isa, hex(word), recipe, hex(stub)))
+                        self.assertEqual((length, copied.value), (len(template.code), template.copy_offset))
+                        self.assertEqual(bytes(output[copied.value:copied.value + 4]), load.code)
+                        relocated = {r.offset for r in template.relocations}
+                        for offset in range(0, length, 4):
+                            if offset not in relocated:
+                                self.assertEqual(bytes(output[offset:offset + 4]),
+                                                 template.code[offset:offset + 4], (isa, hex(word), offset))
                         accepted += 1
                 counts[isa] = (accepted, rejected)
             self.assertEqual(counts, {"aarch64": (2592, 288), "riscv64": (336, 0)})

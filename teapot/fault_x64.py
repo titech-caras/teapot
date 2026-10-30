@@ -186,14 +186,6 @@ def guard_template(address, window):
     return bytes(code), tuple(r for r in relocations if r[1] != "fail"), copy
 
 
-def instantiate_guard(address, window, pc, targets):
-    code, relocations, copy = guard_template(address, window)
-    code = bytearray(code)
-    for offset, key, addend in relocations:
-        relative = targets[key] - (pc + offset) + addend
-        if not -(1 << 31) <= relative < (1 << 31): raise ValueError("fault stub rel32 out of reach")
-        struct.pack_into("<i", code, offset, relative)
-    return bytes(code), copy
 
 
 def mark_input(section, decoder):
