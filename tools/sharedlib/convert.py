@@ -414,6 +414,7 @@ def resolve_selected_symbol_versions(module, item, selected_sonames):
         reject('RESERVED_VERSION_SYMBOL', item['path'], 'input uses the reconstruction namespace')
     changes = []
     defaults = []
+    renamed_imports = {}
     for symbol, (index, hidden) in list(entries.items()):
         if symbol.name in nodes and info.get(symbol, (0, '', '', '', 0))[-1] == 0xfff1:
             continue  # Absolute version-node metadata, not a callable export.
@@ -430,8 +431,22 @@ def resolve_selected_symbol_versions(module, item, selected_sonames):
                         'linker_name': alias, 'definition': is_definition})
         if is_definition and not hidden:
             defaults.append((original, symbol))
+        if not is_definition:
+            renamed_imports[symbol] = (original, alias)
         symbol.name = alias
         del entries[symbol]
+    # Loader facts name the original import. Carry its exact symbol identity
+    # through the selected-version rename, retaining mismatched facts so the
+    # GOT normalizer still refuses an inconsistent loader/forwarding relation.
+    from teapot.passes.preprocessing.normalize_aarch64_got_anchors_pass import GOT_RELOCATIONS
+    got = module.aux_data.get(GOT_RELOCATIONS)
+    if got is not None:
+        for offset, (kind, name, addend, imported) in list(got.data.items()):
+            stored = offset.element_id.symbolic_expressions.get(offset.displacement)
+            if isinstance(stored, gtirb.SymAddrConst) and stored.symbol in renamed_imports:
+                original, alias = renamed_imports[stored.symbol]
+                if imported and name == original:
+                    got.data[offset] = (kind, alias, addend, imported)
     for name, symbol in defaults:
         existing = list(module.symbols_named(name))
         if existing:
