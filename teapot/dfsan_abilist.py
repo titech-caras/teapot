@@ -9,9 +9,10 @@ takes only that category. As in DFSan, a call to a function that is
 - functional gives its result the union of its arguments' tags;
 - discard, unlisted, or custom without a wrapper gives its result no tag.
 
-Floating-point and vector registers carry no tags: only integer and pointer
-arguments and results take part, and on lp64 RISC-V every scalar, since its
-floating-point values travel in integer registers.
+Integer and pointer arguments and results take part everywhere. Floating-point
+ones take part on x64, whose DIFT tags the xmm registers, and on lp64 RISC-V,
+where they travel in integer registers; AArch64 and lp64d RISC-V tag no
+floating-point registers, and x87 long doubles live in memory.
 """
 from fnmatch import fnmatchcase
 from functools import lru_cache
@@ -28,6 +29,8 @@ INTEGER_ARGUMENTS = {
     "riscv64": tuple(f"a{i}" for i in range(8)),
 }
 INTEGER_RESULTS = {"x64": ("rax", "rdx"), "aarch64": ("x0", "x1"), "riscv64": ("a0", "a1")}
+FLOAT_ARGUMENTS = {"x64": tuple(f"xmm{i}" for i in range(8))}
+FLOAT_RESULTS = {"x64": ("xmm0", "xmm1")}
 
 
 class AbiList:
@@ -81,7 +84,7 @@ def functional_prototypes() -> Dict[str, Tuple[str, Tuple[str, ...]]]:
 
 
 def _integer_slots(arch: str, value_type: str, soft_float: bool) -> int:
-    """How many integer registers a value of value_type occupies (0: untracked)."""
+    """How many integer registers a value of value_type occupies (0: none)."""
     if value_type in ("int", "pointer"):
         return 1
     if arch == "riscv64" and value_type == "longdouble":
@@ -91,22 +94,35 @@ def _integer_slots(arch: str, value_type: str, soft_float: bool) -> int:
     return 0  # FP/vector registers, or x87 long doubles in memory
 
 
+def _in_float_register(arch: str, value_type: str) -> bool:
+    """Whether a value of value_type travels in a tagged floating-point register."""
+    return arch in FLOAT_RESULTS and value_type in ("float", "double")
+
+
 def call_effect(arch: str, name: str, *, soft_float: bool = False) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
     """(argument registers, result registers) of a call to an uninstrumented ``name``.
 
     After the call each result register's tag is the union of the argument
     registers' tags; with no argument registers it is untagged. A call without
-    a functional prototype untags both result registers, covering two-register
-    results. The runtime's wrappers are not covered here: DiftExtCallPass
-    redirects those calls.
+    a functional prototype untags every result register, covering two-register
+    and floating-point results. The runtime's wrappers are not covered here:
+    DiftExtCallPass redirects those calls.
     """
     if category(name) != "functional":
-        return (), INTEGER_RESULTS[arch]
+        return (), INTEGER_RESULTS[arch] + FLOAT_RESULTS.get(arch, ())
     return_type, parameter_types = functional_prototypes()[name]
-    arguments = []
+    integers, floats = INTEGER_ARGUMENTS[arch], FLOAT_ARGUMENTS.get(arch, ())
+    reads, used_integers, used_floats = [], 0, 0
     for parameter_type in parameter_types:
-        arguments.extend(range(len(arguments), len(arguments) + _integer_slots(arch, parameter_type, soft_float)))
-    available = INTEGER_ARGUMENTS[arch]
-    reads = tuple(available[i] for i in arguments if i < len(available))
-    writes = INTEGER_RESULTS[arch][:_integer_slots(arch, return_type, soft_float)]
-    return reads, writes
+        if _in_float_register(arch, parameter_type):
+            reads.extend(floats[used_floats:used_floats + 1])
+            used_floats += 1
+        else:
+            slots = _integer_slots(arch, parameter_type, soft_float)
+            reads.extend(integers[used_integers:used_integers + slots])
+            used_integers += slots
+    if _in_float_register(arch, return_type):
+        writes = FLOAT_RESULTS[arch][:1]
+    else:
+        writes = INTEGER_RESULTS[arch][:_integer_slots(arch, return_type, soft_float)]
+    return tuple(reads), writes

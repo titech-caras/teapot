@@ -252,7 +252,8 @@ attributes #0 = {{ "no-builtins" }}
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         self._reset()
         if self.external_calls is not None:
-            self._external_call_tags(self.external_calls.on_return(block, self.section, self.decoder))
+            self._external_call_tags(self.external_calls.on_return(
+                block, self.section, self.decoder, live=self._live_at_start(function, block)))
 
         super().visit_code_block(block, function)
 
@@ -261,6 +262,17 @@ attributes #0 = {{ "no-builtins" }}
         instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
         index = self._block_flush_index(instructions)
         self._flush_dift(block, function, index, sum(i.size for i in instructions[:index]))
+
+    def _live_at_start(self, function, block):
+        """live(names): those of the register names live where block starts.
+        A register the lift's masks do not cover counts as live."""
+        if function is None:
+            return None
+        abi = self.reg_manager.abi
+        live = self.reg_manager.live_registers(function, block, 0)
+        covered = set(self.reg_manager.registers)
+        return lambda names: tuple(name for name in names
+                                   if abi.get_register(name) in live or abi.get_register(name) not in covered)
 
     def _external_call_tags(self, effect):
         """DFSan's result tags for an unwrapped library call: each result register

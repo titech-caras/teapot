@@ -85,6 +85,11 @@ class ExternalCallTags:
     writes tags. A tail jump, or a call whose return block is also reached
     otherwise, gets it before the call instead: the callee does not touch tags
     itself. Wrapped calls and instrumented component providers are excluded.
+
+    In the return block, a result register that is dead there keeps its tag:
+    it is written before it is read. A register the call may change that is
+    live there besides the results keeps its tag too, since the code relies on
+    the callee preserving it (as __fentry__ preserves the argument registers).
     """
 
     def __init__(self, arch_name: str, *, soft_float: bool = False, linked_function_symbols=frozenset()):
@@ -99,17 +104,20 @@ class ExternalCallTags:
             return None
         return self._effect(block, section, decoder)
 
-    def on_return(self, block: gtirb.CodeBlock, section: gtirb.Section, decoder):
-        """The effect to apply first in block, when block is a call's own return block."""
+    def on_return(self, block: gtirb.CodeBlock, section: gtirb.Section, decoder, live=None):
+        """The effect to apply first in block, when block is a call's own return block.
+
+        live(names): those of the register names live where block starts.
+        """
         incoming = list(block.incoming_edges)
         if len(incoming) != 1 or not isinstance(incoming[0].source, gtirb.CodeBlock):
             return None
         caller = incoming[0].source
         if _private_return_block(caller) is not block:
             return None
-        return self._effect(caller, section, decoder)
+        return self._effect(caller, section, decoder, live)
 
-    def _effect(self, block, section, decoder):
+    def _effect(self, block, section, decoder, live=None):
         symbols = external_call_symbols(block, section, decoder, unconditional=True)
         if not symbols:
             return None
@@ -127,6 +135,8 @@ class ExternalCallTags:
         if category(name) is None:
             self.unlisted.add(name)
         reads, writes = call_effect(self.arch_name, name, soft_float=self.soft_float)
+        if live is not None:
+            writes = tuple(live(writes))
         if not writes or (len(writes) == 1 and reads == writes):
             return None  # nothing, or a register that keeps its own tag
         return reads, writes

@@ -57,17 +57,23 @@ fun:typo=disacrd  # not a category
 
 class CallEffectTests(unittest.TestCase):
     def test_discard_and_unlisted_results_are_untagged(self):
-        # Both result registers, for two-register results such as ldiv's.
+        # Both result registers, for two-register results such as ldiv's, and
+        # on x64 the floating-point ones, for strtod's.
         for name in ("fprintf", "strtok", "malloc"):
-            self.assertEqual(call_effect("x64", name), ((), ("rax", "rdx")))
+            self.assertEqual(call_effect("x64", name), ((), ("rax", "rdx", "xmm0", "xmm1")))
             self.assertEqual(call_effect("aarch64", name), ((), ("x0", "x1")))
             self.assertEqual(call_effect("riscv64", name), ((), ("a0", "a1")))
 
     def test_functional_results_join_integer_arguments(self):
         self.assertEqual(call_effect("x64", "isdigit"), (("rdi",), ("rax",)))
         self.assertEqual(call_effect("riscv64", "isdigit"), (("a0",), ("a0",)))
-        # Hard-float values are untracked; an integer predicate of one is untagged.
-        self.assertEqual(call_effect("x64", "isnan"), ((), ("rax",)))
+        # x64 tags its xmm registers, numbered apart from the integer ones.
+        self.assertEqual(call_effect("x64", "isnan"), (("xmm0",), ("rax",)))
+        self.assertEqual(call_effect("x64", "pow"), (("xmm0", "xmm1"), ("xmm0",)))
+        self.assertEqual(call_effect("x64", "modf"), (("xmm0", "rdi"), ("xmm0",)))
+        self.assertEqual(call_effect("x64", "expl"), ((), ()))  # x87, in memory
+        # AArch64 and lp64d RISC-V tag no floating-point registers.
+        self.assertEqual(call_effect("aarch64", "isnan"), ((), ("x0",)))
         self.assertEqual(call_effect("aarch64", "pow"), ((), ()))
         self.assertEqual(call_effect("riscv64", "pow"), ((), ()))
         # lp64 passes doubles in integer registers; RV long doubles use a pair.
@@ -77,7 +83,7 @@ class CallEffectTests(unittest.TestCase):
 
 
 class ExternalCallTagsTests(unittest.TestCase):
-    def call(self, name, *, conditional=False, linked=(), defined=False, returns=0):
+    def call(self, name, *, conditional=False, linked=(), defined=False, returns=0, live=None):
         ir = gtirb.IR()
         module = gtirb.Module(
             name="a.out", isa=gtirb.Module.ISA.ValidButUnsupported,
@@ -114,7 +120,9 @@ class ExternalCallTagsTests(unittest.TestCase):
                 ir.cfg.add(gtirb.Edge(stub, self.returned, gtirb.Edge.Label(type=gtirb.EdgeType.Branch)))
         tags = ExternalCallTags("riscv64", linked_function_symbols=linked)
         decoder = GtirbInstructionDecoder(module.isa)
-        self.after = tags.on_return(self.returned, text, decoder) if self.returned is not None else None
+        if live is not None:
+            live = (lambda names, live=set(live): tuple(name for name in names if name in live))
+        self.after = tags.on_return(self.returned, text, decoder, live) if self.returned is not None else None
         return tags.before_call(caller, text, decoder), tags
 
     def test_unwrapped_import_gets_its_dfsan_effect(self):
@@ -131,6 +139,19 @@ class ExternalCallTagsTests(unittest.TestCase):
         self.assertEqual(self.after, ((), ("a0", "a1")))
         # A return block reached otherwise keeps the effect before the call.
         self.assertEqual(self.call("getenv", returns=2)[0], ((), ("a0", "a1")))
+        self.assertIsNone(self.after)
+
+    def test_return_block_liveness_selects_the_result_registers(self):
+        # A dead result register is written before it is read.
+        self.call("getenv", returns=1, live={"a0", "s0"})
+        self.assertEqual(self.after, ((), ("a0",)))
+        self.call("getenv", returns=1, live={"s0"})
+        self.assertIsNone(self.after)
+        # A live pair half still joins the whole argument pair.
+        self.call("expl", returns=1, live={"a0"})
+        self.assertEqual(self.after, (("a0", "a1"), ("a0",)))
+        # Other registers the call may change keep their tags.
+        self.call("isdigit", returns=1, live={"a0", "a1", "a2", "s1"})
         self.assertIsNone(self.after)
 
     def test_identity_wrapped_linked_defined_and_conditional_calls_are_left_alone(self):
@@ -165,6 +186,18 @@ class TextDiftCallTests(unittest.TestCase):
 
     def test_no_effect_emits_nothing(self):
         self.assertEqual(self.ir(None), "")
+
+    def test_registers_outside_the_lift_masks_count_as_live(self):
+        arch = X64Architecture()
+        abi = arch.abi
+        reg_manager = SimpleNamespace(
+            abi=abi, registers=[abi.get_register(name) for name in ("rax", "rdx", "rdi")],
+            live_registers=lambda function, block, index: {abi.get_register("rax")})
+        dift = X64TextDiftPropagationLLVMPass(reg_manager, None, None, arch,
+                                              dift_layout=SimpleNamespace(xor_mask=0))
+        live = dift._live_at_start(object(), None)
+        self.assertEqual(live(("rax", "rdx", "xmm0", "xmm1")), ("rax", "xmm0", "xmm1"))
+        self.assertIsNone(dift._live_at_start(None, None))
 
 
 if __name__ == "__main__":
