@@ -174,6 +174,17 @@ runs the same complete check (`refuse_reserved_names` in `teapot/pipeline.py`)
 on each component's untouched lift, before its converter localizes symbols and
 renames versioned ones.
 
+With DIFT, a call to a library function Teapot does not instrument follows
+DFSan's ABI lists (`teapot/dfsan_abilist.py`): Teapot's own
+`teapot/dfsan/teapot_abilist.txt`, then LLVM's `done_abilist.txt`, vendored
+unmodified. A function the runtime has a wrapper for (the `__dift_wrapper__`
+names in `runtime_exports.json`) is redirected to it. Before any other call, the
+result register's tag is set: for a functional function, the union of its
+integer arguments' tags (`teapot/dfsan/functional_prototypes.txt`, written by
+`tools/dfsan_prototypes.py`); otherwise, as for discard and unlisted functions,
+no tag. Floating-point and vector registers carry no tags. The rewrite log names
+the called functions that are on neither list.
+
 See [`libcheckpoint/README.md`](libcheckpoint/README.md) for runtime
 build options, shared AArch64 shadow-stack configuration, ASan/MTE tag-storage requirements, DIFT layout profiles,
 optional wrapper libraries, and architecture-specific qemu notes.

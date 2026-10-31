@@ -52,6 +52,9 @@ class TextDiftLLVMBase(DiftPassBase):
     ALLOCATE_INST_PATCH_REGISTERS = False
     ALLOCATE_BLOCK_PATCH_REGISTERS = False
     REPLAY_SYMBOLS = frozenset({"dift_reg_tags", "scratchpad"})
+    # DFSan's rule for library calls DiftExtCallPass leaves unwrapped
+    # (ExternalCallTags), set by the pipeline; None leaves their tags alone.
+    external_calls = None
 
     def __init__(self, reg_manager: LiveRegisterManager, section: gtirb.Section, decoder: GtirbInstructionDecoder,
                  arch: Architecture, *, dift_layout, insert_memlog: bool = False):
@@ -252,8 +255,23 @@ attributes #0 = {{ "no-builtins" }}
         super().visit_code_block(block, function)
 
         instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
+        self._external_call_tags(block, instructions)
         index = self._block_flush_index(instructions)
         self._flush_dift(block, function, index, sum(i.size for i in instructions[:index]))
+
+    def _external_call_tags(self, block: gtirb.CodeBlock, instructions):
+        """DFSan's result tags for a final call to an unwrapped library function."""
+        if self.external_calls is None or not instructions:
+            return
+        effect = self.external_calls.effect(block, self.section, self.decoder)
+        if effect is None:
+            return
+        reads, writes = (frozenset(self.reg_manager.abi.get_register(name) for name in names)
+                         for names in effect)
+        call = instructions[-1]
+        self._build_dift_patch(block, call, sum(i.size for i in instructions[:-1]), reads, writes,
+                               clear_dest_tags=not reads, mem_read=None, mem_write=None,
+                               mem_write_size=0, emit_capture=False)
 
     def _block_flush_index(self, instructions):
         return len(instructions) - 1

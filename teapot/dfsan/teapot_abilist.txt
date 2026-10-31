@@ -1,0 +1,40 @@
+# Teapot's own DFSan ABI list. Teapot reads it before LLVM's done_abilist.txt
+# (vendored unmodified from llvm-project 2249530a922bd19e1a1418c5c6bf1b37ba6c1567,
+# compiler-rt/lib/dfsan); a function named here takes only this category.
+# A custom function is redirected to the runtime's name__dift_wrapper__ when the
+# runtime has one (libcheckpoint src/dift_wrappers); any other custom function is
+# treated as discard.
+
+# Taint sources: Teapot's wrappers tag what they read as attacker input.
+fun:read=custom
+fun:fread=custom
+fun:fread_unlocked=custom
+fun:fgets=custom
+fun:getc=custom
+fun:fgetc=custom
+fun:getchar=custom
+
+# DFSan's own allocator clears and moves the shadow; Teapot's wrappers do it.
+fun:malloc=custom
+fun:calloc=custom
+fun:realloc=custom
+
+# Not in LLVM's list.
+fun:atoi=custom
+fun:__memcpy_chk=custom
+fun:__memset_chk=custom
+fun:__strncat_chk=custom
+fun:inflate=custom
+fun:inflateInit_=custom
+fun:inflateInit2_=custom
+fun:inflateEnd=custom
+fun:inflateReset=custom
+fun:inflateReset2=custom
+fun:inflateResetKeep=custom
+fun:inflateCopy=custom
+fun:inflateSetDictionary=custom
+fun:inflatePrime=custom
+fun:inflateSync=custom
+
+# LLVM's list spells this one "disacrd".
+fun:pthread_attr_getstackaddr=discard

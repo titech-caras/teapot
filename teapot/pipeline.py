@@ -16,7 +16,7 @@ from teapot.configs.runtime import (
 from teapot.passes.common.asan_stack_pass import AsanStackPass
 from teapot.passes.common.insert_checkpoints_pass import InsertCheckpointsPass
 from teapot.passes.preprocessing.create_trampolines_pass import CreateTrampolinesPass
-from teapot.passes.preprocessing.dift_ext_call_pass import DiftExtCallPass
+from teapot.passes.preprocessing.dift_ext_call_pass import DiftExtCallPass, ExternalCallTags
 from teapot.passes.preprocessing.import_symbols_pass import ImportSymbolsPass
 from teapot.passes.preprocessing.normalize_data_block_alignment_pass import (
     NormalizeDataBlockAlignmentPass,
@@ -762,9 +762,15 @@ class TeapotPipeline:
             if self.options.enable_checkpoints:
                 pass_manager.add(TextSkippedTransformRestorePass(
                     self.text_section, self.arch))
+        external_calls = None
         if self.options.enable_dift:
-            pass_manager.add(self.arch.create_text_dift_pass(
-                self.reg_manager, self.text_section, self.decoder, self.dift_layout))
+            dift_pass = self.arch.create_text_dift_pass(
+                self.reg_manager, self.text_section, self.decoder, self.dift_layout)
+            dift_pass.external_calls = external_calls = ExternalCallTags(
+                self.arch.name, soft_float=self.riscv_profile == "lp64-pure",
+                linked_function_symbols=(self.linked_component.linked_function_symbols
+                                         if self.linked_component else ()))
+            pass_manager.add(dift_pass)
         # Register checkpoints while offsets still identify application branches: once RISC-V
         # target guards split blocks, an original UUID can belong to a guard's checkpoint_cnt
         # branch inside its first-spill lifetime.
@@ -775,6 +781,9 @@ class TeapotPipeline:
                 self.checkpoint_df_blocks, self.options.force_checkpoint_df,
                 self.checkpoint_vector_cases))
         self._run_pass_manager(pass_manager, "text")
+        if external_calls is not None and external_calls.unlisted:
+            print("[teapot] library calls on no DFSan ABI list, results untagged: "
+                  + ", ".join(sorted(external_calls.unlisted)), flush=True)
 
     def _run_transient_passes(self):
         pass_manager = PassManager()

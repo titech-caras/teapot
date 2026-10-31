@@ -1,6 +1,7 @@
 import re
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
+from teapot.runtime_exports import runtime_owned_names
 
 
 BLACKLIST_FUNCTION_NAMES = [
@@ -92,46 +93,13 @@ MAPPING_WRAPPER_FUNCTIONS = {
     for name in ("mprotect", "pkey_mprotect", "munmap", "mremap", "mmap", "mmap64")
 }
 
-# DIFT wraps only these external calls. Known gaps, whose results should carry taint: sprintf,
-# __isoc99_sscanf and __isoc23_strtol.
-DIFT_WRAPPER_FUNCTIONS = {
-    "read",
-    "fread",
-    "fread_unlocked",
-    "fgets",
-    "getc",
-    "fgetc",
-    "getchar",
-    "calloc",
-    "atoi",
-    "strtol",
-    "strtoul",
-    "strlen",
-    "strdup",
-    "memcpy",
-    "__memcpy_chk",
-    "memmove",
-    "strcpy",
-    "strcat",
-    "strncat",
-    "__strncat_chk",
-    "strncpy",
-    "memset",
-    "__memset_chk",
-    "strtok_r",
-    "strtok",
-    "strstr",
-    "inet_pton",
-    "log2",
-    "inflate",
-    "inflateInit_", "inflateInit2_", "inflateEnd",
-    "inflateReset", "inflateReset2", "inflateResetKeep", "inflateCopy",
-    "inflateSetDictionary", "inflatePrime", "inflateSync",
-}
-
-# The runtime's DIFT wrapper of a function: its name with this suffix (DIFT_WRAPPER in
-# libcheckpoint/include/dift_support.h).
+# The runtime's DIFT wrapper of a function: its name with this suffix
+# (libcheckpoint src/dift_wrappers).
 DIFT_WRAPPER_SUFFIX = "__dift_wrapper__"
+# The external calls DIFT redirects: every function the runtime has a wrapper for.
+# Other library calls follow DFSan's ABI lists (teapot/dfsan_abilist.py).
+DIFT_WRAPPER_FUNCTIONS = frozenset(
+    name[:-len(DIFT_WRAPPER_SUFFIX)] for name in runtime_owned_names() if name.endswith(DIFT_WRAPPER_SUFFIX))
 
 
 def wrapper_destinations(wrap_dift_calls: bool, enforce_mappings: bool = False) -> dict:

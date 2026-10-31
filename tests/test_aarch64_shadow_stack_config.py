@@ -48,7 +48,7 @@ class AArch64ShadowStackConfigTests(unittest.TestCase):
             build = root / "build"
             command = ["cmake", "-S", str(ROOT / "libcheckpoint"), "-B", str(build),
                        "-DBUILD_TESTING=OFF", "-DCHECKPOINT_ARCH=x86_64",
-                       "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DTEAPOT_BUILD_DIFT_MATH_WRAPPERS=ON",
+                       "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DTEAPOT_BUILD_DIFT_ZLIB_WRAPPERS=ON",
                        f"-DTEAPOT_AARCH64_SHADOW_STACK_CONFIG={header}"]
             result = subprocess.run(command, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -61,7 +61,7 @@ class AArch64ShadowStackConfigTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual((prefix / "include/aarch64_shadow_stack.h").read_bytes(), header.read_bytes())
             for entry in json.loads((build / "compile_commands.json").read_text()):
-                if Path(entry["file"]).name not in ("checkpoint.c", "dift_math_wrappers.c"):
+                if Path(entry["file"]).name not in ("checkpoint.c", "dift_zlib_wrappers.c"):
                     continue
                 arguments = shlex.split(entry["command"])
                 output_index = arguments.index("-o")

@@ -12,7 +12,7 @@ setup(
     # llvmlite 0.49 (LLVM 22) needs Python 3.10.
     python_requires='>=3.10',
     packages=find_packages(),
-    package_data={'teapot': ['runtime_exports.json']},
+    package_data={'teapot': ['runtime_exports.json', 'dfsan/*.txt', 'dfsan/LICENSE.TXT']},
     platforms='any',
     install_requires=REQUIREMENTS,
     entry_points={

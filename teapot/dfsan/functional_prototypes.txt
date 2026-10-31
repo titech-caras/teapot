@@ -1,0 +1,57 @@
+# The return and parameter types of the functions done_abilist.txt calls
+# functional, from the C library headers (tools/dfsan_prototypes.py writes it).
+# Types: int (any integer), pointer, float, double, longdouble.
+isalpha int int
+isdigit int int
+isprint int int
+isxdigit int int
+isalnum int int
+ispunct int int
+isspace int int
+tolower int int
+_tolower int int
+toupper int int
+__isinf int double
+__isinff int float
+__signbit int double
+__signbitf int float
+__signbitl int longdouble
+btowc int int
+exp double double
+exp2 double double
+expf float float
+expl longdouble longdouble
+fabs double double
+finite int double
+finitef int float
+finitel int longdouble
+floor double double
+fmod double double double
+isinf int double
+isinff int float
+isinfl int longdouble
+isnan int double
+isnanf int float
+isnanl int longdouble
+log double double
+log1p double double
+log1pf float float
+log1pl longdouble longdouble
+log2 double double
+log2f float float
+log2l longdouble longdouble
+modf double double pointer
+nextafter double double double
+nextafterf float float float
+nextafterl longdouble longdouble longdouble
+nexttoward double double longdouble
+nexttowardf float float longdouble
+nexttowardl longdouble longdouble longdouble
+pow double double double
+powf float float float
+powl longdouble longdouble longdouble
+round double double
+sqrt double double
+sqrtf float float
+sqrtl longdouble longdouble
+wctob int int
