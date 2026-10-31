@@ -23,8 +23,8 @@ import importlib.metadata
 INSPECTED_VERSIONS = {
     "gtirb": "2.3.2",
     "gtirb-layout": "1.0.0",
-    # lin-toto/gtirb-rewriting 6844db2, as requirements.txt and the Dockerfile pin it.
-    "gtirb-rewriting": "0.4.2.dev17+g6844db2dd",
+    # lin-toto/gtirb-rewriting 6ca9a93, as requirements.txt and the Dockerfile pin it.
+    "gtirb-rewriting": "0.4.2.dev18+g6ca9a93",
 }
 
 _verified = set()

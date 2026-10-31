@@ -31,10 +31,10 @@ FROM scratch AS pprinter-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-pprinter.git#f90fc0baee88a35148e874a2245e73aa54c9b988 /
 
 FROM scratch AS ddisasm-src
-ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#35fb03292328d641b7a73f20c9987f7640b9e366 /
+ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#c998393bb5fb1b4bcfe27d6c5982f7d700e126c9 /
 
 FROM scratch AS rewriting-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#6844db2dd4ee876b3499efed489f7ee3cd2ad1d2 /
+ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#6ca9a937f5807094faaa833953ef524f821227fb /
 
 FROM scratch AS lra-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#3116e33fdcfbf1e1c5213d84b478ca31b3651790 /
@@ -136,7 +136,7 @@ RUN cmake -S /src/ddisasm -B /build/ddisasm -G Ninja \
     -DCMAKE_INSTALL_RPATH=/opt/teapot-frontend/lib \
     -DCAPSTONE=/opt/teapot-frontend/lib/libcapstone.so \
     -DCSTOOL=/opt/teapot-frontend/bin/cstool \
-    -DDDISASM_BUILD_REVISION=35fb03292328d641b7a73f20c9987f7640b9e366 \
+    -DDDISASM_BUILD_REVISION=c998393bb5fb1b4bcfe27d6c5982f7d700e126c9 \
     -DDDISASM_ENABLE_TESTS=OFF -DDDISASM_GENERATE_MANY=ON \
     -DDDISASM_X86_64=ON -DDDISASM_ARM_64=ON \
     -DDDISASM_RISCV_32=ON -DDDISASM_RISCV_64=ON \
@@ -209,8 +209,8 @@ COPY --from=lra-src / /tmp/gtirb-live-register-analysis/
 # Their default stages use exactly the revisions pinned in requirements.txt.
 # A GitHub source stage keeps a shallow .git without tags, from which
 # setuptools-scm cannot derive gtirb-rewriting's version. Without tags, use the
-# version a full clone of the pinned commit derives (v0.4.1-17-g6844db2dd).
-ARG GTIRB_REWRITING_VERSION=0.4.2.dev17+g6844db2dd
+# version a full clone of the pinned commit derives (v0.4.1-18-g6ca9a93).
+ARG GTIRB_REWRITING_VERSION=0.4.2.dev18+g6ca9a93
 # The fork stages, the requirements.txt pins and the version above must agree, or
 # the image installs other forks than `pip install -r requirements.txt` would.
 # Only a stage's Git HEAD is compared, not its working tree. A stage without

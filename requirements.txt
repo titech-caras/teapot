@@ -2,7 +2,7 @@ capstone==6.0.0a11
 # teapot/utils/dependencies.py: the deterministic layout and the ordered GTIRB writer use private parts
 # of gtirb 2.3.2, gtirb-layout 1.0.0 and the gtirb-rewriting commit below, and refuse other versions.
 gtirb>=2.0.0
-gtirb-rewriting @ git+https://github.com/lin-toto/gtirb-rewriting.git@6844db2dd4ee876b3499efed489f7ee3cd2ad1d2
+gtirb-rewriting @ git+https://github.com/lin-toto/gtirb-rewriting.git@6ca9a937f5807094faaa833953ef524f821227fb
 gtirb-functions>=1.0.9
 gtirb-capstone>=1.1.2
 gtirb-live-register-analysis @ git+https://github.com/lin-toto/gtirb-live-register-analysis@3116e33fdcfbf1e1c5213d84b478ca31b3651790
