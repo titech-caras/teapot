@@ -5,6 +5,7 @@ the input's intervals, including a block that does not start its interval, and
 gives Teapot's own sections an explicit alignment.
 """
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import gtirb
@@ -105,6 +106,33 @@ class DeterministicLayoutTests(unittest.TestCase):
         module, _, added = build(explicit_new=False)
         settle_layout(module)
         self.assertTrue(any(interval.address % TEAPOT_SECTION_ALIGNMENT for interval in added))
+
+    def test_rewriting_version_requires_public_version_and_pinned_revision(self):
+        root = Path(__file__).resolve().parents[1]
+        pin = next(line for line in (root / "requirements.txt").read_text().splitlines()
+                   if line.startswith("gtirb-rewriting @ "))
+        revision = pin.rsplit("@", 1)[1]
+        self.assertIn("gtirb-rewriting.git#" + revision, (root / "Dockerfile").read_text())
+        public = dependencies.INSPECTED_VERSIONS["gtirb-rewriting"].partition("+")[0]
+        accepted = [public + "+g" + revision[:length] for length in (7, 9, 40)]
+        wrong = revision[:8] + ("0" if revision[8] != "0" else "1")
+        refused = [public + "+g" + wrong, "9.9.9+g" + revision[:9],
+                   public + "+g" + revision[:6], public + "+g" + revision[:9] + ".dirty",
+                   public, public + "+g" + revision + "0"]
+        verified = set(dependencies._verified)
+        try:
+            for version in accepted + refused:
+                with self.subTest(version=version), mock.patch.object(
+                        dependencies.importlib.metadata, "version", return_value=version):
+                    dependencies._verified.clear()
+                    if version in accepted:
+                        dependencies.require_inspected("gtirb-rewriting")
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            dependencies.require_inspected("gtirb-rewriting")
+        finally:
+            dependencies._verified.clear()
+            dependencies._verified.update(verified)
 
     def test_uninspected_dependency_versions_are_refused(self):
         verified = set(dependencies._verified)

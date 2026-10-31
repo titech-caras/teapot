@@ -208,8 +208,9 @@ COPY --from=lra-src / /tmp/gtirb-live-register-analysis/
 # Named contexts also allow the unpublished Python dependency commits to build.
 # Their default stages use exactly the revisions pinned in requirements.txt.
 # A GitHub source stage keeps a shallow .git without tags, from which
-# setuptools-scm cannot derive gtirb-rewriting's version. Without tags, use the
-# version a full clone of the pinned commit derives (v0.4.1-18-g6ca9a93).
+# setuptools-scm cannot derive gtirb-rewriting's version. The fallback uses the
+# inspected public version and a checked prefix of the pinned Git revision;
+# tagged builds may emit a different abbreviation length for that same revision.
 ARG GTIRB_REWRITING_VERSION=0.4.2.dev18+g6ca9a93
 # The fork stages, the requirements.txt pins and the version above must agree, or
 # the image installs other forks than `pip install -r requirements.txt` would.
