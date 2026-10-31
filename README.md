@@ -264,12 +264,11 @@ By default DDisasm refuses ambiguous absolute data words. Its explicit
 warns that address-shaped integers may be corrupted by relayout. The same
 default-false opt-in is available in `tools/sharedlib/convert.py` and
 `experiments/reusable_libraries/rewrite_components.py`, and must be selected
-explicitly at each entry point or fresh lift. These drivers retain the warning
-and grouped object counts/first examples as **unproven heuristic** diagnostics,
-not data-pointer proofs. Strict and opt-in artifacts have distinct recovered-IR,
-ordinary-object and instrumented-component cache keys, and hits revalidate
-checksummed diagnostic records. Opting in does not relax ABI-typed pointer
-arrays, return-ABI evidence, dynamic relocation semantics or other validation.
+explicitly at each entry point or fresh lift. These drivers retain raw frontend
+stderr and refuse unexplained warnings. Strict and opt-in artifacts have distinct
+recovered-IR, ordinary-object and instrumented-component cache keys.
+Opting in does not relax ABI-typed pointer arrays, return-ABI evidence, dynamic
+relocation semantics or other validation.
 
 1. Create a disassembly of the program of interest using Datalog Disassembly, generating the disassembled GTIRB file.
 ```shell
@@ -345,6 +344,9 @@ Teapot's sections and its global symbols itself, so the output assembles as it i
 ```shell
 gtirb-pprinter --ir a.inst.gtirb --asm a.inst.S
 ```
+RV numeric-pair refusal exempts only `.plt`, `.plt.sec`, and `.plt.got`, because
+Teapot prints with `complete` (or `dynamic`) policy and lets the linker regenerate
+them; `static` printer policy is unsupported for RV.
 For RV64, use a RISC-V-capable `gtirb-pprinter` build and assembler path; see
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the current smoke-test notes.
 Adaptive RV fault output additionally requires the matching-IR preparation step

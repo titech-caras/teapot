@@ -724,7 +724,7 @@ def component_layout(components, target_identification='software'):
         key = component["component_id"]
         # Refer to the actual start symbol, after input-section alignment.
         # Using '.' before KEEP would miss linker-inserted padding and alias
-        # another component's coverage index. Final-link validation checks it.
+        # another component's coverage index.
         layout += ["    __teapot_component_guard_base_" + key +
                    " = ABSOLUTE((__guard_start__teapot___" + key + " - __guard_start__teapot__) / 4);",
                    "    KEEP(*(.teapot_component_guards." + key + "))"]

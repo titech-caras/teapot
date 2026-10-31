@@ -1,4 +1,4 @@
-"""Carry DWARF-proved pointer returns through an ordinary AArch64 link.
+"""Produce DWARF-proved AArch64 pointer-return records.
 
 This is an opt-in proof producer, not a function-name allowlist. Unsupported
 types, split ranges, custom conventions and ambiguous definitions stay unknown.
@@ -15,8 +15,6 @@ from pathlib import Path
 import gtirb
 from elftools.dwarf.descriptions import describe_form_class
 from elftools.elf.elffile import ELFFile
-
-
 
 
 def sha(path):

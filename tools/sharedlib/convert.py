@@ -2091,7 +2091,6 @@ def main():
         manifest = {'contract': CONTRACT, 'script_sha256': sha(__file__),
                     'allow_runtime_symbol_lookup': args.allow_runtime_symbol_lookup,
                     'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
-                    'pointer_inference': 'unproven heuristic' if args.allow_ambiguous_data_pointers else 'strict',
                     'executable': executable, 'selected': selected, 'external': external,
                     'selected_dependency_order': [item['soname'] for item in selected],
                     'selected_initialization_order': initialization_order,
@@ -2163,7 +2162,6 @@ def main():
             dump(args.out / 'result.json', {'status': 'ordinary_link_ready_not_yet_behavior_verified',
                 'allow_runtime_symbol_lookup': args.allow_runtime_symbol_lookup,
                 'allow_ambiguous_data_pointers': args.allow_ambiguous_data_pointers,
-                'pointer_inference': 'unproven heuristic' if args.allow_ambiguous_data_pointers else 'strict',
                 'elf_type': elf['e_type'], 'needed': needed,
                 'monolith_sha256': sha(output), 'archive_sha256': sha(archive),
                 'archive_members': [{'name': p.name, 'sha256': sha(p), 'type': 'ET_REL'} for p in members]})

@@ -235,7 +235,7 @@ def main():
         print("[teapot] RV adaptive output requires: python -m teapot.fault_risc_assembly "
               "IR RAW.S OUTPUT.S before assembly (or the teapot.debug_lines CLI when used). "
               "Assemble with " + " ".join(flags) + "; link with -Wl,--no-relax -Wl,-z,separate-code. "
-              "An unprepared listing is unsupported; final ELF validation is still required.", flush=True)
+              "An unprepared listing is unsupported.", flush=True)
 
 
 if __name__ == "__main__":
