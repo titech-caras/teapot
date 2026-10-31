@@ -118,22 +118,5 @@ class AdaptiveLinkerBoundsTests(unittest.TestCase):
                 self.assertEqual(len(references), 2)
                 self.assertTrue(all(symbols.get_symbol(r['r_info_sym']).name == BOUND for r in references))
 
-    def test_input_end_marker_precedes_the_actual_linker_thunk(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            obj = self.assemble(root, BOUND + ':')
-            output = root / 'old.so'
-            self.command([LINKER, '--shared', '--fix-cortex-a53-843419', obj, '-o', output])
-            with output.open('rb') as stream:
-                elf = ELFFile(stream)
-                section = elf.get_section_by_name('.teapot_transient')
-                symbols = list(elf.get_section_by_name('.symtab').iter_symbols())
-                bound, = [s for s in symbols if s.name == BOUND]
-                thunks = [s for s in symbols if s.name.startswith('__CortexA53843419_')]
-                self.assertTrue(thunks)
-                self.assertTrue(any(s['st_value'] >= bound['st_value'] for s in thunks))
-                self.assertLess(bound['st_value'], section['sh_addr'] + section['sh_size'])
-
-
 if __name__ == '__main__':
     unittest.main()

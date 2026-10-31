@@ -186,8 +186,6 @@ def guard_template(address, window):
     return bytes(code), tuple(r for r in relocations if r[1] != "fail"), copy
 
 
-
-
 def mark_input(section, decoder):
     # gtirb-rewriting's edit-aware offset map follows inserts and replacements.
     from gtirb_rewriting import _auxdata_offsetmap
