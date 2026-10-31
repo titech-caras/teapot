@@ -80,10 +80,11 @@ class DiftExtCallPass(VisitorPassMixin):
 class ExternalCallTags:
     """DFSan's tag rule for the library calls DiftExtCallPass leaves unwrapped.
 
-    The text DIFT pass applies it before a block's final call or tail jump to
-    an imported function: the callee is uninstrumented and does not touch the
-    tag state, so setting the result tags early is the same as setting them on
-    return. Wrapped calls and instrumented component providers are excluded.
+    The text DIFT pass applies it where a call returns, in the call's own
+    return block, since the callee may call back into instrumented code that
+    writes tags. A tail jump, or a call whose return block is also reached
+    otherwise, gets it before the call instead: the callee does not touch tags
+    itself. Wrapped calls and instrumented component providers are excluded.
     """
 
     def __init__(self, arch_name: str, *, soft_float: bool = False, linked_function_symbols=frozenset()):
@@ -92,8 +93,23 @@ class ExternalCallTags:
         self.linked_function_symbols = frozenset(linked_function_symbols)
         self.unlisted = set()  # imported callees on neither list, for the rewrite log
 
-    def effect(self, block: gtirb.CodeBlock, section: gtirb.Section, decoder):
-        """(argument register names, result register names) for the block, or None."""
+    def before_call(self, block: gtirb.CodeBlock, section: gtirb.Section, decoder):
+        """(argument register names, result register names) to apply before block's final call."""
+        if _private_return_block(block) is not None:
+            return None
+        return self._effect(block, section, decoder)
+
+    def on_return(self, block: gtirb.CodeBlock, section: gtirb.Section, decoder):
+        """The effect to apply first in block, when block is a call's own return block."""
+        incoming = list(block.incoming_edges)
+        if len(incoming) != 1 or not isinstance(incoming[0].source, gtirb.CodeBlock):
+            return None
+        caller = incoming[0].source
+        if _private_return_block(caller) is not block:
+            return None
+        return self._effect(caller, section, decoder)
+
+    def _effect(self, block, section, decoder):
         symbols = external_call_symbols(block, section, decoder, unconditional=True)
         if not symbols:
             return None
@@ -111,10 +127,22 @@ class ExternalCallTags:
         if category(name) is None:
             self.unlisted.add(name)
         reads, writes = call_effect(self.arch_name, name, soft_float=self.soft_float)
-        if not writes or (reads and set(reads) == set(writes)):
-            return None
+        if not writes or (len(writes) == 1 and reads == writes):
+            return None  # nothing, or a register that keeps its own tag
         return reads, writes
 
+
+def _private_return_block(block: gtirb.CodeBlock):
+    """The block block's final call returns to, if no other edge reaches it."""
+    edges = [edge for edge in block.outgoing_edges if edge.label is not None]
+    if not any(edge.label.type == gtirb.EdgeType.Call for edge in edges):
+        return None
+    returns = [edge.target for edge in edges if edge.label.type == gtirb.EdgeType.Fallthrough]
+    if len(returns) != 1 or not isinstance(returns[0], gtirb.CodeBlock):
+        return None
+    if len(list(returns[0].incoming_edges)) != 1:
+        return None
+    return returns[0]
 
 def external_call_symbols(block: gtirb.CodeBlock, section: gtirb.Section, decoder,
                           *, unconditional: bool = False) -> Set[gtirb.Symbol]:

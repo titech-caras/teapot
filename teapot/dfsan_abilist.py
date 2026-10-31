@@ -27,7 +27,7 @@ INTEGER_ARGUMENTS = {
     "aarch64": tuple(f"x{i}" for i in range(8)),
     "riscv64": tuple(f"a{i}" for i in range(8)),
 }
-INTEGER_RESULTS = {"x64": ("rax",), "aarch64": ("x0",), "riscv64": ("a0", "a1")}
+INTEGER_RESULTS = {"x64": ("rax", "rdx"), "aarch64": ("x0", "x1"), "riscv64": ("a0", "a1")}
 
 
 class AbiList:
@@ -95,11 +95,13 @@ def call_effect(arch: str, name: str, *, soft_float: bool = False) -> Tuple[Tupl
     """(argument registers, result registers) of a call to an uninstrumented ``name``.
 
     After the call each result register's tag is the union of the argument
-    registers' tags; with no argument registers it is untagged. The runtime's
-    wrappers are not covered here: DiftExtCallPass redirects those calls.
+    registers' tags; with no argument registers it is untagged. A call without
+    a functional prototype untags both result registers, covering two-register
+    results. The runtime's wrappers are not covered here: DiftExtCallPass
+    redirects those calls.
     """
     if category(name) != "functional":
-        return (), INTEGER_RESULTS[arch][:1]
+        return (), INTEGER_RESULTS[arch]
     return_type, parameter_types = functional_prototypes()[name]
     arguments = []
     for parameter_type in parameter_types:

@@ -251,27 +251,31 @@ attributes #0 = {{ "no-builtins" }}
 
     def visit_code_block(self, block: gtirb.CodeBlock, function: Function = None):
         self._reset()
+        if self.external_calls is not None:
+            self._external_call_tags(self.external_calls.on_return(block, self.section, self.decoder))
 
         super().visit_code_block(block, function)
 
+        if self.external_calls is not None:
+            self._external_call_tags(self.external_calls.before_call(block, self.section, self.decoder))
         instructions: List[CsInsn] = list(self.decoder.get_instructions(block))
-        self._external_call_tags(block, instructions)
         index = self._block_flush_index(instructions)
         self._flush_dift(block, function, index, sum(i.size for i in instructions[:index]))
 
-    def _external_call_tags(self, block: gtirb.CodeBlock, instructions):
-        """DFSan's result tags for a final call to an unwrapped library function."""
-        if self.external_calls is None or not instructions:
-            return
-        effect = self.external_calls.effect(block, self.section, self.decoder)
+    def _external_call_tags(self, effect):
+        """DFSan's result tags for an unwrapped library call: each result register
+        takes the union of the argument registers' tags (none: untagged)."""
         if effect is None:
             return
-        reads, writes = (frozenset(self.reg_manager.abi.get_register(name) for name in names)
-                         for names in effect)
-        call = instructions[-1]
-        self._build_dift_patch(block, call, sum(i.size for i in instructions[:-1]), reads, writes,
-                               clear_dest_tags=not reads, mem_read=None, mem_write=None,
-                               mem_write_size=0, emit_capture=False)
+        reads, writes = ([self.reg_manager.abi.get_register(name) for name in names] for names in effect)
+        tag = self._alloca(self.TAG_TYPE)
+        self._store(self.TAG_TYPE, "0", tag)
+        self._or_register_tags_into_tag(tag, reads)
+        value = self._load(self.TAG_TYPE, tag)
+        for reg in self._ordered_registers(writes):
+            self._store(self.TAG_TYPE, value, self._build_gep(
+                self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
+                ptr_type=self.DIFT_REG_TAGS_TYPE))
 
     def _block_flush_index(self, instructions):
         return len(instructions) - 1

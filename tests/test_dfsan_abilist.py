@@ -47,6 +47,8 @@ fun:typo=disacrd  # not a category
             text = path.read_text()
             defined.update(re.findall(r"^DIFT_WRAPPER\((\w+),", text, re.M))
             defined.update(re.findall(r"^DFSW_BRIDGE\d\([^,]+, (\w+),", text, re.M))
+            defined.update(re.findall(r"^DFSW_COMPARE\d\((\w+)", text, re.M))
+            defined.update(re.findall(r"^DFSW_LABEL_ONLY\([^,]+, (\w+),", text, re.M))
             defined.update("__isoc23_" + name for name in re.findall(r"^DFSW_ISOC23_STRTO\([^,]+, (\w+)\)", text, re.M))
             defined.update(re.findall(r'^extern "C" [^(]*?\b(\w+)__dift_wrapper__\(', text, re.M))
         self.assertEqual(DIFT_WRAPPER_FUNCTIONS, defined)
@@ -55,10 +57,11 @@ fun:typo=disacrd  # not a category
 
 class CallEffectTests(unittest.TestCase):
     def test_discard_and_unlisted_results_are_untagged(self):
+        # Both result registers, for two-register results such as ldiv's.
         for name in ("fprintf", "strtok", "malloc"):
-            self.assertEqual(call_effect("x64", name), ((), ("rax",)))
-            self.assertEqual(call_effect("aarch64", name), ((), ("x0",)))
-            self.assertEqual(call_effect("riscv64", name), ((), ("a0",)))
+            self.assertEqual(call_effect("x64", name), ((), ("rax", "rdx")))
+            self.assertEqual(call_effect("aarch64", name), ((), ("x0", "x1")))
+            self.assertEqual(call_effect("riscv64", name), ((), ("a0", "a1")))
 
     def test_functional_results_join_integer_arguments(self):
         self.assertEqual(call_effect("x64", "isdigit"), (("rdi",), ("rax",)))
@@ -74,7 +77,7 @@ class CallEffectTests(unittest.TestCase):
 
 
 class ExternalCallTagsTests(unittest.TestCase):
-    def call(self, name, *, conditional=False, linked=(), defined=False):
+    def call(self, name, *, conditional=False, linked=(), defined=False, returns=0):
         ir = gtirb.IR()
         module = gtirb.Module(
             name="a.out", isa=gtirb.Module.ISA.ValidButUnsupported,
@@ -99,14 +102,36 @@ class ExternalCallTagsTests(unittest.TestCase):
         module.aux_data["symbolForwarding"] = gtirb.AuxData({alias: imported}, "mapping<UUID,UUID>")
         ir.cfg.add(gtirb.Edge(caller, stub, gtirb.Edge.Label(
             type=gtirb.EdgeType.Call if not conditional else gtirb.EdgeType.Branch, conditional=conditional)))
+        # returns: 0, no return block (noreturn or tail); 1, a return block
+        # only the call reaches; 2, one that a branch also reaches.
+        self.returned = None
+        if returns:
+            self.returned = gtirb.CodeBlock(size=4)
+            gtirb.ByteInterval(address=0x1004, contents=bytes.fromhex("67800000"),
+                               blocks=[self.returned], section=text)
+            ir.cfg.add(gtirb.Edge(caller, self.returned, gtirb.Edge.Label(type=gtirb.EdgeType.Fallthrough)))
+            if returns == 2:
+                ir.cfg.add(gtirb.Edge(stub, self.returned, gtirb.Edge.Label(type=gtirb.EdgeType.Branch)))
         tags = ExternalCallTags("riscv64", linked_function_symbols=linked)
-        return tags.effect(caller, text, GtirbInstructionDecoder(module.isa)), tags
+        decoder = GtirbInstructionDecoder(module.isa)
+        self.after = tags.on_return(self.returned, text, decoder) if self.returned is not None else None
+        return tags.before_call(caller, text, decoder), tags
 
     def test_unwrapped_import_gets_its_dfsan_effect(self):
-        self.assertEqual(self.call("getenv")[0], ((), ("a0",)))
+        self.assertEqual(self.call("getenv")[0], ((), ("a0", "a1")))
         effect, tags = self.call("htonl")
-        self.assertEqual(effect, ((), ("a0",)))
+        self.assertEqual(effect, ((), ("a0", "a1")))
         self.assertEqual(tags.unlisted, {"htonl"})
+        # A long double result takes the union of its register pair.
+        self.assertEqual(self.call("expl")[0], (("a0", "a1"), ("a0", "a1")))
+
+    def test_effect_moves_to_a_private_return_block(self):
+        # The callee may call back into instrumented code, so tags are set on return.
+        self.assertIsNone(self.call("getenv", returns=1)[0])
+        self.assertEqual(self.after, ((), ("a0", "a1")))
+        # A return block reached otherwise keeps the effect before the call.
+        self.assertEqual(self.call("getenv", returns=2)[0], ((), ("a0", "a1")))
+        self.assertIsNone(self.after)
 
     def test_identity_wrapped_linked_defined_and_conditional_calls_are_left_alone(self):
         self.assertIsNone(self.call("isdigit")[0])                    # a0 -> a0
@@ -122,9 +147,8 @@ class TextDiftCallTests(unittest.TestCase):
         arch = X64Architecture()
         dift = X64TextDiftPropagationLLVMPass(SimpleNamespace(abi=arch.abi), None, None, arch,
                                               dift_layout=SimpleNamespace(xor_mask=0))
-        dift.external_calls = SimpleNamespace(effect=lambda *_: effect)
         dift._reset()
-        dift._external_call_tags(None, [SimpleNamespace(size=5, mnemonic="call", operands=[])])
+        dift._external_call_tags(effect)
         return "\n".join(dift.llvm_ir)
 
     def test_functional_call_joins_argument_tags_into_the_result(self):
@@ -134,10 +158,10 @@ class TextDiftCallTests(unittest.TestCase):
         self.assertRegex(ir, r"@dift_reg_tags, i64 0, i64 4\b")   # rsi
         self.assertRegex(ir, r"@dift_reg_tags, i64 0, i64 0\b")   # rax
 
-    def test_discard_call_clears_the_result_tag(self):
-        ir = self.ir(((), ("rax",)))
+    def test_discard_call_clears_the_result_tags(self):
+        ir = self.ir(((), ("rax", "rdx")))
         self.assertNotIn("or i8", ir)
-        self.assertEqual(re.findall(r"@dift_reg_tags, i64 0, i64 (\d+)", ir), ["0"])
+        self.assertEqual(sorted(re.findall(r"@dift_reg_tags, i64 0, i64 (\d+)", ir)), ["0", "3"])
 
     def test_no_effect_emits_nothing(self):
         self.assertEqual(self.ir(None), "")

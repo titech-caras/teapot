@@ -3,7 +3,9 @@
 # compiler-rt/lib/dfsan); a function named here takes only this category.
 # A custom function is redirected to the runtime's name__dift_wrapper__ when the
 # runtime has one (libcheckpoint src/dift_wrappers); any other custom function is
-# treated as discard.
+# treated as discard. Redirection follows the runtime's exports alone, so the
+# custom lines below record which wrappers are Teapot's (a test checks that every
+# runtime wrapper is custom); they change no rewrite.
 
 # Taint sources: Teapot's wrappers tag what they read as attacker input.
 fun:read=custom
