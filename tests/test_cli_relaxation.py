@@ -33,16 +33,22 @@ class RelaxationOptionTests(unittest.TestCase):
                                  isa != gtirb.Module.ISA.ARM64)
 
     def test_a64_adaptive_cli_prints_required_linker_fragment(self):
-        ir = gtirb.IR(modules=[gtirb.Module(name='probe', isa=gtirb.Module.ISA.ARM64)])
-        output = io.StringIO()
-        with patch('sys.argv', ['teapot', 'input', 'output', '--adaptive-fault-precheck',
-                                '--runtime-contract', str(fixture_contract_path('aarch64'))]), \
-                patch.object(gtirb.IR, 'load_protobuf', return_value=ir), \
-                patch.object(cmdline, 'save_protobuf_ordered'), \
-                patch.object(cmdline, 'TeapotPipeline'), redirect_stdout(output):
-            cmdline.main()
-        self.assertIn('-Wl,-T,/path/to/teapot/scripts/AArch64AdaptiveFault.ld', output.getvalue())
-        self.assertIn('omitting the script leaves the end symbol undefined', output.getvalue())
+        for mode in ('software', 'aarch64-bti-pac'):
+            ir = gtirb.IR(modules=[gtirb.Module(name='probe', isa=gtirb.Module.ISA.ARM64)])
+            output = io.StringIO()
+            with self.subTest(mode=mode), patch('sys.argv', [
+                    'teapot', 'input', 'output', '--adaptive-fault-precheck',
+                    '--target-identification', mode,
+                    '--runtime-contract', str(fixture_contract_path('aarch64'))]), \
+                    patch.object(gtirb.IR, 'load_protobuf', return_value=ir), \
+                    patch.object(cmdline, 'save_protobuf_ordered'), \
+                    patch.object(cmdline, 'TeapotPipeline'), redirect_stdout(output):
+                cmdline.main()
+            if mode == 'software':
+                self.assertIn('-Wl,-T,/path/to/teapot/scripts/AArch64AdaptiveFault.ld', output.getvalue())
+                self.assertIn('omitting the script leaves the end symbol undefined', output.getvalue())
+            else:
+                self.assertNotIn('AArch64AdaptiveFault.ld', output.getvalue())
 
     @unittest.skipUnless(shutil.which('gtirb-pprinter') and shutil.which('gcc'),
                          'printer/compiler unavailable')

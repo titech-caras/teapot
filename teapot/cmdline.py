@@ -219,7 +219,8 @@ def main():
         print("[teapot] Own RV final executable links require -Wl,--no-relax "
               "(lp64-pure also -Wl,-z,separate-code). "
               "Input baselines and assembly-only flags are unchanged.", flush=True)
-    if args.adaptive_fault_precheck and any(module.isa == gtirb.Module.ISA.ARM64 for module in ir.modules):
+    if (args.adaptive_fault_precheck and args.target_identification == "software" and
+            any(module.isa == gtirb.Module.ISA.ARM64 for module in ir.modules)):
         print("[teapot] A64 adaptive final links require "
               "-Wl,-T,/path/to/teapot/scripts/AArch64AdaptiveFault.ld "
               "from the Teapot source checkout. The linker owns the final rounded copy end, "

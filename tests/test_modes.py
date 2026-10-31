@@ -77,6 +77,16 @@ class ModeTableTests(unittest.TestCase):
                 with self.assertRaisesRegex(ModeError, field):
                     validate_options(replace(InstrumentationOptions(), **{field: changed}), "x64", component=True)
 
+    def test_bti_pac_refuses_adaptive_publishing_before_rewriting(self):
+        for storage in ("shadow", "mte"):
+            for component in (False, True):
+                options = InstrumentationOptions(target_identification="aarch64-bti-pac",
+                    aarch64_tag_storage=storage, enable_fault_training=True, enable_fault_publishing=True)
+                with self.subTest(storage=storage, component=component), self.assertRaisesRegex(
+                        ModeError, "aarch64-bti-pac does not support adaptive fault prechecks; "
+                        "use --target-identification=software or drop --adaptive-fault-precheck"):
+                    validate_options(options, "aarch64", component=component)
+
 
 if __name__ == "__main__":
     unittest.main()

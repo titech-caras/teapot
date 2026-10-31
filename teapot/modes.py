@@ -91,6 +91,9 @@ def validate_options(options, isa: str, *, component: bool = False) -> ModeSpec:
     if missing:
         raise ModeError(f"{mode.name} requires " + ", ".join(what for what, _ in missing) +
                         "; drop " + " and ".join(flag for _, flag in missing))
+    if mode.name == "aarch64-bti-pac" and options.enable_fault_publishing:
+        raise ModeError("aarch64-bti-pac does not support adaptive fault prechecks; "
+                        "use --target-identification=software or drop --adaptive-fault-precheck")
     known = frozenset().union(*TAG_STORAGES.values())
     if options.aarch64_tag_storage not in known:
         raise ModeError(f"unknown tag storage {options.aarch64_tag_storage!r}; choose one of "
