@@ -139,11 +139,14 @@ class TransientIndirectTargetPolicyPass(TransientIndirectBranchCheckDestPass):
             extra = ctx.scratch_registers[3] if arch.name == 'aarch64' else None
             asm = arch.clear_register_snippet(tag)
             if memory:
-                # Match DIFT's pointer-load value tag, not the address tag.
+                # Evaluate the implicit pointer load like scalar DIFT: merge
+                # the memory value tag with its address dependencies.
                 asm += arch.effective_address_snippet(target, operand, temp)
                 asm += f'mov {temp}, [{target}]\n'
                 asm += arch.dift_shadow_addr_snippet(target, None, self.dift_layout.xor_mask)
                 asm += f'movzx {tag:32}, byte ptr [{target}]\nmov {target}, {temp}\n'
+                for reg in sorted(registers, key=lambda r: r.name):
+                    asm += arch.dift_or_reg_tag_snippet(tag, temp, reg)
             else:
                 for reg in sorted(registers, key=lambda r: r.name):
                     asm += arch.dift_or_reg_tag_snippet(tag, temp, reg)
@@ -153,5 +156,5 @@ class TransientIndirectTargetPolicyPass(TransientIndirectBranchCheckDestPass):
                 else:
                     asm += f'mov {target}, {operand}\n'
             return asm + tagged_report(arch, 'TARGET', target, tag, temp, extra)
-        return MemOperandPolicyPatch(patch, registers, set() if memory else registers,
+        return MemOperandPolicyPatch(patch, registers, registers,
                                      reads_memory_tags=memory, queues_tags=False)

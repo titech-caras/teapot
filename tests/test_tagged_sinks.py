@@ -79,11 +79,12 @@ class TaggedSinksTests(unittest.TestCase):
                 self.assertIsNotNone(build_info(case, case[6], target=True, direct=True)[3])
         self.assertIsNone(build_info(CASES[0], '.byte 0xe8,0,0,0,0', target=True, direct=True)[3])
 
-    def test_x64_memory_target_reads_value_tag_not_address_tag(self):
+    def test_x64_memory_target_uses_scalar_pointer_load_tags(self):
         arch, _, _, info = build_info(CASES[0], 'call qword ptr [rdi]', target=True)
         self.assertTrue(info.reads_memory_tags)
-        self.assertEqual(info.tag_registers, set())
+        self.assertEqual({r.name for r in info.tag_registers}, {'rdi'})
         self._execute(CASES[0], 'call qword ptr [rdi]', target=True, memory=True)
+        self._execute(CASES[0], 'call qword ptr [rdi]', target=True, memory=True, address_tag=4)
 
     def test_predicates_execute_on_all_three_isas(self):
         for case in CASES:
@@ -91,7 +92,7 @@ class TaggedSinksTests(unittest.TestCase):
                 with self.subTest(isa=case[0].__name__, instruction=text):
                     self._execute(case, text, target=target)
 
-    def _execute(self, case, instruction, *, target=False, memory=False):
+    def _execute(self, case, instruction, *, target=False, memory=False, address_tag=0):
         _, _, compiler, launch, prefix, _, _, _, _, scratch, address_name = case
         if not shutil.which(compiler) or launch and not shutil.which(launch[0]):
             self.skipTest('requires target compiler and emulator')
@@ -132,11 +133,12 @@ class TaggedSinksTests(unittest.TestCase):
                 const unsigned tags[] = {{0, 1, 2, 4, 8, 15, 128}};
                 for (unsigned i=0;i<sizeof(tags)/sizeof(*tags);++i) {{
                     reported_tag=reported_address=0;
-                    dift_reg_tags[{tag_id}]={255 if memory else 'tags[i]'};
+                    dift_reg_tags[{tag_id}]={address_tag if memory else 'tags[i]'};
                     if (shadow) *shadow=tags[i];
                     probe(value,0);
-                    assert(reported_tag == ((tags[i] & {255 if target else 10}) ? tags[i] : 0));
-                    assert(reported_address == ((tags[i] & {255 if target else 10}) ?
+                    unsigned expected_tag = tags[i] | {address_tag};
+                    assert(reported_tag == ((expected_tag & {255 if target else 10}) ? expected_tag : 0));
+                    assert(reported_address == ((expected_tag & {255 if target else 10}) ?
                         ({'pointer' if memory else 'value'} & ~{1 if arch.name == 'riscv64' and target else 0}ull) : 0));
                 }}
                 return 0;
