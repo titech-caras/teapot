@@ -44,17 +44,17 @@ must use (`targets.py`).
 python3 experiments/reusable_libraries/rewrite_components.py \
     --executable APP --select libfoo.so [--select ...] --external libc.so.6 [--external ...] \
     --out OUT --cache CACHE [--mode MODE] --converter tools/sharedlib/convert.py \
-    --teapot TEAPOT --rewriting GTIRB_REWRITING --lra LIVE_REGISTER_ANALYSIS \
+    --teapot TEAPOT --rewriting GTIRB_REWRITING \
     --runtime-contract CONTRACT.json --ddisasm DDISASM --pprinter GTIRB_PPRINTER [--cc CC] [--jobs N] \
     [--target-identification software|aarch64-bti-pac] \
     [--resolve-selected-versions] [--preserve-selected-lifecycle] [--preserve-nonlocal-jumps] \
     [--preserve-weak-imports] [--allow-ambiguous-data-pointers]
 ```
 
-`--teapot`, `--rewriting` and `--lra` name the source trees whose Python files enter the cache key. The driver checks
+`--teapot` and `--rewriting` name the source trees whose Python files enter the cache key. The driver checks
 that the imported packages really come from those paths and hashes the imported package directories. The dependency
 paths may be checkout roots or their installed `site-packages` package directories. The driver imports Teapot
-from its own checkout, so `--teapot` must name it; the other two come through `PYTHONPATH`.
+from its own checkout, so `--teapot` must name it; gtirb-rewriting follows the Python import path.
 The runtime
 contract is the `libcheckpoint.contract.json` beside the libcheckpoint archive of the final link. Its ABI
 fingerprint enters the key, so archives with the same ABI share components; each component's record lists
@@ -130,7 +130,7 @@ training/publishing is not yet supported.
 Each cache entry is immutable and content-addressed. It holds the original and instrumented IR, the printed
 assembly, the object, the command logs and SHA-256 manifests, and every file is re-hashed on a hit. The key covers
 the input ELF bytes, its role and initializer priority, the selected and external libraries' bytes and binding
-names, the Teapot, gtirb-rewriting and live-register-analysis sources, the converter, the driver, the runtime
+names, the Teapot and gtirb-rewriting sources, the converter, the driver, the runtime
 contract (its ABI fingerprint and coverage mode, so objects with and without coverage pushes never share an entry),
 the pass options, the ROB length, the mode and its layout. It also covers the bytes of every tool that
 shapes the output, with its shared libraries: DDisasm, gtirb-pprinter, the compiler driver and the `as` and `cc1` it

@@ -40,7 +40,6 @@ clean local source snapshots for the unpublished dependencies:
 docker build -t teapot-eval \
   --build-context ddisasm-src=/absolute/path/to/ddisasm-snapshot \
   --build-context pprinter-src=/absolute/path/to/pprinter-snapshot \
-  --build-context lra-src=/absolute/path/to/lra-snapshot \
   .
 ```
 
@@ -56,9 +55,9 @@ emit a different abbreviation length for the same revision. Update the fallback
 together with that pin.
 Local overrides are deliberately the caller's responsibility and do not
 implicitly select the Dockerfile's commit. Keep them at the pinned commits
-for reproducible version labels. The build refuses a gtirb-rewriting or
-live-register-analysis stage whose Git HEAD is a commit other than its
-requirements.txt pin, and a `GTIRB_REWRITING_VERSION` that names another
+for reproducible version labels. The build refuses a gtirb-rewriting stage
+whose Git HEAD differs from its requirements.txt pin, and a
+`GTIRB_REWRITING_VERSION` that names another
 commit. To build another commit, either update its pin in requirements.txt
 (and `GTIRB_REWRITING_VERSION`, for a tagless gtirb-rewriting stage) or pass
 `--build-arg ALLOW_UNPINNED_FORKS=1`. Only the HEAD commit is compared, not the

@@ -4,7 +4,7 @@ import unittest
 from uuid import uuid4
 
 import gtirb
-from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+from teapot.utils.decoder import CachedGtirbInstructionDecoder
 from gtirb_rewriting import Assembler
 
 from teapot.arch import AArch64Architecture, RISCV64Architecture, X64Architecture

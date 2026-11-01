@@ -1,7 +1,6 @@
 from typing import Iterable, List, Optional, Set, Tuple
 
-from gtirb_live_register_analysis.abi import _X86_64_ELF as _X86_64_ELF_BASE
-from gtirb_rewriting.abi import _PatchRegisterAllocation
+from gtirb_rewriting.abi import CallingConventionDesc, _PatchRegisterAllocation, _X86_64_ELF as _X86_64_ELF_BASE
 from gtirb_rewriting.assembly import Constraints, Register, _AsmSnippet
 
 from teapot.arch.abi import ConservativeRegisterAllocationMixin
@@ -17,11 +16,35 @@ if any(isinstance(value, int) and value in X64_WRAPPER_AREA
 
 
 class _X86_64_ELF(ConservativeRegisterAllocationMixin, _X86_64_ELF_BASE):
+    def all_registers(self) -> List[Register]:
+        registers = super().all_registers() + [
+            Register({"8l": "bpl", "16": "bp", "32": "ebp", "64": "rbp"}, "64"),
+            Register({"8l": "spl", "16": "sp", "32": "esp", "64": "rsp"}, "64"),
+            Register({"64": "rflags"}, "64"),
+        ]
+        for i in range(32):
+            registers.append(Register({
+                "128": f"xmm{i}", "256": f"ymm{i}", "512": f"zmm{i}"
+            }, default_size="128"))
+        registers.extend(Register({"64": f"k{i}"}, "64") for i in range(8))
+        return registers
+
+    def calling_convention(self) -> CallingConventionDesc:
+        calling_convention = super().calling_convention()
+        calling_convention.registers += tuple(f"xmm{i}" for i in range(8))
+        return calling_convention
+
+    def flag_register(self) -> Register:
+        return self.get_register("RFLAGS")
+
+    def is_call_instruction(self, instruction) -> bool:
+        return instruction.mnemonic == "call"
+
     def caller_saved_registers(self) -> Set[Register]:
         return {self.get_register("RFLAGS")}
 
     def _scratch_registers(self) -> List[Register]:
-        return super()._scratch_registers() + [self.get_register("rbp")]
+        return super().all_registers() + [self.get_register("rbp")]
 
     def _create_prologue_and_epilogue(
             self,
@@ -42,7 +65,7 @@ class _X86_64_ELF(ConservativeRegisterAllocationMixin, _X86_64_ELF_BASE):
             scratchpad_offset += 8
 
         if constraints.clobbers_flags:
-            # LRA's flags value covers CF/PF/AF/ZF/SF/OF. This wrapper does not
+            # The liveness flags bit covers CF/PF/AF/ZF/SF/OF. This wrapper does not
             # modify DF; patches that do (REP reporting) preserve it separately.
             prologue.append(_AsmSnippet(f"""
                 mov %rax, scratchpad+{scratchpad_offset+8}

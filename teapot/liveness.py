@@ -62,7 +62,7 @@ class LiveRegisterManager:
 
     def __init__(self, module: gtirb.Module, abi, decoder=None, *, conservative_flags: bool = False):
         if decoder is None:
-            from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+            from teapot.utils.decoder import CachedGtirbInstructionDecoder
             decoder = CachedGtirbInstructionDecoder(module.isa)
         self.module, self.abi, self.decoder = module, abi, decoder
         self.conservative_flags = conservative_flags

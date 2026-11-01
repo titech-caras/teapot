@@ -1,7 +1,6 @@
 from typing import Iterable, List, Optional, Set, Tuple
 
-from gtirb_live_register_analysis.abi import _ARM64_ELF as _ARM64_ELF_BASE
-from gtirb_rewriting.abi import _PatchRegisterAllocation
+from gtirb_rewriting.abi import _ARM64_ELF as _ARM64_ELF_BASE, _PatchRegisterAllocation
 from gtirb_rewriting.assembly import Constraints, Register, _AsmSnippet
 
 from teapot.arch.aarch64.assembly import AArch64AssemblyMixin
@@ -11,6 +10,26 @@ from teapot.configs.slots import AARCH64_SHADOW_STACK_ABI_OFFSET, SCRATCHPAD_FIR
 
 
 class _ARM64_ELF(ConservativeRegisterAllocationMixin, _ARM64_ELF_BASE):
+    def all_registers(self) -> List[Register]:
+        registers = [
+            Register({"32": f"w{i}", "64": f"x{i}"}, "64")
+            for i in range(31)
+        ]
+        registers.extend([
+            Register({"32": "wsp", "64": "sp"}, "64"),
+            Register({"64": "nzcv"}, "64"),
+        ])
+        return registers
+
+    def _scratch_registers(self) -> List[Register]:
+        return [self.get_register(f"x{i}") for i in range(18)]
+
+    def flag_register(self) -> Register:
+        return self.get_register("nzcv")
+
+    def is_call_instruction(self, instruction) -> bool:
+        return instruction.mnemonic in ("bl", "blr")
+
     def caller_saved_registers(self) -> Set[Register]:
         # Compilers do not always leave binary-level call sites matching the
         # source ABI contract after optimization. Keep GPRs live across calls

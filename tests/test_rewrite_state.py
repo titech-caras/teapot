@@ -6,7 +6,7 @@ import unittest
 import uuid
 
 import gtirb
-from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+from teapot.utils.decoder import CachedGtirbInstructionDecoder
 from gtirb_rewriting.abi import _ABIS
 from gtirb_rewriting.decoder import GtirbInstructionDecoder
 

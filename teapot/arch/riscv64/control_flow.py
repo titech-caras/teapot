@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 import gtirb
-from gtirb_live_register_analysis.arch.riscv64 import riscv64_link_register
+from teapot.arch.riscv64.instructions import riscv64_link_register
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.utils.misc import generate_distinct_label_name

@@ -20,7 +20,7 @@ import unittest
 import gtirb
 from capstone import CS_GRP_CALL, CS_GRP_JUMP
 from gtirb_capstone.instructions import GtirbInstructionDecoder
-from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+from teapot.utils.decoder import CachedGtirbInstructionDecoder
 from gtirb_rewriting import Pass, PassManager, Patch, patch_constraints
 from gtirb_rewriting.assembly import X86Syntax
 

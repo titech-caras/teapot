@@ -1,17 +1,51 @@
 from typing import Iterable, Optional, Tuple
 
-from gtirb_live_register_analysis.abi import _RISCV64_ELF as _RISCV64_ELF_BASE
-from gtirb_live_register_analysis.arch.riscv64 import riscv64_is_call
-from gtirb_rewriting.abi import _PatchRegisterAllocation
+from gtirb_rewriting.abi import ABI, CallingConventionDesc, _PatchRegisterAllocation
 from gtirb_rewriting.assembly import Constraints, Register, _AsmSnippet
 
 from teapot.arch.abi import ConservativeRegisterAllocationMixin
 from teapot.arch.riscv64.assembly import RISCV64AssemblyMixin
+from teapot.arch.riscv64.instructions import riscv64_is_call
 from teapot.configs.slots import RISCV64_ORIGINAL_TP_OFFSET, SCRATCHPAD_FIRST_SPILL_OFFSET
 from teapot.utils.registers import get_register, registers_in_abi_order
 
 
-class _RISCV64_ELF(ConservativeRegisterAllocationMixin, _RISCV64_ELF_BASE):
+class _RISCV64_ELF(ConservativeRegisterAllocationMixin, ABI):
+    def all_registers(self):
+        names = (
+            "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1",
+            "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+            "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
+            "t3", "t4", "t5", "t6",
+        )
+        return [Register({"64": name, "64_alt": f"x{idx}"}, "64")
+                for idx, name in enumerate(names)]
+
+    def nop(self) -> bytes:
+        return b"\x13\x00\x00\x00"
+
+    def pointer_size(self) -> int:
+        return 8
+
+    def calling_convention(self) -> CallingConventionDesc:
+        return CallingConventionDesc(
+            registers=("a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"),
+            stack_alignment=16,
+            caller_cleanup=True,
+        )
+
+    def stack_register(self) -> Register:
+        return self.get_register("sp")
+
+    def temporary_label_prefix(self) -> str:
+        return ".L"
+
+    def default_dwarf_eh_return_column(self) -> int:
+        return 1
+
+    def flag_register(self) -> Optional[Register]:
+        return None
+
     def normalize_register_name(self, name):
         if name is None:
             return None

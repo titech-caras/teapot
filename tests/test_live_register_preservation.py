@@ -8,7 +8,7 @@ from uuid import uuid4
 import gtirb
 from gtirb_functions import Function
 from teapot.liveness import LiveRegisterManager
-from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+from teapot.utils.decoder import CachedGtirbInstructionDecoder
 from gtirb_rewriting import Patch, RewritingContext, patch_constraints
 from gtirb_rewriting.abi import _ABIS
 

@@ -69,7 +69,6 @@ It also requires the following packages for interfacing with GTIRB format:
 - `gtirb-rewriting`
 - `gtirb-functions`
 - `gtirb-capstone`
-- `gtirb-live-register-analysis`
 
 Instructions are decoded with Capstone 6.0.0-Alpha11 (`capstone==6.0.0a11`,
 also through `gtirb-capstone` 1.1.2 or newer); Capstone 5 is not supported.
@@ -121,7 +120,7 @@ register policy, since relinking can replace their bodies. Rewriting migrates
 masks for surviving instructions; normal and
 transient copies retain independent entries. Each rewrite round refreshes the
 analysis cache and explicitly retains masks for its state-preserving edits.
-The LRA API's default refresh instead invalidates old masks after unspecified
+Teapot's liveness manager defaults to invalidating old masks after unspecified
 edits, including potentially affected predecessors and callers, without running
 Python analysis. Inserted/replaced instructions without metadata are all-live,
 not reanalyzed in Python. Invalid individual entries are removed with a warning,
@@ -239,7 +238,7 @@ sysroot is left unchanged.
   Scalar pre/post-indexed loads and stores also keep address writeback tags
   separate from transferred data tags, retaining first-byte load sampling.
 - RV64 GP-relative loads, stores and address calculations are normalized before
-  the transient copy, using a destination register, a conservative LRA spare,
+  the transient copy, using a destination register, a spare proved dead by liveness,
   or a 16-byte stack-spill frame. Later passes instrument those spill accesses.
   Unsupported metadata and out-of-range PC-relative relocations are errors.
   Raw copies of `gp` are also refused without symbolic metadata. Nonempty

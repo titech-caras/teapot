@@ -17,7 +17,7 @@ import unittest
 import uuid
 
 import gtirb
-from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+from teapot.utils.decoder import CachedGtirbInstructionDecoder
 from gtirb_rewriting import Assembler, PassManager
 from gtirb_rewriting.assembly import X86Syntax
 

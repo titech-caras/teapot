@@ -5,7 +5,7 @@ from typing import Optional
 import gtirb
 from capstone import CS_GRP_CALL
 from gtirb_rewriting.decoder import GtirbInstructionDecoder
-from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+from teapot.utils.decoder import CachedGtirbInstructionDecoder
 from gtirb_rewriting import PassManager
 from gtirb_rewriting.abi import _ABIS
 

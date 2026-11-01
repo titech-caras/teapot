@@ -36,9 +36,6 @@ ADD --keep-git-dir=true https://github.com/lin-toto/ddisasm.git#c998393bb5fb1b4b
 FROM scratch AS rewriting-src
 ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-rewriting.git#6ca9a937f5807094faaa833953ef524f821227fb /
 
-FROM scratch AS lra-src
-ADD --keep-git-dir=true https://github.com/lin-toto/gtirb-live-register-analysis.git#3116e33fdcfbf1e1c5213d84b478ca31b3651790 /
-
 FROM --platform=linux/amd64 ubuntu:24.04 AS frontend-build-base
 ENV DEBIAN_FRONTEND=noninteractive
 # Compilation of the generated Datalog is memory hungry. Do not use nproc.
@@ -162,20 +159,19 @@ FROM --platform=linux/amd64 ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ASAN_OPTIONS=detect_leaks=0:verify_asan_link_order=false
-ENV PYTHONPATH=/workspace/gtirb-rewriting/src:/workspace/gtirb-live-register-analysis:/workspace/teapot
+ENV PYTHONPATH=/workspace/gtirb-rewriting/src:/workspace/teapot
 ENV AARCH64_MTE_SYSROOT=/opt/aarch64-mte-sysroot
 ENV AARCH64_MTE_QEMU=/usr/local/bin/qemu-aarch64-mte
 ENV PATH=/opt/venv/bin:/opt/teapot-frontend/bin:${PATH}
 ENV LD_LIBRARY_PATH=/opt/teapot-frontend/lib
 
 # Build this image as a reusable evaluation environment. The Teapot source
-# tree and the live-register-analysis checkout are expected to be mounted at
+# tree and the gtirb-rewriting checkout are expected to be mounted at
 # runtime, for example:
 #
 #   podman run --rm -it \
 #     -v "$PWD:/workspace/teapot:Z" \
 #     -v "$HOME/gtirb-rewriting:/workspace/gtirb-rewriting:Z" \
-#     -v "$HOME/gtirb-live-register-analysis:/workspace/gtirb-live-register-analysis:Z" \
 #     teapot-eval
 
 RUN apt-get update && \
@@ -203,7 +199,6 @@ RUN /usr/local/bin/qemu-aarch64-mte --version && \
 
 COPY requirements.txt /tmp/teapot-requirements.txt
 COPY --from=rewriting-src / /tmp/gtirb-rewriting/
-COPY --from=lra-src / /tmp/gtirb-live-register-analysis/
 
 # Named contexts also allow the unpublished Python dependency commits to build.
 # Their default stages use exactly the revisions pinned in requirements.txt.
@@ -221,7 +216,7 @@ ARG GTIRB_REWRITING_VERSION=0.4.2.dev18+g6ca9a93
 # update its requirements.txt pin (and the version above, for a tagless
 # gtirb-rewriting stage) or pass ALLOW_UNPINNED_FORKS=1.
 ARG ALLOW_UNPINNED_FORKS=0
-RUN for name in gtirb-rewriting gtirb-live-register-analysis; do \
+RUN for name in gtirb-rewriting; do \
         if ! commit=$(git -c safe.directory='*' -C "/tmp/$name" rev-parse HEAD 2>/tmp/fork-git.err); then \
             if [ -d "/tmp/$name/.git" ]; then \
                 echo "the $name stage is a Git clone that git cannot read:" >&2; cat /tmp/fork-git.err >&2; exit 1; fi; \
@@ -241,18 +236,17 @@ RUN for name in gtirb-rewriting gtirb-live-register-analysis; do \
 RUN python3 -m venv /opt/venv \
     && if ! git -c safe.directory='*' -C /tmp/gtirb-rewriting describe --tags > /dev/null 2>&1; then \
         export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GTIRB_REWRITING="$GTIRB_REWRITING_VERSION"; fi \
-    && sed -E '/^gtirb-(rewriting|live-register-analysis) @ /d' \
+    && sed -E '/^gtirb-rewriting @ /d' \
         /tmp/teapot-requirements.txt > /tmp/teapot-pypi-requirements.txt \
     && python3 -m pip install --no-cache-dir \
         -r /tmp/teapot-pypi-requirements.txt \
-        /tmp/gtirb-rewriting /tmp/gtirb-live-register-analysis \
-    && rm -rf /tmp/gtirb-rewriting /tmp/gtirb-live-register-analysis
+        /tmp/gtirb-rewriting \
+    && rm -rf /tmp/gtirb-rewriting
 
 # Guard against accidentally reusing an image with upstream's whole-module
 # rewrite preparation. The fork pinned in requirements.txt accepts a scoped
-# block set and the liveness offset table. Both dependency forks must provide
-# the metadata APIs used by Teapot before an image is suitable for evaluation.
-RUN python3 -c "import inspect; from gtirb_rewriting.prepare import prepare_for_rewriting; from gtirb_rewriting._auxdata_offsetmap import live_register_sets, live_register_sets_high; from gtirb_live_register_analysis.manager import LiveRegisterManager, LIVE_REGISTER_NAMES_AUXDATA, LIVE_REGISTER_SETS_AUXDATA, LIVE_REGISTER_SETS_HIGH_AUXDATA; assert 'blocks' in inspect.signature(prepare_for_rewriting).parameters, 'gtirb-rewriting lacks scoped preparation support'; assert 'preserve_liveness' in inspect.signature(LiveRegisterManager.refresh).parameters, 'gtirb-live-register-analysis lacks the explicit preservation contract'; assert callable(LiveRegisterManager.producer_vector_mask), 'gtirb-live-register-analysis lacks frontend vector masks'"
+# block set and the liveness offset tables used by Teapot.
+RUN python3 -c "import inspect; from gtirb_rewriting.prepare import prepare_for_rewriting; from gtirb_rewriting._auxdata_offsetmap import live_register_sets, live_register_sets_high; assert 'blocks' in inspect.signature(prepare_for_rewriting).parameters, 'gtirb-rewriting lacks scoped preparation support'"
 
 RUN python3 -c "import llvmlite.binding as llvm; llvm.initialize_all_targets(); llvm.initialize_all_asmprinters(); assert llvm.llvm_version_info[0] == 22, llvm.llvm_version_info; tm = llvm.Target.from_triple('x86_64-unknown-linux-gnu').create_target_machine(opt=3, codemodel='small'); pb = llvm.create_pass_builder(tm, llvm.create_pipeline_tuning_options(speed_level=3)); module = llvm.parse_assembly('define void @probe(ptr %p) { store i8 0, ptr %p ret void }'); pb.getModulePassManager().run(module, pb); module.verify(); print('LLVM text-DIFT APIs:', llvm.llvm_version_info)"
 

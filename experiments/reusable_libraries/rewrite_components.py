@@ -29,7 +29,6 @@ sys.path[:] = [_ROOT] + [entry for entry in sys.path if entry != _ROOT]
 
 import gtirb
 import gtirb_rewriting
-import gtirb_live_register_analysis
 import teapot
 from elftools.dwarf.callframe import FDE
 from elftools.elf.elffile import ELFFile
@@ -525,7 +524,6 @@ def main():
     parser.add_argument("--converter", required=True, type=Path)
     parser.add_argument("--teapot", required=True, type=Path)
     parser.add_argument("--rewriting", required=True, type=Path)
-    parser.add_argument("--lra", required=True, type=Path)
     parser.add_argument("--runtime-contract", required=True, type=Path,
                         help="the lib<archive>.contract.json beside the libcheckpoint archive of the final link")
     parser.add_argument("--ddisasm", required=True)
@@ -559,7 +557,6 @@ def main():
     source_hashes = {
         'teapot': imported_package_hash(teapot, args.teapot / 'teapot'),
         'rewriting': imported_package_hash(gtirb_rewriting, args.rewriting),
-        'lra': imported_package_hash(gtirb_live_register_analysis, args.lra),
     }
     spec = importlib.util.spec_from_file_location("selected_converter", args.converter)
     converter = importlib.util.module_from_spec(spec)

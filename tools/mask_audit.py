@@ -19,7 +19,7 @@ import sys
 
 import gtirb
 from gtirb_functions import Function
-from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+from teapot.utils.decoder import CachedGtirbInstructionDecoder
 from gtirb_rewriting.abi import _ABIS
 
 from teapot.arch import get_arch

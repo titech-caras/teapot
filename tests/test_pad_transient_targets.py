@@ -123,7 +123,7 @@ class PadTransientTargetsTests(unittest.TestCase):
     def riscv_copy():
         """A RISC-V copy: a direct tail pair (PCREL HI/LO), a direct call pair (PLT),
         a register jump, a return, and the pairs' target."""
-        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from teapot.utils.decoder import CachedGtirbInstructionDecoder
 
         module = gtirb.Module(name="rv", isa=gtirb.Module.ISA.ValidButUnsupported,
                               file_format=gtirb.Module.FileFormat.ELF,

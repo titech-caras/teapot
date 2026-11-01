@@ -40,7 +40,7 @@ class X64Architecture(
 
     def relax_conditional_branches(self, module, *, direct_pads) -> None:
         from gtirb_capstone.instructions import GtirbInstructionDecoder
-        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from teapot.utils.decoder import CachedGtirbInstructionDecoder
 
         from teapot.passes.common.x64_relax_jcxz_pass import X64RelaxJcxzPass
 

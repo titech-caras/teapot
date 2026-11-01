@@ -1,5 +1,5 @@
 from capstone import CS_OP_IMM, CS_OP_REG
-from gtirb_live_register_analysis.arch.riscv64 import riscv64_link_register
+from teapot.arch.riscv64.instructions import riscv64_link_register
 from gtirb_rewriting.assembly import Register
 
 

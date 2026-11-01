@@ -80,7 +80,7 @@ def module_with_targets():
 
 class PotentialIndirectTargetTests(unittest.TestCase):
     def test_returns_and_symbol_targets_are_not_unresolved_jumps(self):
-        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from teapot.utils.decoder import CachedGtirbInstructionDecoder
 
         from teapot.arch import RISCV64Architecture
         from teapot.passes.text.indirect_targets import _unresolved_jump
@@ -156,7 +156,7 @@ class PotentialIndirectTargetTests(unittest.TestCase):
         interval.symbolic_expressions[12] = gtirb.SymAddrConst(0, g_symbol, {attrs.PCREL, attrs.LO})
         functions = [Function(uuid4(), {call}, {call, load}), Function(uuid4(), {f}, {f}),
                      Function(uuid4(), {g}, {g})]
-        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from teapot.utils.decoder import CachedGtirbInstructionDecoder
         rules = potential_indirect_targets(module, text, functions,
                                            CachedGtirbInstructionDecoder(module.isa),
                                            RISCV64Architecture())
@@ -242,7 +242,7 @@ class PotentialIndirectTargetTests(unittest.TestCase):
         self.assertIn("direct transfers past pads: 1 into 1 blocks", output.getvalue())
 
     def test_riscv_direct_call_pair_operand(self):
-        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from teapot.utils.decoder import CachedGtirbInstructionDecoder
 
         from teapot.arch import RISCV64Architecture
 
@@ -271,7 +271,7 @@ class PotentialIndirectTargetTests(unittest.TestCase):
         self.assertEqual(visitor._direct_operands(call), [])
 
     def test_riscv_pad_precedes_a_leading_auipc(self):
-        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from teapot.utils.decoder import CachedGtirbInstructionDecoder
         from gtirb_rewriting.abi import _ABIS
 
         from teapot.arch import RISCV64Architecture

@@ -313,7 +313,7 @@ int main(void) {
     def test_riscv_direct_pairs_are_not_checked(self):
         from unittest.mock import Mock
 
-        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from teapot.utils.decoder import CachedGtirbInstructionDecoder
 
         from teapot.arch import RISCV64Architecture
 
@@ -365,7 +365,7 @@ int main(void) {
         self.assertEqual(checked, {"jump", "ret"})
 
     def test_riscv_pair_proof_rejects_lookalikes(self):
-        from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+        from teapot.utils.decoder import CachedGtirbInstructionDecoder
 
         from teapot.arch import RISCV64Architecture
 

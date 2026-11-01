@@ -10,7 +10,6 @@ import unittest
 from unittest.mock import patch
 
 import gtirb_rewriting
-import gtirb_live_register_analysis
 import teapot
 
 from experiments.reusable_libraries import rewrite_components as driver
@@ -194,7 +193,7 @@ class CacheIdentityTests(unittest.TestCase):
             self.assertNotEqual(key, driver.imported_package_hash(package, actual))
 
     def test_checkout_and_site_packages_harness_paths(self):
-        for package in (teapot, gtirb_rewriting, gtirb_live_register_analysis):
+        for package in (teapot, gtirb_rewriting):
             root = Path(package.__file__).resolve().parent
             with self.subTest(package=package.__name__):
                 self.assertEqual(driver.imported_package_hash(package, root),

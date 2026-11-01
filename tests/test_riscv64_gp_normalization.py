@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import gtirb
 from gtirb_functions import Function
 from teapot.liveness import LiveRegisterManager
-from gtirb_live_register_analysis.utils import CachedGtirbInstructionDecoder
+from teapot.utils.decoder import CachedGtirbInstructionDecoder
 from gtirb_rewriting import Assembler, PassManager
 
 from teapot.arch import RISCV64Architecture
