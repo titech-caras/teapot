@@ -163,7 +163,9 @@ class AArch64BTIBackendTests(unittest.TestCase):
         self.assertIn('3 copy calls', output.getvalue())
         copy = pipeline.transient_section
         calls = [block for block in copy.code_blocks
-                 if any(edge.label.type == gtirb.Edge.Type.Call for edge in block.outgoing_edges)]
+                 if any(edge.label.type == gtirb.Edge.Type.Call for edge in block.outgoing_edges)
+                 and not any(symbol.name.startswith('.L__report_gadget_call_')
+                             for symbol in block.references)]
         self.assertEqual(len(calls), 3)
         for block in calls:
             self.assertIn(list(decoder.get_instructions(block))[-1].mnemonic, ('bl', 'blr'))

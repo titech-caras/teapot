@@ -2,7 +2,7 @@
 #include "x64_rep_dift.c"
 #undef main
 
-uint64_t instruction_cnt, old_rsp, reports_CACHE, reports_MDS, reports_PORT;
+uint64_t instruction_cnt, old_rsp, reports_CACHE, reports_MDS, reports_PORT, reports_CACHE_STORE;
 uint64_t ordering_seen;
 
 /* DIFT labels, as in teapot/configs/tags.py. */
@@ -40,7 +40,7 @@ int main(void) {
         dift_reg_tags[4] = dift_reg_tags[5] = scenario == 1 ? TAG_ATTACKER : scenario == 2 ? TAG_SECRET : 0;
         dift_reg_tags[2] = scenario == 4 ? TAG_SECRET : 0;
         memory_history_top = history;
-        instruction_cnt = reports_CACHE = reports_MDS = reports_PORT = 0;
+        instruction_cnt = reports_CACHE = reports_MDS = reports_PORT = reports_CACHE_STORE = 0;
         ordering_seen = 0;
         test->common(&actual);
         assert(ordering_seen == 1);
@@ -49,6 +49,11 @@ int main(void) {
         uint64_t completed = in.cx - expected.cx;
         if (test->address_size == 4) completed = (uint32_t)completed;
         assert(instruction_cnt == completed);
+        /* REP's count tag reaches its advancing destination after the first
+         * element; later stores therefore leak that secret address too. */
+        uint64_t store_reports = scenario == 2 ? completed :
+                                 scenario == 4 && completed ? completed - 1 : 0;
+        assert(reports_CACHE_STORE == ((test->kind == 'm' || test->kind == 's') ? store_reports : 0));
         if (scenario == 4) assert(reports_PORT);
         if (!count) {
             assert(!reports_CACHE && !reports_MDS && memory_history_top == history);

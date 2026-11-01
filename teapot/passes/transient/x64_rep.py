@@ -1,9 +1,10 @@
 from dataclasses import replace
 import warnings
 
-from capstone import CS_AC_READ, CS_OP_MEM
+from capstone import CS_AC_READ, CS_AC_WRITE, CS_OP_MEM
 from gtirb_rewriting import Patch
 
+from teapot.passes.transient.gadget_policy.store import TransientStorePolicyPass
 from teapot.configs.blacklist import is_blacklisted_function
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.slots import ScratchpadSlots
@@ -86,6 +87,14 @@ class X64TransientRepPass(X64DiftOperandHelpers):
                         conditional=None, mem_operand=operand,
                         queued_tag_operand=f"scratchpad+{state+56}",
                         label_key=f"rep_read_{len(policies)}"))
+
+            store_policy = TransientStorePolicyPass(
+                self.reg_manager, self.section, self.decoder, self.arch, dift_layout=self.dift_layout)
+            for operand in inst.operands:
+                if operand.type == CS_OP_MEM and operand.access & CS_AC_WRITE:
+                    policies.append(store_policy.build_store_patch(
+                        inst, operand, self.arch.mem_operand_registers(self.reg_manager.abi, inst, operand),
+                        operand=self.arch.mem_operand_to_str(block, inst, operand)))
 
         tag_patch = None
         if propagate_tags or (comparison and self.enable_port_policy):

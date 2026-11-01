@@ -127,6 +127,8 @@ COMMON_CHECKPOINT_LIB_SYMBOLS = [
     "report_gadget_KASPER_CACHE",
     "report_gadget_KASPER_MDS",
     "report_gadget_KASPER_PORT",
+    "report_gadget_KASPER_CACHE_STORE",
+    "report_gadget_TARGET",
 
     "checkpoint_target_metadata",
     "memory_history_top",

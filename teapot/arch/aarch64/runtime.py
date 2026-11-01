@@ -18,4 +18,6 @@ class AArch64RuntimeMixin:
             "report_gadget_aarch64_preserve_KASPER_CACHE",
             "report_gadget_aarch64_preserve_KASPER_MDS",
             "report_gadget_aarch64_preserve_KASPER_PORT",
+            "report_gadget_aarch64_preserve_KASPER_CACHE_STORE",
+            "report_gadget_aarch64_preserve_TARGET",
         ]

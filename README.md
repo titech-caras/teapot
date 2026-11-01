@@ -471,6 +471,18 @@ $ ./a.inst input.txt
 [teapot], 42 KASPER_CACHE, 0x414257, 0x1f81b610, 0x11, 153, 0x413f4d, 0x409c56, 0x40b093, 0x409e54, 0x412c48, 0x401566,
 ```
 
+Store-address leaks use `44 KASPER_CACHE_STORE`, separately from load-only
+`42 KASPER_CACHE`. Both test SECRET or SECRET_INDIRECT address tags with the
+same ISA-specific base-register exemptions. Card comparisons can filter kind 44;
+reporting does not change the simulated instruction budget or rollback policy.
+Tagged indirect calls and jumps use `45 GADGET_TARGET`; returns are excluded.
+The address field holds the target value and the tag field retains all its bits,
+so attacker-controlled targets and secret targets remain distinguishable.
+
+The optional `HF_TEAPOT_REPORT_FD` pipe emits
+`TPGADGET 2 <kind> <site-hex> <tag-decimal>` records. Honggfuzz accepts versions 1
+and 2 and keeps store and target sites separate from the original three kinds.
+
 ## Source-line debug information (optional)
 
 Source-line preservation is **off by default**. It supports linked ELF64 inputs

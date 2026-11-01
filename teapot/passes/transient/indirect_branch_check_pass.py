@@ -1,4 +1,5 @@
 import gtirb
+from capstone import CS_OP_MEM, CS_OP_REG
 from gtirb_capstone.instructions import GtirbInstructionDecoder
 from gtirb_functions import Function
 from teapot.liveness import LiveRegisterManager
@@ -8,6 +9,8 @@ from teapot.arch.architecture import Architecture
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.passes.mixins import ArchSpecificPassMixin, RegInstAwarePassMixin, VisitorPassMixin
 from teapot.utils.misc import distinguish_edges
+from teapot.passes.transient.gadget_policy.mem_operand.base import MemOperandPolicyPatch
+from teapot.passes.transient.gadget_policy.store import tagged_report
 
 
 class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMixin, RegInstAwarePassMixin):
@@ -87,3 +90,68 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
             edge.label.type in (gtirb.cfg.Edge.Type.Call, gtirb.cfg.Edge.Type.Branch) and
             not edge.label.direct
         )
+
+
+class TransientIndirectTargetPolicyPass(TransientIndirectBranchCheckDestPass):
+    """Read the target tag before JALR/BLR overwrites its link register."""
+
+    def __init__(self, reg_manager, transient_section, decoder, arch, *, dift_layout):
+        super().__init__(reg_manager, transient_section, decoder, None, None, None, None, arch)
+        self.dift_layout = dift_layout
+
+    def visit_code_block(self, block, function=None):
+        instructions = list(self.decoder.get_instructions(block))
+        if not instructions:
+            return
+        index = len(instructions) - 1
+        offset = sum(i.size for i in instructions[:-1])
+        info = self._build_policy_patch(instructions[-1], index, offset, block, function)
+        if info is not None:
+            self.reg_manager.add_live_registers(function, block, index, info.live_registers)
+            patch = self.allocate_registers(function, block, index)(info.patch)
+            self.insert_at(block, offset, Patch.from_function(patch))
+
+    def _build_policy_patch(self, inst, inst_idx, inst_offset, block, function=None):
+        if inst_offset + inst.size != block.size:
+            return None
+        edges, _ = distinguish_edges(block.outgoing_edges)
+        if not edges or edges[0].label.type not in (gtirb.EdgeType.Call, gtirb.EdgeType.Branch):
+            return None
+        arch, abi = self.arch, self.reg_manager.abi
+        instructions = list(self.decoder.get_instructions(block))
+        if arch.direct_transfer_expression(block, instructions) is not None:
+            return None
+        mnemonic = inst.mnemonic.lower().split()[-1]
+        if arch.name == 'riscv64' and (mnemonic != 'jalr' or arch.is_return_instruction(inst)):
+            return None
+        if arch.name == 'aarch64' and mnemonic not in ('br', 'blr'):
+            return None
+        if arch.name == 'x64' and (mnemonic not in ('jmp', 'call') or
+                                   inst.operands[0].type not in (CS_OP_REG, CS_OP_MEM)):
+            return None
+        operand = arch.indirect_branch_operand(edges[0].label.type, inst, block)
+        registers = arch.registers_in_operand_string(abi, operand)
+        memory = arch.name == 'x64' and inst.operands[0].type == CS_OP_MEM
+        @arch.constraints(scratch_registers=4 if arch.name == 'aarch64' else 3,
+                          clobbers_flags=True, reads_registers={r.name for r in registers})
+        def patch(ctx):
+            tag, target, temp = ctx.scratch_registers[:3]
+            extra = ctx.scratch_registers[3] if arch.name == 'aarch64' else None
+            asm = arch.clear_register_snippet(tag)
+            if memory:
+                # Match DIFT's pointer-load value tag, not the address tag.
+                asm += arch.effective_address_snippet(target, operand, temp)
+                asm += f'mov {temp}, [{target}]\n'
+                asm += arch.dift_shadow_addr_snippet(target, None, self.dift_layout.xor_mask)
+                asm += f'movzx {tag:32}, byte ptr [{target}]\nmov {target}, {temp}\n'
+            else:
+                for reg in sorted(registers, key=lambda r: r.name):
+                    asm += arch.dift_or_reg_tag_snippet(tag, temp, reg)
+                if arch.name == 'riscv64':
+                    asm += arch.materialize_target(target, operand)
+                    asm += f'andi {target}, {target}, -2\n'
+                else:
+                    asm += f'mov {target}, {operand}\n'
+            return asm + tagged_report(arch, 'TARGET', target, tag, temp, extra)
+        return MemOperandPolicyPatch(patch, registers, set() if memory else registers,
+                                     reads_memory_tags=memory, queues_tags=False)

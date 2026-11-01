@@ -197,7 +197,8 @@ class X64TransientRepTests(unittest.TestCase):
                     "mapping<UUID,tuple<uint64_t,string,string,string,uint64_t>>")
                 for name in ("scratchpad", "dift_reg_tags", "dift_reg_queued_tags", "dift_reg_queue_pending", "old_rsp", "ordering_seen",
                              "memory_history_top", "instruction_cnt", "restore_checkpoint_ROB_LEN",
-                             "report_gadget_KASPER_CACHE", "report_gadget_KASPER_MDS", "report_gadget_KASPER_PORT"):
+                             "report_gadget_KASPER_CACHE", "report_gadget_KASPER_MDS", "report_gadget_KASPER_PORT",
+                             "report_gadget_KASPER_CACHE_STORE"):
                     gtirb.Symbol(name=name, payload=gtirb.ProxyBlock(module=module), module=module)
                 manager = LiveRegisterManager(module, abi)
                 for original in manager.decoder.get_instructions(block):
@@ -237,7 +238,7 @@ class X64TransientRepTests(unittest.TestCase):
                 rewritten = rep_tests.runner_function(
                     "rewritten", b"\x90", "call test_function\nmov qword ptr [rsp-8], 0x12345678\n", "")
                 reports = ""
-                for kind in ("CACHE", "MDS", "PORT"):
+                for kind in ("CACHE", "MDS", "PORT", "CACHE_STORE"):
                     reports += f"""
                     .globl report_gadget_KASPER_{kind}
                     report_gadget_KASPER_{kind}:

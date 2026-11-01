@@ -50,7 +50,7 @@ class TransientDiftReplayMixin:
         "memory_history_top", "dift_reg_queued_tags", "dift_reg_queue_pending"}
 
     def __init__(self, reg_manager, section, decoder, arch, *, dift_layout,
-                 insert_memlog=True, memory_policy=None, port_policy=None,
+                 insert_memlog=True, memory_policy=None, port_policy=None, extra_policies=(),
                  immediate=False, shadow_mapping_enforcement=False):
         # The x64 text class deliberately disables history. Here the shared
         # initializer enables it, while retaining the target-specific operand
@@ -58,6 +58,7 @@ class TransientDiftReplayMixin:
         TextDiftLLVMBase.__init__(self, reg_manager, section, decoder, arch,
                                  dift_layout=dift_layout, insert_memlog=insert_memlog)
         self.memory_policy = memory_policy
+        self.extra_policies = extra_policies
         self.port_policy = port_policy
         self.immediate = immediate
         self.shadow_mapping_enforcement = shadow_mapping_enforcement
@@ -234,7 +235,7 @@ class TransientDiftReplayMixin:
         self.insert_at(block, offset, Patch.from_function(patch))
 
     def begin_module(self, module, functions, rewriting_ctx):
-        for policy in (self.memory_policy, self.port_policy):
+        for policy in (self.memory_policy, self.port_policy, *self.extra_policies):
             if policy is not None:
                 VisitorPassMixin.begin_module(policy, module, functions, rewriting_ctx)
         super().begin_module(module, functions, rewriting_ctx)
@@ -263,38 +264,39 @@ class TransientDiftReplayMixin:
         InstVisitorPassMixin.visit_code_block(self, block, function)
 
     def visit_inst(self, inst, inst_idx, inst_offset, block, function=None, live_registers=None):
-        memory = self.memory_policy
-        info = None
-        if memory is not None:
-            memory._current_instructions = self._current_instructions
-            memory._current_block = block
-            info = memory._build_policy_patch(inst, inst_idx, inst_offset, block, function)
+        readers = []
+        for policy in (self.memory_policy, *self.extra_policies):
+            if policy is None:
+                continue
+            policy._current_instructions = self._current_instructions
+            policy._current_block = block
+            info = policy._build_policy_patch(inst, inst_idx, inst_offset, block, function)
+            if info is not None:
+                readers.append((policy, info))
         port = self.port_reader if self.port_reader and self.port_reader[0] == inst_idx else None
         rep = self.arch.name == "x64" and self.arch.rep_string_kind(inst) is not None
-        memory_reads_pending = info is not None and (
+        memory_reads_pending = any(
             self._reader_observes_pending(info.tag_registers, memory=info.reads_memory_tags)
-            # There is one runtime queue. Consume the previous load's queued
-            # tags before another policy can enqueue tags for a different load.
-            or (info.queues_tags and self.pending_queue_apply))
+            or (info.queues_tags and self.pending_queue_apply) for _, info in readers)
         port_reads_pending = port is not None and self._reader_observes_pending(
             port[1][1], memory=self.arch.memory_operand(inst) is not None)
         if memory_reads_pending or port_reads_pending or rep:
             required = len(self.effects) if rep else max(
-                self._required_prefix(info.tag_registers, memory=info.reads_memory_tags,
-                                      queue=info.queues_tags) if info is not None else 0,
-                self._required_prefix(port[1][1], memory=self.arch.memory_operand(inst) is not None)
-                if port is not None else 0)
+                [self._required_prefix(info.tag_registers, memory=info.reads_memory_tags,
+                                       queue=info.queues_tags) for _, info in readers] +
+                [self._required_prefix(port[1][1], memory=self.arch.memory_operand(inst) is not None)
+                 if port is not None else 0])
             self._flush_dift(block, function, inst_idx, inst_offset, required_prefix=required)
-        if info is not None:
+        for policy, info in readers:
             self.reg_manager.add_live_registers(function, block, inst_idx, info.live_registers)
-            patch = memory.allocate_registers(function, block, inst_idx)(info.patch)
-            memory.insert_at(block, inst_offset, Patch.from_function(patch))
+            patch = policy.allocate_registers(function, block, inst_idx)(info.patch)
+            policy.insert_at(block, inst_offset, Patch.from_function(patch))
         if port is not None:
             patch, registers = port[1]
             self.reg_manager.add_live_registers(function, block, inst_idx, registers)
             patch = self.port_policy.allocate_registers(function, block, inst_idx)(patch)
             self.port_policy.insert_at(block, inst_offset, Patch.from_function(patch))
-        self._queue_apply_requested = info is not None and info.queues_tags
+        self._queue_apply_requested = any(info.queues_tags for _, info in readers)
         self._effect_index = inst_idx
         if not rep and getattr(self, "propagate", True):
             # REP's transient replacement already owns per-element propagation

@@ -25,7 +25,10 @@ from teapot.passes.text.indirect_targets import potential_indirect_targets, unsy
 from teapot.passes.text.text_indirect_branch_transform_pass import TextIndirectBranchTransformPass
 from teapot.passes.text.text_initialize_library_pass import TextInitializeLibraryPass
 from teapot.passes.text.text_skipped_transform_restore_pass import TextSkippedTransformRestorePass
-from teapot.passes.transient.indirect_branch_check_pass import TransientIndirectBranchCheckDestPass
+from teapot.passes.transient.indirect_branch_check_pass import (
+    TransientIndirectBranchCheckDestPass, TransientIndirectTargetPolicyPass,
+)
+from teapot.passes.transient.gadget_policy.store import TransientStorePolicyPass
 from teapot.passes.transient.transient_coverage import TransientCoveragePass
 from teapot.passes.transient.transient_insert_restore_points_pass import TransientInsertRestorePointsPass
 from teapot.preprocess.copy_section import (
@@ -788,6 +791,7 @@ class TeapotPipeline:
     def _run_transient_passes(self):
         pass_manager = PassManager()
         memory_policy = port_policy = None
+        extra_policies = []
         if self.options.enable_asan:
             pass_manager.add(AsanStackPass(
                 self.reg_manager, self.transient_section, self.decoder, self.arch, self.options.enable_memlog,
@@ -802,7 +806,13 @@ class TeapotPipeline:
         else:
             create_guards(self.guard_section, 0)
         if self.options.enable_gadgets:
+            extra_policies.append(TransientIndirectTargetPolicyPass(
+                self.reg_manager, self.transient_section, self.decoder, self.arch,
+                dift_layout=self.dift_layout))
             if self.options.enable_mem_operand_gadgets:
+                extra_policies.append(TransientStorePolicyPass(
+                    self.reg_manager, self.transient_section, self.decoder, self.arch,
+                    dift_layout=self.dift_layout))
                 memory_policy = self.arch.create_transient_mem_operand_policy_pass(
                     self.reg_manager,
                     self.transient_section,
@@ -821,11 +831,11 @@ class TeapotPipeline:
             pass_manager.add(transient_replay_pass(
                 self.arch, self.reg_manager, self.transient_section, self.decoder,
                 dift_layout=self.dift_layout, insert_memlog=self.options.enable_memlog,
-                memory_policy=memory_policy, port_policy=port_policy,
+                memory_policy=memory_policy, port_policy=port_policy, extra_policies=extra_policies,
                 shadow_mapping_enforcement=self.runtime_contract.shadow_mapping_enforcement,
                 immediate=self.options.eager_transient_dift))
         else:
-            for policy in (memory_policy, port_policy):
+            for policy in (memory_policy, port_policy, *extra_policies):
                 if policy is not None:
                     pass_manager.add(policy)
         if self.options.enable_memlog:
