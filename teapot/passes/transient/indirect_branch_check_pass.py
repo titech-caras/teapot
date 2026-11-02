@@ -5,6 +5,8 @@ from gtirb_functions import Function
 from teapot.liveness import LiveRegisterManager
 from gtirb_rewriting import Patch, RewritingContext
 
+from teapot.arch.aarch64.control_flow import AARCH64_PAC_BRANCHES
+from teapot.arch.aarch64.operands import aarch64_register_number
 from teapot.arch.architecture import Architecture
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.configs.tags import TAG_SECRET, TAG_SECRET_INDIRECT
@@ -125,7 +127,8 @@ class TransientIndirectTargetPolicyPass(TransientIndirectBranchCheckDestPass):
         mnemonic = inst.mnemonic.lower().split()[-1]
         if arch.name == 'riscv64' and (mnemonic != 'jalr' or arch.is_return_instruction(inst)):
             return None
-        if arch.name == 'aarch64' and mnemonic not in ('br', 'blr'):
+        pac = mnemonic in AARCH64_PAC_BRANCHES
+        if arch.name == 'aarch64' and (mnemonic not in ('br', 'blr') and not pac or mnemonic.startswith('ret')):
             return None
         if arch.name == 'x64' and (mnemonic not in ('jmp', 'call') or
                                    inst.operands[0].type not in (CS_OP_REG, CS_OP_MEM)):
@@ -156,6 +159,10 @@ class TransientIndirectTargetPolicyPass(TransientIndirectBranchCheckDestPass):
                     asm += f'andi {target}, {target}, -2\n'
                 else:
                     asm += f'mov {target}, {operand}\n'
+                if pac:
+                    # Report the address without its PAC (XPACI by encoding,
+                    # as in the marker check); the branch authenticates as before.
+                    asm += f'.inst {0xdac143e0 | aarch64_register_number(target.name):#x}\n'
             return asm + tagged_report(arch, 'TARGET', target, tag, temp, extra,
                                        mask=TAG_SECRET | TAG_SECRET_INDIRECT)
         return MemOperandPolicyPatch(patch, registers, registers,

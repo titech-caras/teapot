@@ -31,9 +31,12 @@ def build_info(case, assembly, target=False, direct=False):
     kind, isa, _, _, prefix, *rest = case
     arch = kind()
     ir, module, block, abi, _ = make_module(arch, isa, b'')
-    assembler = Assembler(module)
-    assembler.assemble(prefix + assembly)
-    code = assembler.finalize().text_section.data
+    if isinstance(assembly, bytes):
+        code = assembly
+    else:
+        assembler = Assembler(module)
+        assembler.assemble(prefix + assembly)
+        code = assembler.finalize().text_section.data
     block.byte_interval.contents = code
     block.byte_interval.size = block.size = len(code)
     from teapot.liveness import LiveRegisterManager
@@ -93,7 +96,14 @@ class TaggedSinksTests(unittest.TestCase):
                 with self.subTest(isa=case[0].__name__, instruction=text):
                     self._execute(case, text, target=target)
 
-    def _execute(self, case, instruction, *, target=False, memory=False, address_tag=0):
+    def test_aarch64_pac_branches_report_stripped_targets(self):
+        # blraa x0, x1 and braaz x0 are checked like blr/br; retaa stays a return.
+        for code in (bytes.fromhex('01083fd7'), bytes.fromhex('1f081fd6')):
+            with self.subTest(code=code.hex()):
+                self._execute(CASES[1], code, target=True, pac=True)
+        self.assertIsNone(build_info(CASES[1], bytes.fromhex('ff0b5fd6'), target=True)[3])
+
+    def _execute(self, case, instruction, *, target=False, memory=False, address_tag=0, pac=False):
         _, _, compiler, launch, prefix, _, _, _, _, scratch, address_name = case
         if not shutil.which(compiler) or launch and not shutil.which(launch[0]):
             self.skipTest('requires target compiler and emulator')
@@ -123,7 +133,7 @@ class TaggedSinksTests(unittest.TestCase):
             extern void probe(uintptr_t, uintptr_t);
             int main(void) {{
                 unsigned char data[32];
-                uintptr_t value = (uintptr_t)data, pointer = value;
+                uintptr_t value = (uintptr_t)data | {0x5a << 48 if pac else 0}ull, pointer = value;
                 unsigned char *shadow = 0;
                 if ({int(memory)}) {{
                     value = (uintptr_t)&pointer;
@@ -140,7 +150,8 @@ class TaggedSinksTests(unittest.TestCase):
                     unsigned expected_tag = tags[i] | {address_tag};
                     assert(reported_tag == ((expected_tag & 10) ? expected_tag : 0));
                     assert(reported_address == ((expected_tag & 10) ?
-                        ({'pointer' if memory else 'value'} & ~{1 if arch.name == 'riscv64' and target else 0}ull) : 0));
+                        ({'pointer' if memory else 'value'} & ~{1 if arch.name == 'riscv64' and target else 0}ull
+                         & ~{0x7f << 48 if pac else 0}ull) : 0));
                 }}
                 return 0;
             }}
