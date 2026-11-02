@@ -376,6 +376,7 @@
     "teapot_bti_rollbacks",
     "teapot_bti_text_hi",
     "teapot_bti_text_lo",
+    "teapot_checkpoint_skip_jump",
     "teapot_fault_claim_pending",
     "teapot_fault_counter",
     "teapot_fault_current_low_policy",
@@ -400,10 +401,19 @@
     "teapot_fault_x64_template",
     "teapot_fault_x64_window",
     "teapot_pac_rollbacks",
+    "teapot_pending_signals",
+    "teapot_restore_registers_end",
     "teapot_shadow_mapping_ready",
     "teapot_shadow_register_owned",
     "teapot_shadow_registry",
-    "teapot_shadow_registry_count"
+    "teapot_shadow_registry_count",
+    "teapot_signal_prepare_resume",
+    "teapot_signal_resume",
+    "teapot_signal_resume_mask_load",
+    "teapot_signal_resume_mask_ready",
+    "teapot_signal_resume_target",
+    "teapot_signal_resume_unblocked",
+    "teapot_signal_runtime_busy"
   ],
   "symbol_families": [
     "contract-anchor-v2"
