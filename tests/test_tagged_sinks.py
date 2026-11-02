@@ -85,6 +85,7 @@ class TaggedSinksTests(unittest.TestCase):
         self.assertEqual({r.name for r in info.tag_registers}, {'rdi'})
         self._execute(CASES[0], 'call qword ptr [rdi]', target=True, memory=True)
         self._execute(CASES[0], 'call qword ptr [rdi]', target=True, memory=True, address_tag=4)
+        self._execute(CASES[0], 'call qword ptr [rdi]', target=True, memory=True, address_tag=8)
 
     def test_predicates_execute_on_all_three_isas(self):
         for case in CASES:
@@ -137,8 +138,8 @@ class TaggedSinksTests(unittest.TestCase):
                     if (shadow) *shadow=tags[i];
                     probe(value,0);
                     unsigned expected_tag = tags[i] | {address_tag};
-                    assert(reported_tag == ((expected_tag & {255 if target else 10}) ? expected_tag : 0));
-                    assert(reported_address == ((expected_tag & {255 if target else 10}) ?
+                    assert(reported_tag == ((expected_tag & 10) ? expected_tag : 0));
+                    assert(reported_address == ((expected_tag & 10) ?
                         ({'pointer' if memory else 'value'} & ~{1 if arch.name == 'riscv64' and target else 0}ull) : 0));
                 }}
                 return 0;

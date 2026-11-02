@@ -475,9 +475,10 @@ Store-address leaks use `44 KASPER_CACHE_STORE`, separately from load-only
 `42 KASPER_CACHE`. Both test SECRET or SECRET_INDIRECT address tags with the
 same ISA-specific base-register exemptions. Card comparisons can filter kind 44;
 reporting does not change the simulated instruction budget or rollback policy.
-Tagged indirect calls and jumps use `45 GADGET_TARGET`; returns are excluded.
+Indirect calls and jumps use `45 GADGET_TARGET` when the target's tag intersects
+`0x0a` (SECRET or SECRET_INDIRECT); attacker-only targets and returns are excluded.
 The address field holds the target value and the tag field retains all its bits,
-so attacker-controlled targets and secret targets remain distinguishable.
+including any attacker bits combined with the secret bits.
 
 The optional `HF_TEAPOT_REPORT_FD` pipe emits
 `TPGADGET 2 <kind> <site-hex> <tag-decimal>` records. Honggfuzz accepts versions 1

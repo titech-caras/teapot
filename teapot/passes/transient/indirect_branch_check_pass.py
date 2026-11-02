@@ -7,6 +7,7 @@ from gtirb_rewriting import Patch, RewritingContext
 
 from teapot.arch.architecture import Architecture
 from teapot.configs.runtime import SYMBOL_SUFFIX
+from teapot.configs.tags import TAG_SECRET, TAG_SECRET_INDIRECT
 from teapot.passes.mixins import ArchSpecificPassMixin, RegInstAwarePassMixin, VisitorPassMixin
 from teapot.utils.misc import distinguish_edges
 from teapot.passes.transient.gadget_policy.mem_operand.base import MemOperandPolicyPatch
@@ -93,7 +94,7 @@ class TransientIndirectBranchCheckDestPass(ArchSpecificPassMixin, VisitorPassMix
 
 
 class TransientIndirectTargetPolicyPass(TransientIndirectBranchCheckDestPass):
-    """Read the target tag before JALR/BLR overwrites its link register."""
+    """Check secret target tags before JALR/BLR overwrites its link register."""
 
     def __init__(self, reg_manager, transient_section, decoder, arch, *, dift_layout):
         super().__init__(reg_manager, transient_section, decoder, None, None, None, None, arch)
@@ -155,6 +156,7 @@ class TransientIndirectTargetPolicyPass(TransientIndirectBranchCheckDestPass):
                     asm += f'andi {target}, {target}, -2\n'
                 else:
                     asm += f'mov {target}, {operand}\n'
-            return asm + tagged_report(arch, 'TARGET', target, tag, temp, extra)
+            return asm + tagged_report(arch, 'TARGET', target, tag, temp, extra,
+                                       mask=TAG_SECRET | TAG_SECRET_INDIRECT)
         return MemOperandPolicyPatch(patch, registers, registers,
                                      reads_memory_tags=memory, queues_tags=False)
