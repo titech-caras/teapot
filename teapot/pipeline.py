@@ -608,11 +608,23 @@ class TeapotPipeline:
             raise RuntimeError(f"a rewrite round left the live-register masks unusable: {error}") from None
 
     def _run_normalize_passes(self):
+        native_hint_passes = self.arch.native_hint_passes(self.decoder)
+        if native_hint_passes:
+            pass_manager = PassManager()
+            for arch_pass in native_hint_passes:
+                pass_manager.add(arch_pass)
+            self._run_pass_manager(pass_manager, "native hints")
         pass_manager = PassManager()
         pass_manager.add(NormalizeDataBlockAlignmentPass())
         for arch_pass in self.arch.normalize_passes(self.decoder, self.reg_manager):
             pass_manager.add(arch_pass)
         self._run_pass_manager(pass_manager, "normalize")
+        late_passes = self.arch.late_normalize_passes(self.decoder)
+        if late_passes:
+            pass_manager = PassManager()
+            for arch_pass in late_passes:
+                pass_manager.add(arch_pass)
+            self._run_pass_manager(pass_manager, "late normalize")
 
     def _create_instrumentation_sections(self):
         self.transient_section, self.transient_section_start_symbol, self.transient_section_end_symbol, \

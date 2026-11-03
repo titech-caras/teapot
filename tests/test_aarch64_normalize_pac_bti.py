@@ -22,13 +22,19 @@ class NormalizeOriginalPacBtiTests(unittest.TestCase):
         self.assertEqual(PAC_HINT_NORMALIZATION[0xd50323ff], "autib x30, sp")
         self.assertEqual(BTI_WORDS, frozenset((0xd503245f, 0xd503249f, 0xd50324df)))
 
-    def test_only_the_bti_modes_carry_the_pass(self):
+    def test_only_the_bti_modes_carry_the_pass_in_a_round_of_its_own(self):
         decoder = GtirbInstructionDecoder(gtirb.Module.ISA.ARM64)
         for arch in (AArch64BTIArchitecture(), AArch64BTIPACArchitecture()):
+            self.assertEqual([type(p).__name__ for p in arch.native_hint_passes(decoder)],
+                             ["NormalizeOriginalPacBtiPass"])
             names = [type(p).__name__ for p in arch.normalize_passes(decoder, None)]
-            self.assertIn("NormalizeOriginalPacBtiPass", names)
-        software = [type(p).__name__ for p in AArch64Architecture().normalize_passes(decoder, None)]
-        self.assertNotIn("NormalizeOriginalPacBtiPass", software)
+            self.assertNotIn("NormalizeOriginalPacBtiPass", names)
+            self.assertNotIn("AArch64SignReturnAddressesPass", names)
+        # Return signing follows the byte jump-table widening's layout check.
+        self.assertEqual([type(p).__name__ for p in AArch64BTIPACArchitecture().late_normalize_passes(decoder)],
+                         ["AArch64SignReturnAddressesPass"])
+        self.assertEqual(AArch64BTIArchitecture().late_normalize_passes(decoder), [])
+        self.assertEqual(AArch64Architecture().native_hint_passes(decoder), [])
 
     def test_hints_and_bti_are_replaced_in_place(self):
         arch, module, blocks, function, decoder = make_function(

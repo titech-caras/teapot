@@ -25,16 +25,17 @@ class AArch64BTIArchitecture(AArch64Architecture):
             ldp x0, x1, [sp], #32
         """)
 
-    def normalize_passes(self, decoder, reg_manager):
+    def native_hint_passes(self, decoder):
         from teapot.passes.preprocessing.normalize_original_pac_bti_pass import (
             NormalizeOriginalPacBtiPass,
         )
 
         # Design step 4: native hint PAC/BTI is transformed in place before the
         # speculative copy, so both copies carry the same code and the landing
-        # scan sees only Teapot markers.
-        return [NormalizeOriginalPacBtiPass(decoder)] + super().normalize_passes(
-            decoder, reg_manager)
+        # scan sees only Teapot markers. It replaces the first word of blocks
+        # that return signing inserts in front of, so it runs in a round of
+        # its own (Mythos review M-14).
+        return [NormalizeOriginalPacBtiPass(decoder)]
 
     def indirect_branch_hardware_check_patch(self, operand_str, transient_start_symbol,
                                              transient_end_symbol, text_start_symbol,

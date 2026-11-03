@@ -26,13 +26,15 @@ class AArch64BTIPACArchitecture(AArch64BTIArchitecture):
             ldp x0, x1, [sp], #32
         """)
 
-    def normalize_passes(self, decoder, reg_manager):
+    def late_normalize_passes(self, decoder):
         from teapot.passes.preprocessing.sign_return_addresses_pass import (
             AArch64SignReturnAddressesPass,
         )
 
-        return super().normalize_passes(decoder, reg_manager) + [
-            AArch64SignReturnAddressesPass(self, decoder)]
+        # Signing inserts an authentication before every return, which moves
+        # the case labels the byte jump-table widening checks against the
+        # table, so it follows the normalize round (Mythos review M-14).
+        return [AArch64SignReturnAddressesPass(self, decoder)]
 
     @staticmethod
     def finalize_bti_layout(pipeline):

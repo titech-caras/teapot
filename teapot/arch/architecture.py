@@ -58,6 +58,16 @@ class Architecture(
     def normalize_passes(self, decoder, reg_manager):
         return []
 
+    def native_hint_passes(self, decoder):
+        """In-place rewrites of the input that run in a round of their own,
+        before normalize_passes, so those see the rewritten blocks."""
+        return []
+
+    def late_normalize_passes(self, decoder):
+        """Code insertions that run in a round of their own, after
+        normalize_passes have checked the input's layout."""
+        return []
+
     def preprocess_passes(self, *, text_section, transient_section,
                           text_transient_mapping, landing_pad_targets,
                           decoder):
