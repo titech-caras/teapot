@@ -87,6 +87,8 @@ RUNTIME_WRAPPER_FUNCTIONS = {
     "bsd_signal": "bsd_signal__teapot_wrapper__",
     "ssignal": "ssignal__teapot_wrapper__",
     "sigset": "sigset__teapot_wrapper__",
+    # Keeps the runtime's alternate stack, where every handler runs.
+    "sigaltstack": "sigaltstack__teapot_wrapper__",
 }
 MAPPING_WRAPPER_FUNCTIONS = {
     name: name + "__teapot_wrapper__"

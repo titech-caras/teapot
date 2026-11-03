@@ -335,6 +335,7 @@
     "scratchpad",
     "setup_signal_handler",
     "sigaction__teapot_wrapper__",
+    "sigaltstack__teapot_wrapper__",
     "signal__teapot_wrapper__",
     "signal_handler",
     "sigset__teapot_wrapper__",
