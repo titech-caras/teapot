@@ -386,8 +386,11 @@ attributes #0 = {{ "no-builtins" }}
     def _should_skip_effects(effects: TextDiftInstructionEffects) -> bool:
         if not effects.regs_write and effects.mem_write is None:
             return True
+        # One register that reads and writes itself keeps its tag (inc, neg,
+        # bswap). Two (xchg r, r; xadd r, r) move tags between them.
         return (
             not effects.clear_dest_tags
+            and len(effects.regs_write) == 1
             and effects.regs_read == effects.regs_write
             and effects.mem_read is None
             and effects.mem_write is None
