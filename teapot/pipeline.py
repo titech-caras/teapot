@@ -44,6 +44,7 @@ from teapot.preprocess.contract_record import add_contract_record
 from teapot.preprocess.create_guards import create_guards
 from teapot.preprocess.integral_code_targets import normalize_integral_code_targets
 from teapot.preprocess.runtime_names import refuse_runtime_names
+from teapot.preprocess.printable_names import rename_unprintable_symbols
 from teapot.runtime_exports import runtime_owned_names
 from teapot.liveness import LivenessMetadataError, LiveRegisterManager
 from teapot.modes import validate_options
@@ -260,6 +261,9 @@ class TeapotPipeline:
         # generates (teapot/preprocess/runtime_names.py).
         refuse_reserved_names(self.ir, self.options, self.runtime_contract,
                               component=self.linked_component is not None)
+        renamed = rename_unprintable_symbols(self.module)
+        if renamed:
+            print(f"[teapot] symbols with unprintable names renamed: {renamed}", flush=True)
         self.abi = self.arch.register_abi(_ABIS)
         # Before anything is rewritten: the runtime must match what Teapot emits
         # and provide what the options need. Its DIFT layout is the rewrite's.
