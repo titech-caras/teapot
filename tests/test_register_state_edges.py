@@ -5,9 +5,11 @@ import unittest
 
 import gtirb
 
-from teapot.arch import X64Architecture
+from teapot.arch import AArch64Architecture, X64Architecture
 from teapot.arch.decoders import x64_decoder
 from teapot.passes.text.dift.x64 import X64TextDiftPropagationLLVMPass
+from teapot.utils.decoder import CachedGtirbInstructionDecoder
+from test_live_register_preservation import make_module
 
 
 class X64TagEdgeTests(unittest.TestCase):
@@ -36,6 +38,20 @@ class X64TagEdgeTests(unittest.TestCase):
                 _, effects = self.effects(encoded)
                 names = {reg.name for reg in effects.regs_read | effects.regs_write}
                 self.assertFalse(names & {f"k{index}" for index in range(8)})
+
+
+class AArch64ScalableStateTests(unittest.TestCase):
+    def test_sve_and_predicate_state_is_refused(self):
+        arch = AArch64Architecture()
+        # st1b {z0.b}, p0, [x9]; ptrue p7.b
+        for contents in ("20e100e4", "e7e31825"):
+            with self.subTest(contents=contents):
+                _, module, block, _, _ = make_module(arch, gtirb.Module.ISA.ARM64, bytes.fromhex(contents))
+                with self.assertRaisesRegex(ValueError, "SVE/SME instruction at 0x"):
+                    arch.unsupported_instructions(block.section, CachedGtirbInstructionDecoder(module.isa))
+        # rdvl x0, #1 only reads the vector length.
+        _, module, block, _, _ = make_module(arch, gtirb.Module.ISA.ARM64, bytes.fromhex("2050bf04"))
+        self.assertEqual(arch.unsupported_instructions(block.section, CachedGtirbInstructionDecoder(module.isa)), [])
 
 
 if __name__ == "__main__":

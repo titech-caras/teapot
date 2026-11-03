@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 from uuid import UUID
 
@@ -201,6 +202,10 @@ class AArch64ControlFlowPatchesMixin:
     # block after one of these gets no call edge, and its copy no marker pad.
     UNCLASSIFIED_TRANSFERS = frozenset(("blraa", "blrab", "blraaz", "blrabz", "retaa", "retab"))
 
+    # SVE and SME state: checkpoints save only the low 128 bits of each vector
+    # register and no predicates, and the memory log has no SVE store sizes.
+    SCALABLE_STATE = re.compile(r"(?<![\w.])(?:z\d{1,2}|p\d{1,2}|ffr|za\w*|zt0)(?!\w)")
+
     def unsupported_instructions(self, section, decoder) -> list:
         found = []
         for block in section.code_blocks:
@@ -209,6 +214,11 @@ class AArch64ControlFlowPatchesMixin:
             for instruction in decoder.get_instructions(block):
                 if instruction.mnemonic in self.UNCLASSIFIED_TRANSFERS:
                     found.append(f"{instruction.mnemonic} at {instruction.address:#x}")
+                elif self.SCALABLE_STATE.search(instruction.op_str):
+                    raise ValueError(
+                        f"SVE/SME instruction at {instruction.address:#x} ({instruction.mnemonic} "
+                        f"{instruction.op_str}): Teapot does not checkpoint scalable vector or "
+                        "predicate state, or log SVE stores, so it cannot roll this code back")
         return found
 
     def is_control_transfer_instruction(self, instruction) -> bool:
