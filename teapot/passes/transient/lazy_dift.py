@@ -13,6 +13,7 @@ from gtirb_rewriting import Patch
 from teapot.configs.blacklist import is_blacklisted_function
 from teapot.configs.runtime import (
     DIFT_REG_TAGS_SIZE,
+    SCRATCHPAD_SIZE,
     MEMORY_HISTORY_DATA_OFFSET,
     MEMORY_HISTORY_ENTRY_SIZE,
     MEMORY_HISTORY_SIZE_OFFSET,
@@ -33,6 +34,7 @@ class ReplayRecipe:
     capture_start: int
     capture_end: int
     queue_apply: bool
+    source_tag: bool = False
 
 
 @dataclass(frozen=True)
@@ -197,6 +199,7 @@ class TransientDiftReplayMixin:
                 raise ValueError('enforcing replay has no captured builder recipe')
             emitter.scratchpad_offset = recipe.capture_start
             emitter._queue_apply_requested = recipe.queue_apply
+            emitter._source_tag_requested = recipe.source_tag
             TextDiftLLVMBase._build_dift_patch(
                 emitter, *recipe.arguments, **dict(recipe.keywords), emit_capture=False)
             if emitter.scratchpad_offset != recipe.capture_end:
@@ -235,6 +238,9 @@ class TransientDiftReplayMixin:
         self.insert_at(block, offset, Patch.from_function(patch))
 
     def begin_module(self, module, functions, rewriting_ctx):
+        # The port check of a flag-setting load reads the load policy's verdict.
+        if self.memory_policy is not None and self.port_policy is not None:
+            self.memory_policy.write_predicate_tag = self.port_policy.read_predicate_tag = True
         for policy in (self.memory_policy, self.port_policy, *self.extra_policies):
             if policy is not None:
                 VisitorPassMixin.begin_module(policy, module, functions, rewriting_ctx)
@@ -297,6 +303,7 @@ class TransientDiftReplayMixin:
             patch = self.port_policy.allocate_registers(function, block, inst_idx)(patch)
             self.port_policy.insert_at(block, inst_offset, Patch.from_function(patch))
         self._queue_apply_requested = any(info.queues_tags for _, info in readers)
+        self._source_tag_requested = any(info.queues_source_tag for _, info in readers)
         self._effect_index = inst_idx
         if not rep and getattr(self, "propagate", True):
             # REP's transient replacement already owns per-element propagation
@@ -318,7 +325,8 @@ class TransientDiftReplayMixin:
             self._elision_pricing = False
         recipe = (ReplayRecipe(
             (block, inst, inst_offset, frozenset(regs_read), frozenset(regs_write)), tuple(kwargs.items()),
-            capture_start, self.scratchpad_offset, getattr(self, '_queue_apply_requested', True))
+            capture_start, self.scratchpad_offset, getattr(self, '_queue_apply_requested', True),
+            getattr(self, '_source_tag_requested', False))
             if self.shadow_mapping_enforcement else None)
         self.pending_registers.update(regs_write)
         self.pending_memory |= kwargs['mem_write'] is not None
@@ -343,6 +351,48 @@ class TransientDiftReplayMixin:
 @memory_history = external dso_local global i8
 """
         return ir.replace("define dso_local void @func", globals + "\ndefine dso_local void @func")
+
+    def _should_skip_effects(self, effects):
+        # A read-modify-write with no register operands (inc [m], add [m], 1)
+        # leaves its memory tag alone, unless the load policy's verdict joins it.
+        if getattr(self, '_source_tag_requested', False) and effects.mem_write is not None:
+            return False
+        return super()._should_skip_effects(effects)
+
+    def _source_tag_slot(self):
+        return self._build_gep(self.TAG_TYPE, "scratchpad", ScratchpadSlots.X64_MEM_POLICY_SOURCE_TAG,
+                               ptr_type=f"[{SCRATCHPAD_SIZE} x {self.TAG_TYPE}]")
+
+    def _or_source_tag_into_tag(self, tag):
+        if not getattr(self, '_source_tag_requested', False):
+            return
+        slot = self._source_tag_slot()
+        self._store(self.TAG_TYPE, self._or(self.TAG_TYPE, self._load(self.TAG_TYPE, tag),
+                                            self._load(self.TAG_TYPE, slot)), tag)
+        self._store(self.TAG_TYPE, "0", slot)
+
+    def _source_tag_only(self, regs_read, regs_write, mem_read, mem_write, clear_dest_tags):
+        return (getattr(self, '_source_tag_requested', False) and not regs_read and not regs_write
+                and mem_write is not None and mem_write == mem_read and not clear_dest_tags)
+
+    def _or_source_tag_into_shadow(self, capture_operands, block, inst, inst_offset, mem_operand, size,
+                                   emit_capture):
+        """OR the verdict into each byte's tag; usually it is zero and nothing is stored."""
+        slot = self._source_tag_slot()
+        source = self._load(self.TAG_TYPE, slot)
+        mem_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_operand,
+                                              capture_metadata=emit_capture)
+        label = f"source_tag_{self.tempval_cnt}"
+        self._br_cond(self._icmp("ne", self.TAG_TYPE, source, "0"), f"%{label}_apply", f"%{label}_done")
+        self._label(label + "_apply")
+        self._store(self.TAG_TYPE, "0", slot)
+        for offset in range(size):
+            byte_addr = mem_addr if offset == 0 else self._add("i64", mem_addr, offset)
+            shadow = self._inttoptr("i64", self._xor("i64", byte_addr, self.dift_layout.xor_mask))
+            merged = self._or(self.TAG_TYPE, self._load(self.TAG_TYPE, shadow, dift_mem=True), source)
+            self._store_shadow_mem_tags(merged, mem_addr, offset, 1)
+        self._br(f"%{label}_done")
+        self._label(label + "_done")
 
     def _after_instruction_effects(self, mem_read):
         if mem_read is None or not getattr(self, '_queue_apply_requested', True):

@@ -23,9 +23,16 @@ class MemOperandPolicyPatch:
     tag_registers: Optional[Set[Register]] = None
     reads_memory_tags: bool = False
     queues_tags: bool = True
+    # The verdict goes to the source-tag slot, for the instruction's own DIFT
+    # replay to OR into every result (x64 loads without a register operand).
+    queues_source_tag: bool = False
 
 
 class TransientMemOperandPoliciesPassBase(ArchSpecificPassMixin, InstVisitorPassMixin):
+    # Set by the transient replay when a port check reads the verdict of the
+    # instruction it checks (x64 compares and other flag-setting loads).
+    write_predicate_tag = False
+
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder, arch: Architecture, *, dift_layout,
                  enable_asan_check: bool = True, asan_tag_storage: str = ASAN_TAG_STORAGE_SHADOW):

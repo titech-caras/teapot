@@ -10,6 +10,9 @@ from teapot.utils.misc import conditional_branch_edge
 
 
 class TransientPortContentionPolicyPassBase(ArchSpecificPassMixin, VisitorPassMixin, RegInstAwarePassMixin):
+    # Set by the transient replay when the load policy publishes its verdict.
+    read_predicate_tag = False
+
     def __init__(self, reg_manager: LiveRegisterManager, transient_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder, arch: Architecture, *, dift_layout):
         self.check_expected_arch(arch)

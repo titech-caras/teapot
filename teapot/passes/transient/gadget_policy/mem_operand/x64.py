@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from typing import Optional
 
 import gtirb
-from capstone import CS_AC_WRITE, CsInsn
+from capstone import CS_AC_WRITE, CS_OP_REG, CsInsn
 from gtirb_functions import Function
 from gtirb_rewriting import InsertionContext, patch_constraints
 from gtirb_rewriting.assembly import Register, X86Syntax
@@ -39,24 +39,25 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
             return None
 
         mem_operand = self.arch.memory_operand(inst)
-        if mem_operand is None:
+        if mem_operand is None or not self.arch.mem_operand_is_read(inst, mem_operand):
             return None
-
-        write_operand = next(iter(x for x in inst.operands if x.access & CS_AC_WRITE), None)
-        if write_operand is None or write_operand == mem_operand:
-            return None
-
         if not self.arch.mem_operand_uses_dynamic_address(mem_operand):
             return None
 
-        write_reg = self.arch.register_from_name(
-            self.reg_manager.abi, inst.reg_name(write_operand.reg))
-        if write_reg is None:
-            # The x64 ABI/DIFT register map intentionally covers GPRs and XMM
-            # registers, but not AVX-512 mask registers such as k0.  The main
-            # DIFT pass already omits such unsupported destinations; keep the
-            # memory-operand policy consistent instead of failing the rewrite.
-            return None
+        abi = self.reg_manager.abi
+        write_operand = next(iter(x for x in inst.operands if x.access & CS_AC_WRITE), None)
+        # None for AVX-512 mask registers, which carry no tag.
+        write_reg = (self.arch.register_from_name(abi, inst.reg_name(write_operand.reg))
+                     if write_operand is not None and write_operand.type == CS_OP_REG else None)
+        # x64 also folds loads into compares, read-modify-write and implicit
+        # destinations. Without a register operand to queue to, the verdict goes
+        # to the instruction's own DIFT replay (memory and implicit registers)
+        # and to the port check of its flags.
+        ignored = self.arch.dift_ignored_register_names()
+        source_tag = write_reg is None and (
+            self.arch.mem_operand_is_write(inst, mem_operand) or any(
+                reg.name.lower() not in ignored for reg in self.arch.access_registers(abi, inst, 1)))
+        predicate = self.write_predicate_tag and self.arch.instruction_writes_flags(inst)
 
         mem_operand_str = self.arch.mem_operand_to_str(block, inst, mem_operand)
         conditional = self.arch.conditional_move_suffix(inst)
@@ -64,9 +65,10 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
                  if self._fast_path_eligible(mem_operand_str, mem_operand.size, function, block, inst_idx)
                  else self._build_patch)
         patch = build(inst, mem_operand_str, mem_operand.size, conditional=conditional,
-                      mem_operand=mem_operand, write_reg=write_reg)
+                      mem_operand=mem_operand, write_reg=write_reg, source_tag=source_tag, predicate=predicate)
         return MemOperandPolicyPatch(
-            patch, set(), self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand))
+            patch, set(), self.arch.mem_operand_registers(abi, inst, mem_operand),
+            queues_tags=write_reg is not None or source_tag, queues_source_tag=source_tag)
 
     def _fast_path_eligible(self, mem_operand_str: str, access_size: int, function, block, inst_idx) -> bool:
         """An ordinary 8-byte load with a dead GPR at the instruction. The allocator hands
@@ -81,7 +83,8 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
         return bool(self.reg_manager.free_registers(function, block, inst_idx))
 
     def _build_fast_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
-                          conditional: Optional[str], mem_operand, write_reg: Optional[Register] = None):
+                          conditional: Optional[str], mem_operand, write_reg: Optional[Register] = None,
+                          source_tag: bool = False, predicate: bool = False):
         """The full policy behind a one-register fast path.
 
         The fast path takes an access whose address registers carry no reporting tag, which is
@@ -94,8 +97,8 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
         addr_regs = sorted(self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand),
                            key=lambda reg: reg.name)
         full = self._build_patch(inst, mem_operand_str, access_size, conditional=conditional,
-                                 mem_operand=mem_operand, write_reg=write_reg,
-                                 label_key="mem_operand_policy_slow", capture_condition=False)
+                                 mem_operand=mem_operand, write_reg=write_reg, source_tag=source_tag,
+                                 predicate=predicate, label_key="mem_operand_policy_slow", outer=False)
         condition_slot = f"byte ptr scratchpad+{ScratchpadSlots.X64_MEM_POLICY_CONDITION}"
         cold = ScratchpadSlots.X64_MEM_POLICY_COLD_SPILL
         shadow_offset = self.dift_layout.asan_shadow_offset
@@ -111,6 +114,7 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
             # CMOV reads memory even when the assignment is skipped: capture its
             # condition before the tests below clobber the flags.
             asm = f"set{conditional} {condition_slot}\n" if conditional is not None else ""
+            asm += self._clear_predicate_snippet(predicate)
             for reg in addr_regs:
                 asm += f"""
                     test byte ptr dift_reg_tags+{self.arch.dift_register_id(reg)}, {FAST_PATH_TAG_MASK}
@@ -138,16 +142,26 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
 
         return patch
 
+    @staticmethod
+    def _clear_predicate_snippet(predicate: bool) -> str:
+        return (f"mov byte ptr scratchpad+{ScratchpadSlots.X64_MEM_POLICY_PREDICATE_TAG}, 0\n"
+                if predicate else "")
+
     def _build_patch(self, inst: CsInsn, mem_operand_str: str, access_size: int, *,
                      conditional: Optional[str], mem_operand, write_reg: Optional[Register] = None,
-                     queued_tag_operand=None, label_key="mem_operand_policy", capture_condition=True):
+                     queued_tag_operand=None, source_tag: bool = False, predicate: bool = False,
+                     label_key="mem_operand_policy", outer=True):
         scratch_registers = (5 if access_size > 1 else 4) if self.enable_asan_check else 3
         addr_regs = self.arch.mem_operand_registers(self.reg_manager.abi, inst, mem_operand)
         # A string load can feed memory or a comparison instead of a GPR. Its
         # per-element queue is consumed by the REP propagation kernel.
+        if source_tag:
+            queued_tag_operand = f"scratchpad+{ScratchpadSlots.X64_MEM_POLICY_SOURCE_TAG}"
         queue_tags = {
-            tag: (self.arch.dift_queue_reg_tag_snippet(None, None, tag, write_reg)
-                  if write_reg is not None else f"or byte ptr {queued_tag_operand}, {tag}\n")
+            tag: ((self.arch.dift_queue_reg_tag_snippet(None, None, tag, write_reg) if write_reg is not None else
+                   f"or byte ptr {queued_tag_operand}, {tag}\n" if queued_tag_operand is not None else "") +
+                  (f"or byte ptr scratchpad+{ScratchpadSlots.X64_MEM_POLICY_PREDICATE_TAG}, {tag}\n"
+                   if predicate else ""))
             for tag in (TAG_SECRET_INDIRECT, TAG_SECRET, TAG_ATTACKER_INDIRECT)
         }
         condition_slot = f"byte ptr scratchpad+{ScratchpadSlots.X64_MEM_POLICY_CONDITION}"
@@ -169,8 +183,8 @@ class X64TransientMemOperandPoliciesPass(TransientMemOperandPoliciesPassBase):
             r4 = ctx.scratch_registers[3] if scratch_registers > 3 else None
             r5 = ctx.scratch_registers[4] if scratch_registers > 4 else None
 
-            asm = (f"set{conditional} {condition_slot}\n"
-                   if conditional is not None and capture_condition else "")
+            asm = (f"set{conditional} {condition_slot}\n" if conditional is not None and outer else "")
+            asm += self._clear_predicate_snippet(predicate and outer)
             asm += self.arch.effective_address_snippet(r2, mem_operand_str, r3)
             asm += self.arch.clear_register_snippet(r1)
 

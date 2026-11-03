@@ -41,6 +41,11 @@ class ScratchpadSlots:
     RISCV64_ORIGINAL_TP = SCRATCHPAD_SIZE - 32768
     X64_REP_STATE = FIRST_SPILL + 8192
     X64_MEM_POLICY_CONDITION = FIRST_SPILL + 12288
+    # The x64 load policy's verdict on a loaded value that no register operand
+    # receives: the transient DIFT replay ORs it into the instruction's result
+    # (memory or implicit registers), and the port check into its flags.
+    X64_MEM_POLICY_SOURCE_TAG = X64_MEM_POLICY_CONDITION + 8
+    X64_MEM_POLICY_PREDICATE_TAG = X64_MEM_POLICY_CONDITION + 16
     # The cold path of the x64 load policy's fast path saves its four extra
     # registers here: apart from the wrappers, reports (0-63) and captures (64+).
     X64_MEM_POLICY_COLD_SPILL = FIRST_SPILL + 16384

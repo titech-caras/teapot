@@ -456,6 +456,9 @@ attributes #0 = {{ "no-builtins" }}
                 self._store(self.TAG_TYPE, address_tag, self._build_gep(
                     self.TAG_TYPE, "dift_reg_tags", self.arch.dift_register_id(reg),
                     ptr_type=self.DIFT_REG_TAGS_TYPE))
+        elif self._source_tag_only(regs_read, regs_write, mem_read, mem_write, clear_dest_tags):
+            self._or_source_tag_into_shadow(capture_operands, block, inst, inst_offset, mem_write,
+                                            mem_write_size, emit_capture)
         else:
             if not clear_dest_tags:
                 self._or_instruction_register_tags_into_tag(
@@ -466,6 +469,7 @@ attributes #0 = {{ "no-builtins" }}
                     mem_read_addr = self._load_scratchpad_addr(capture_operands, block, inst, inst_offset, mem_read,
                                                              capture_metadata=emit_capture)
                     self._or_shadow_mem_tag_into_tag(tag, mem_read_addr)
+                    self._or_source_tag_into_tag(tag)
 
             loaded_tag = self._load(self.TAG_TYPE, tag)
 
@@ -498,6 +502,13 @@ attributes #0 = {{ "no-builtins" }}
 
     def _after_instruction_effects(self, mem_read):
         """Transient replays apply queued load tags inside the same condition."""
+
+    def _or_source_tag_into_tag(self, tag):
+        """Transient replays add a load policy's verdict on the loaded value."""
+
+    def _source_tag_only(self, regs_read, regs_write, mem_read, mem_write, clear_dest_tags) -> bool:
+        """Transient replays: a verdict is the only change to a register-free RMW."""
+        return False
 
     def _load_scratchpad_addr(self, capture_operands, block, inst, inst_offset, mem_operand, *,
                               capture_metadata=True):

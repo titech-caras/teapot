@@ -6,6 +6,7 @@ from gtirb_rewriting import InsertionContext, patch_constraints
 from gtirb_rewriting.assembly import X86Syntax
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
+from teapot.configs.slots import ScratchpadSlots
 from teapot.configs.tags import TAG_SECRET, TAG_SECRET_INDIRECT
 from teapot.passes.transient.gadget_policy.port_contention.base import TransientPortContentionPolicyPassBase
 
@@ -28,6 +29,14 @@ class X64TransientPortContentionPolicyPass(TransientPortContentionPolicyPassBase
             return None
         mem_read_operand_str = None
         regs_read = []
+        # The load policy, just before this check, left its verdict on the
+        # loaded value (secret when out of bounds) in this slot. Decide with
+        # the load policy's own operand model.
+        mem_operand = self.arch.memory_operand(inst)
+        verdict = (self.read_predicate_tag and mem_operand is not None
+                   and inst.mnemonic not in ("lea", "nop", "push", "pop")
+                   and self.arch.mem_operand_is_read(inst, mem_operand)
+                   and self.arch.mem_operand_uses_dynamic_address(mem_operand))
 
         for operand in inst.operands:
             if not operand.access & CS_AC_READ:
@@ -41,7 +50,7 @@ class X64TransientPortContentionPolicyPass(TransientPortContentionPolicyPassBase
                 if reg is not None:
                     regs_read.append(reg)
 
-        if not regs_read and mem_read_operand_str is None:
+        if not regs_read and mem_read_operand_str is None and not verdict:
             return None
 
         segmented_operand = (
@@ -72,6 +81,8 @@ class X64TransientPortContentionPolicyPass(TransientPortContentionPolicyPassBase
                 asm += self.arch.dift_shadow_addr_snippet(
                     r2, None, self.dift_layout.xor_mask)
                 asm += f"or {r1:8l}, [{r2}]\n"
+            if verdict:
+                asm += f"or {r1:8l}, byte ptr scratchpad+{ScratchpadSlots.X64_MEM_POLICY_PREDICATE_TAG}\n"
 
             asm += f"""
                 test {r1:8l}, {TAG_SECRET | TAG_SECRET_INDIRECT}
