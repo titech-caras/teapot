@@ -236,8 +236,8 @@ class X64DiftOperandHelpers(DiftPassBase):
                 mem_operand_write_str = self.arch.mem_operand_to_str(block, inst, mem_operand) if mem_operand else None
                 mem_operand_write_size = mem_operand.size if mem_operand else 0
         else:
-            regs_read = self.arch.access_registers(self.reg_manager.abi, inst, 0)
-            regs_write = self.arch.access_registers(self.reg_manager.abi, inst, 1)
+            regs_read = self._filter_ignored_registers(self.arch.access_registers(self.reg_manager.abi, inst, 0))
+            regs_write = self._filter_ignored_registers(self.arch.access_registers(self.reg_manager.abi, inst, 1))
 
             mem_operand_str, mem_operand_read_str, mem_operand_write_str, mem_operand_write_size = None, None, None, None
 

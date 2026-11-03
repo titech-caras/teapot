@@ -19,6 +19,11 @@ class X64DiftPatchesMixin:
 
         raise KeyError(f"No x64 DIFT register id for {reg.name}")
 
+    def dift_ignored_register_names(self):
+        # AVX-512 mask registers carry no tag, like RFLAGS. Checkpoints still
+        # save and restore them with the rest of the XSAVE image.
+        return {f"k{index}" for index in range(8)}
+
     def dift_should_skip_instruction(self, inst) -> bool:
         # Basic execution/rollback support only: neither the x87 register
         # stack nor RFLAGS has a DIFT tag model. Leave tags untouched instead
