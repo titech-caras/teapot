@@ -119,6 +119,14 @@ class X64AdditionalStoreTests(unittest.TestCase):
                 self.assertLess(rollback[0], bytes(interval.contents).index(bytes(inst.bytes)))
 
     @unittest.skipUnless(platform.machine() == "x86_64" and shutil.which("cc"), "native x64 compiler required")
+    def test_register_bit_offset_stores_end_the_speculation(self):
+        # bts/lock bts/btr/btc [rdi+0x10], rdx; bts word ptr [rdi], dx
+        for encoded in ("480fab5710", "f0480fab5710", "480fb35710", "480fbb5710", "660fab17"):
+            self.assertTrue(self.arch.instruction_must_rollback(self.decode(encoded)), encoded)
+        # bts [rdi], 5 stays in its word; bts rax, rdx and bt [rdi+0x10], rdx store nothing.
+        for encoded in ("480fba2f05", "480fabd0", "480fa35710"):
+            self.assertFalse(self.arch.instruction_must_rollback(self.decode(encoded)), encoded)
+
     def test_native_stores_replay_original_bytes(self):
         for encoded, width, _ in STORES + (("660ff7c1", 16, False), ("0ff7c1", 8, False)):
             # VSTMXCSR needs AVX; classification is tested above on every host.

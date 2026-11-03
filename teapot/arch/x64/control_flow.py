@@ -1,7 +1,7 @@
 from typing import Optional
 
 import gtirb
-from capstone import CS_OP_MEM
+from capstone import CS_OP_MEM, CS_OP_REG
 
 from teapot.configs.runtime import SYMBOL_SUFFIX
 
@@ -149,6 +149,13 @@ class X64ControlFlowPatchesMixin:
             # Capstone reports these as eight-byte writes. FXSAVE writes a
             # 512-byte image; XSAVE's size depends on the enabled processor
             # state. Neither can use that nominal width for rollback logging.
+            return True
+        operands = instruction.operands
+        if (instruction.mnemonic.split()[-1] in ("bts", "btr", "btc") and len(operands) == 2
+                and operands[0].type == CS_OP_MEM and operands[1].type == CS_OP_REG):
+            # A register bit offset can select any word from the memory operand
+            # on, while the memory log saves the operand's own word. These forms
+            # are rare enough to end the speculation instead (Mythos review M-06).
             return True
         if instruction.mnemonic in {
             "lfence", "mfence", "sfence", "serialize", "cpuid",
