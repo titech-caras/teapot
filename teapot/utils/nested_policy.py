@@ -15,6 +15,28 @@ def outcome_stubs(arch, setup, entry_jump, branch, site_index):
     # then uses exactly the existing patch's saves and scratch registers.
     taken = f".L__checkpoint_taken{SYMBOL_SUFFIX}"
     mnemonic, operands = branch
+    x64_conditions = {"o", "no", "b", "nae", "c", "ae", "nb", "nc", "e", "z", "ne", "nz",
+                      "be", "na", "a", "nbe", "s", "ns", "p", "pe", "np", "po", "l", "nge",
+                      "ge", "nl", "le", "ng", "g", "nle"}
+    arm_conditions = {"eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl", "vs", "vc",
+                      "hi", "ls", "ge", "lt", "gt", "le"}
+    if arch.name == "x64" and mnemonic.startswith("j") and mnemonic[1:] in x64_conditions:
+        return setup + f"""
+            mov qword ptr [checkpoint_target_metadata+{CHECKPOINT_TARGET_SITE_INDEX_OFFSET}], {site_index}
+            set{mnemonic[1:]} byte ptr [checkpoint_target_metadata+{CHECKPOINT_TARGET_OUTCOME_OFFSET}]
+            {entry_jump}
+        """
+    if arch.name == "aarch64" and mnemonic.startswith("b.") and mnemonic[2:] in arm_conditions:
+        index = f"movz x16, #{site_index & 0xffff}\n"
+        for shift in (16, 32, 48):
+            if site_index >> shift:
+                index += f"movk x16, #{(site_index >> shift) & 0xffff}, lsl #{shift}\n"
+        return setup + index + f"""
+            str x16, [x17, #{CHECKPOINT_TARGET_SITE_INDEX_OFFSET}]
+            cset w16, {mnemonic[2:]}
+            strb w16, [x17, #{CHECKPOINT_TARGET_OUTCOME_OFFSET}]
+            {entry_jump}
+        """
     prefix = operands.rsplit(",", 1)[0] + ", " if "," in operands else ""
     pieces = [f"{mnemonic} {prefix}{taken}\n"]
     for outcome in (0, 1):

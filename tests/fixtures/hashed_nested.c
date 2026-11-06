@@ -10,6 +10,7 @@
 #include "checkpoint.h"
 #include "nested_policy.h"
 #include "nested_model.h"
+#include "cases.h"
 
 extern memory_history_t *memory_history_top;
 extern uint32_t *guard_list_top;
@@ -29,7 +30,7 @@ void __asan_unpoison_memory_region(void const volatile *p, size_t n) { (void)p; 
 static void check_direction(uint64_t direction, uint64_t flags) {
     assert(direction == expected_direction);
 #if defined(__aarch64__)
-    assert(((flags >> 30) & 1) == expected_direction);
+    assert(flags == expected_nzcv[index]);
 #else
     (void)flags;
 #endif
@@ -84,7 +85,6 @@ void probe_finished(void) {
     visits |= 8;
 }
 
-#include "cases.h"
 
 int main(int argc, char **argv) {
     libcheckpoint_enable(argc, argv);

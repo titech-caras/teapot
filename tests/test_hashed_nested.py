@@ -35,17 +35,36 @@ class HashedEmitter:
         return self.arch.trampoline_patch(text, transient, *self.branch, *args, **kwargs)
 
 
+X64_CONDITIONS = "o no b ae e ne be a s ns p np l ge le g c nae nb nc z nz na nbe pe po nge nl ng nle".split()
+ARM_CONDITIONS = "eq ne cs cc mi pl vs vc hi ls ge lt gt le hs lo".split()
+
+
+def condition_flags(arch, condition, taken):
+    aliases = dict(c="b", nae="b", nb="ae", nc="ae", z="e", nz="ne", na="be", nbe="a",
+                   pe="p", po="np", nge="l", nl="ge", ng="le", nle="g", hs="cs", lo="cc")
+    condition = aliases.get(condition, condition)
+    for bits in range(32):
+        c, p, z, n, v = [bool(bits & (1 << i)) for i in range(5)]
+        predicates = dict(o=v, no=not v, b=c, ae=not c, e=z, ne=not z, be=c or z,
+            a=not (c or z), s=n, ns=not n, p=p, np=not p, l=n!=v, ge=n==v,
+            le=z or n!=v, g=not z and n==v, eq=z, cs=c, cc=not c, mi=n, pl=not n,
+            vs=v, vc=not v, hi=c and not z, ls=not c or z, lt=n!=v, gt=not z and n==v)
+        if predicates[condition] == bool(taken):
+            return ((int(n)<<31)|(int(z)<<30)|(int(c)<<29)|(int(v)<<28) if arch.name=='aarch64'
+                    else 2|int(c)|(int(p)<<2)|(int(z)<<6)|(int(n)<<7)|(int(v)<<11))
+
+
 def branch_case(arch, variant, taken):
     if arch.name == "x64":
-        return "je", "target"
+        return "j" + X64_CONDITIONS[variant], "target"
     if arch.name == "aarch64":
-        if variant == 0:
-            return "b.eq", "target"
+        if variant >= 5:
+            return "b." + ARM_CONDITIONS[variant - 5], "target"
         register, prefix, bit = (("x16", "cb", ""), ("w17", "cb", ""),
                                  ("x16", "tb", "#0, "), ("x17", "tb", "#1, "),
-                                 ("x16", "tb", "#63, "))[variant - 1]
+                                 ("x16", "tb", "#63, "))[variant]
         # The fixed registers contain 0x123/0x456. Their bit 63 is clear.
-        nonzero = variant != 5
+        nonzero = variant != 4
         suffix = "nz" if bool(taken) == nonzero else "z"
         return prefix + suffix, f"{register}, {bit}target"
     mnemonic = ("beq", "bne", "blt", "bge", "bltu", "bgeu")[variant]
@@ -61,13 +80,19 @@ def branch_case(arch, variant, taken):
 
 def assembly(arch):
     parts, names = [], []
-    variants = range(1 if arch.name == "x64" else 6)
+    variants = range(len(X64_CONDITIONS) if arch.name == "x64" else 5 + len(ARM_CONDITIONS) if arch.name == "aarch64" else 6)
     for variant in variants:
         for spares in range(1 if arch.name == "x64" else 3):
             for taken in range(2):
                 index = len(names)
                 emitter = HashedEmitter(arch, index, branch_case(arch, variant, taken))
                 code = (x64_probe if arch.name == "x64" else probe)(emitter, spares, taken)
+                if arch.name == "x64":
+                    flags = condition_flags(arch, X64_CONDITIONS[variant], taken)
+                    code = code.replace(f"mov ecx, {1-taken}\ncmp ecx, 0", f"push {flags}\npopfq")
+                elif arch.name == "aarch64" and variant >= 5:
+                    flags = condition_flags(arch, ARM_CONDITIONS[variant-5], taken)
+                    code = code.replace(f"mov x8, #{1-taken}\ncmp x8, #0", f"mov x8, #{flags}\nmsr nzcv, x8")
                 old = f"probe_{spares}_{taken}"
                 name = f"hashed_probe_{index}"
                 names.append(name)
@@ -134,6 +159,12 @@ class HashedNestedTests(unittest.TestCase):
             (root / "probe.S").write_text(code)
             (root / "cases.h").write_text("\n".join(f"extern void {name}(void *);" for name in names) +
                 "\nstatic void (*probes[])(void *) = {" + ",".join(names) + "};\n")
+            if arch.name == "aarch64":
+                nzcv = [condition_flags(arch, ARM_CONDITIONS[v-5], taken) if v >= 5 else
+                        (0x60000000 if taken else 0x20000000)
+                        for v in range(5 + len(ARM_CONDITIONS)) for spares in range(3) for taken in range(2)]
+                with (root / "cases.h").open("a") as cases:
+                    cases.write("static const uint64_t expected_nzcv[] = {" + ",".join(map(str,nzcv)) + "};\n")
             flags = ["-O2", "-fno-pie", "-fno-stack-protector", "-DENABLE_NESTED_SPECULATION", "-DENABLE_HASHED_NESTED",
                      "-DDIFT_XOR_MASK=0", "-DTEST_CONTRACT_REQUIRED=LIBCHECKPOINT_CAPABILITY_HASHED_NESTED",
                      "-I", RUNTIME / "include", "-I", RUNTIME / "tests", "-I", build / "include", "-I", root]

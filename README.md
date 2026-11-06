@@ -264,6 +264,9 @@ sysroot is left unchanged.
 
 Nested speculation defaults to the paper policy. To opt into per-outcome root sampling and hashed per-root tree sampling, use `--enable-nested-speculation --nested-policy hashed` with `libcheckpoint_nested_hashed.contract.json` and link `checkpoint_nested_hashed` (built alongside `checkpoint_nested` with `TEAPOT_BUILD_NESTED_RUNTIME=ON`). Hashed mode seeds from the bytes of `argv[1]`; `TEAPOT_NESTED_SEED=<hex u64>` overrides the seed for stdin or replay, and `VERBOSE` statistics print it.
 
+Hashed-mode automatic seeding reads only regular files; non-regular inputs use the no-input seed, so use `TEAPOT_NESTED_SEED` for streams.
+A speculative application store that aliases the hashed site records can corrupt or rewind their tree/generation state; this inherited runtime-state aliasing limitation is accepted.
+
 Relocations are optional precision evidence, not a requirement to rebuild a
 supplied input. When available, retain them: they take precedence over pointer
 heuristics and protect integer data. For new whole-program inputs, PIE or a
