@@ -63,7 +63,7 @@ SCHEMA = "libcheckpoint-runtime-contract"
 # Capability names in the bit order of runtime_contract.h.
 CAPABILITIES = ("nested", "aarch64_bti_pac", "dift_runtime", "x64_vector_full", "coverage",
                 "riscv64_float_state", "x64_vector_sse", "x64_vector_avx", "fault_training", "fault_publishing",
-                "shadow_mapping_enforcement")
+                "shadow_mapping_enforcement", "hashed_nested")
 # A compatible pre-enforcement v2 contract remains eager. These facts are
 # required only when the new mode key is present; all fault ABI checks remain.
 SHADOW_MAPPING_ABI = {"shadow_registry.capacity": 64, "shadow_registry.entry_size": 24,
@@ -131,7 +131,7 @@ class RuntimeContract:
 
     @property
     def anchor(self) -> str:
-        return contract_anchor(self.version, self.fingerprint)
+        return contract_anchor(self.version, self.fingerprint) + ("_hashed" if "hashed_nested" in self.capabilities else "")
 
     @property
     def isa(self) -> str:
@@ -223,6 +223,10 @@ class RuntimeContract:
             required.add("aarch64_bti_pac")
         if options.enable_nested_speculation:
             required.add("nested")
+        if options.nested_policy == "hashed":
+            required.add("hashed_nested")
+        elif "hashed_nested" in self.capabilities:
+            problems.append("nested policy: the hashed runtime requires --nested-policy=hashed")
         # DIFT propagation reads the DIFT shadow, and so do the x64 and AArch64
         # port-contention policies; the RISC-V one reads register tags only.
         if options.enable_dift or (options.enable_gadgets and options.enable_port_gadgets and
@@ -239,6 +243,7 @@ class RuntimeContract:
         if self.emits_coverage(options):
             required.add("coverage")
         remedies = {
+            "hashed_nested": "--nested-policy=hashed needs libcheckpoint_nested_hashed.contract.json",
             "shadow_mapping_enforcement": "unchanged-tag elision needs -DTEAPOT_SHADOW_MAPPING_ENFORCEMENT=ON",
             "fault_training": "training metadata needs -DTEAPOT_ENABLE_FAULT_TRAINING=ON (no text patching yet)",
             "fault_publishing": "adaptive prechecks need -DTEAPOT_ENABLE_FAULT_PUBLISHING=ON and fault training",
@@ -431,9 +436,12 @@ def load_runtime_contract(path) -> RuntimeContract:
     _require(data["fingerprint"] == fingerprint, path,
              f"the fingerprint {data['fingerprint']} is not the hash of its ABI section ({fingerprint}); "
              "regenerate the file by configuring libcheckpoint, do not edit it")
-    _require(data.get("anchor", contract_anchor(version, fingerprint)) == contract_anchor(version, fingerprint),
+    anchor = contract_anchor(version, fingerprint) + ("_hashed" if data["capabilities"].get("hashed_nested") else "")
+    _require(data.get("anchor", anchor) == anchor,
              path, "the anchor symbol does not match the fingerprint")
-    names = CAPABILITIES if "shadow_mapping_enforcement" in abi else CAPABILITIES[:10]
+    names = CAPABILITIES[:11] if "shadow_mapping_enforcement" in abi else CAPABILITIES[:10]
+    if "hashed_nested" in data["capabilities"]:
+        names = (*names, "hashed_nested")
     _require(set(data["capabilities"]) == set(names), path,
              "unknown or missing capabilities: " + ", ".join(sorted(set(data["capabilities"]) ^ set(names))))
     capabilities = frozenset(name for name, present in data["capabilities"].items() if present is True)

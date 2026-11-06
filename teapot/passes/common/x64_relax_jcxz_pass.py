@@ -4,6 +4,7 @@ from gtirb_rewriting import Pass, Patch
 from teapot.configs.runtime import SYMBOL_SUFFIX
 from teapot.passes.mixins.visitor_pass_mixin import block_order
 from teapot.utils.symbol_references import reference_name
+from teapot.utils.nested_policy import checkpoint_branch
 from teapot.utils.misc import (
     distinguish_edges,
     get_or_insert_symbol,
@@ -71,7 +72,8 @@ class X64RelaxJcxzPass(Pass):
                 @self.arch.constraints()
                 def relaxed_branch(
                     ctx,
-                    mnemonic=instruction.mnemonic,
+                    mnemonic=(checkpoint_branch(self.arch, instruction)[0]
+                              if getattr(self.arch, "hashed_nested", False) else instruction.mnemonic),
                     # An existing label may share its name with another place.
                     target_name=reference_name(target_symbol),
                     taken=taken_label,

@@ -130,6 +130,7 @@ class InstrumentationOptions:
     enable_memlog: bool = True
     enable_checkpoints: bool = True
     enable_nested_speculation: bool = False
+    nested_policy: str = "paper"
     enable_indirect_transform: bool = True
     enable_indirect_check: bool = True
     enable_conditional_branch_relax: bool = True
@@ -204,6 +205,7 @@ class TeapotPipeline:
         self.component_guard_base = None
         self.checkpoint_df_blocks = set()
         self.checkpoint_vector_cases = None
+        self.checkpoint_site_indices = {}
         self.vector_state = None
         self.transient_section = None
         self.text_section_start_symbol = self.text_section_end_symbol = None
@@ -248,6 +250,7 @@ class TeapotPipeline:
         self.mode = validate_options(self.options, self.arch.name, component=self.linked_component is not None)
         if self.mode.architecture is not None:
             self.arch = self.mode.architecture()
+        object.__setattr__(self.arch, "hashed_nested", self.options.nested_policy == "hashed")
         from teapot.riscv_profile import PURE
         if self.riscv_profile == PURE:
             if self.arch.name != "riscv64":
@@ -685,6 +688,7 @@ class TeapotPipeline:
 
         self.landing_pad_targets = set()
         self.checkpoint_spare_registers = {}
+        self.checkpoint_site_indices = {}
 
     def _run_pad_passes(self):
         """Arch pad passes for the freshly made speculative copy (design step 5)."""
@@ -712,7 +716,9 @@ class TeapotPipeline:
             self.arch,
             self.reg_manager,
             self.landing_pad_targets,
-            self.checkpoint_spare_registers)
+            self.checkpoint_spare_registers,
+            nested_policy=self.options.nested_policy,
+            checkpoint_site_indices=self.checkpoint_site_indices)
         pass_manager.add(trampolines)
         for arch_pass in self.arch.preprocess_passes(
                 text_section=self.text_section,
@@ -798,7 +804,7 @@ class TeapotPipeline:
                 self.reg_manager, self.text_section, self.decoder, self.arch,
                 self.checkpoint_block_uuids, self.checkpoint_spare_registers,
                 self.checkpoint_df_blocks, self.options.force_checkpoint_df,
-                self.checkpoint_vector_cases))
+                self.checkpoint_vector_cases, self.checkpoint_site_indices))
         self._run_pass_manager(pass_manager, "text")
         if external_calls is not None and external_calls.unlisted:
             print("[teapot] library calls on no DFSan ABI list, results untagged: "
@@ -882,7 +888,7 @@ class TeapotPipeline:
                  for uuid in self.checkpoint_block_uuids},
                 self.checkpoint_spare_registers,
                 self.checkpoint_df_blocks, self.options.force_checkpoint_df,
-                self.checkpoint_vector_cases))
+                self.checkpoint_vector_cases, self.checkpoint_site_indices))
         # Replacements must follow insertions at the same original offset.
         for arch_pass in self.arch.transient_instruction_passes(
                 self.reg_manager, self.transient_section, self.decoder, self.dift_layout, self.options):

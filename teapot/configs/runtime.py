@@ -141,3 +141,7 @@ COMMON_CHECKPOINT_LIB_SYMBOLS = [
 
     *COVERAGE_HOOK_SYMBOLS,
 ]
+
+# Only the opt-in hashed runtime reads these additional metadata slots.
+CHECKPOINT_TARGET_OUTCOME_OFFSET = 48
+CHECKPOINT_TARGET_SITE_INDEX_OFFSET = 56

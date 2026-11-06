@@ -15,7 +15,7 @@ import subprocess
 SCHEMA = "teapot-runtime-exports-v1"
 CAPTURE_FORMAT = "gnu-nm-posix-defined-global-v1"
 SYMBOL = re.compile(r"[A-Za-z_.$][A-Za-z0-9_.$]*\Z")
-ANCHOR = re.compile(r"__libcheckpoint_contract_v2_[0-9a-f]{16}\Z")
+ANCHOR = re.compile(r"__libcheckpoint_contract_v2_[0-9a-f]{16}(?:_hashed)?\Z")
 FAMILIES = ["contract-anchor-v2"]
 NM_LINE = re.compile(r"(.+\[[^\[\]\r\n]+\]): (\S+) ([A-Za-z?]) ([0-9a-fA-F]+)(?: ([0-9a-fA-F]+))? *\Z")
 # GNU nm: global definitions, including weak objects/functions, unique globals

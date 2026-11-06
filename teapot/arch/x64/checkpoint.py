@@ -9,6 +9,7 @@ from teapot.configs.runtime import (
     SYMBOL_SUFFIX,
 )
 from teapot.utils.misc import generate_distinct_label_name
+from teapot.utils.nested_policy import outcome_stubs
 
 
 class X64CheckpointPatchesMixin:
@@ -20,7 +21,7 @@ class X64CheckpointPatchesMixin:
         return live_registers is None or "rflags" not in (r.name for r in live_registers)
 
     def checkpoint_patch(self, block_uuid: UUID, *, use_scratch_registers: bool = True,
-                         save_df=False, vector_case=2):
+                         save_df=False, vector_case=2, site_index=None, branch=None):
         entry = ('make_checkpoint_integer', 'make_checkpoint_xmm', 'make_checkpoint_x64')[vector_case]
         if save_df:
             entry = 'make_checkpoint_df' if vector_case == 2 else entry + '_df'
@@ -29,7 +30,7 @@ class X64CheckpointPatchesMixin:
             r = ctx.scratch_registers[0] if use_scratch_registers else "rax"
             prologue = "" if use_scratch_registers else "mov scratchpad, rax"
             epilogue = "" if use_scratch_registers else "mov rax, scratchpad"
-            return f"""
+            setup = f"""
                 {prologue}
                 lea {r}, [rip+{generate_distinct_label_name(".__trampoline_", block_uuid)}]
                 mov checkpoint_target_metadata, {r}
@@ -38,7 +39,11 @@ class X64CheckpointPatchesMixin:
                 lea {r}, [rip+{generate_distinct_label_name(".__branch_counter_", block_uuid)}]
                 mov [checkpoint_target_metadata+{CHECKPOINT_TARGET_BRANCH_COUNTER_OFFSET}], {r}
                 {epilogue}
-                jmp {entry}
+            """
+            entry_jump = f"jmp {entry}"
+            body = (setup + entry_jump if site_index is None else
+                    outcome_stubs(self, setup, entry_jump, branch, site_index))
+            return body + f"""
             .L__after_checkpoint{SYMBOL_SUFFIX}:
                 nop
             """

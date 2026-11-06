@@ -12,6 +12,7 @@ from teapot.arch.architecture import Architecture
 from teapot.passes.mixins import VisitorPassMixin, RegInstAwarePassMixin
 from teapot.utils.misc import conditional_branch_edge
 from teapot.configs.blacklist import is_blacklisted_function
+from teapot.utils.nested_policy import checkpoint_branch
 
 
 class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
@@ -21,13 +22,15 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
     def __init__(self, reg_manager: LiveRegisterManager, text_section: gtirb.Section,
                  decoder: GtirbInstructionDecoder, arch: Architecture,
                  eligible_block_uuids: Optional[Set[UUID]] = None,
-                 checkpoint_spare_registers=None, df_blocks=(), force_df=False, vector_cases=None):
+                 checkpoint_spare_registers=None, df_blocks=(), force_df=False, vector_cases=None,
+                 checkpoint_site_indices=None):
         RegInstAwarePassMixin.__init__(self, reg_manager, decoder)
         self.text_section = text_section
         self.arch = arch
         self.df_blocks = df_blocks
         self.force_df = force_df
         self.vector_cases = vector_cases or {}
+        self.checkpoint_site_indices = checkpoint_site_indices or {}
         self.eligible_block_uuids = eligible_block_uuids
         self.checkpoint_spare_registers = (
             checkpoint_spare_registers if checkpoint_spare_registers is not None else {})
@@ -62,10 +65,15 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
                     f"in {fn_name} block {block.uuid} at 0x{block.address:x}; instructions: {insts}"
                 )
 
+            hashed = {}
+            if block.uuid in self.checkpoint_site_indices:
+                hashed = dict(site_index=self.checkpoint_site_indices[block.uuid],
+                              branch=checkpoint_branch(self.arch, instructions[-1]))
             if not self.arch.CHECKPOINT_FIXED_REGISTERS:
                 options = ({'save_df': self.force_df or block.uuid in self.df_blocks,
                             'vector_case': self.vector_cases.get(block.uuid, 2)}
                            if self.arch.name == 'x64' else {})
+                options.update(hashed)
                 try:
                     self.insert_at(block, conditional_jump_offset, Patch.from_function(
                         self.allocate_registers(
@@ -78,4 +86,4 @@ class InsertCheckpointsPass(VisitorPassMixin, RegInstAwarePassMixin):
 
             self.insert_at(block, conditional_jump_offset, Patch.from_function(
                 self.arch.checkpoint_patch(
-                    block.uuid, self.checkpoint_spare_registers.get(block.uuid, ()))))
+                    block.uuid, self.checkpoint_spare_registers.get(block.uuid, ()), **hashed)))

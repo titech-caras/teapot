@@ -11,6 +11,7 @@ from teapot.configs.runtime import (
     SYMBOL_SUFFIX,
 )
 from teapot.utils.misc import generate_distinct_label_name
+from teapot.utils.nested_policy import outcome_stubs
 
 
 class RISCV64CheckpointPatchesMixin:
@@ -25,7 +26,7 @@ class RISCV64CheckpointPatchesMixin:
         register_number = int(self.x_register_name(self.abi.get_register(register))[1:])
         return self.checkpoint_register_state_offset(register_number)
 
-    def checkpoint_patch(self, block_uuid: UUID, spare_registers=()):
+    def checkpoint_patch(self, block_uuid: UUID, spare_registers=(), *, site_index=None, branch=None):
         spare_registers = tuple(spare_registers)
 
         @self.constraints(scratch_registers=0)
@@ -51,7 +52,7 @@ class RISCV64CheckpointPatchesMixin:
             branch_counter = generate_distinct_label_name(".__branch_counter_", block_uuid)
             return_landing = generate_distinct_label_name(".__return_landing_", block_uuid)
             after_checkpoint = f".L__after_checkpoint{SYMBOL_SUFFIX}"
-            return f"""
+            setup = f"""
                 {register_spill}
                 {fixed_spill}
                 {self.load_address("t0", trampoline_landing)}
@@ -65,7 +66,11 @@ class RISCV64CheckpointPatchesMixin:
                 sd t0, {CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS[0]}(t1)
                 li t0, {source_offsets[1]}
                 sd t0, {CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS[1]}(t1)
-                {self.jump_symbol("make_checkpoint_riscv64", "t0")}
+            """
+            entry_jump = self.jump_symbol("make_checkpoint_riscv64", "t0")
+            body = (setup + entry_jump if site_index is None else
+                    outcome_stubs(self, setup, entry_jump, branch, site_index))
+            return body + f"""
             {return_landing}:
                 {self.load_address("t0", "checkpoint_target_metadata")}
                 ld t0, {self.CHECKPOINT_TARGET_SCRATCH_REG_ADDR}(t0)

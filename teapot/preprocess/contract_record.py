@@ -39,6 +39,10 @@ RECORD_HEADER_SIZE = FAULT_SITES_OFFSET + 8
 
 
 def module_contract(contract, required_bits: int, options, component_id=None) -> dict:
+    recorded_options = asdict(options)
+    # Paper records retain their byte-for-byte pre-policy representation.
+    if recorded_options.get("nested_policy") == "paper":
+        del recorded_options["nested_policy"]
     record = {
         "schema": "teapot-module-contract",
         "version": contract.version,
@@ -47,7 +51,7 @@ def module_contract(contract, required_bits: int, options, component_id=None) ->
         "requirements": [name for bit, name in enumerate(CAPABILITIES) if required_bits >> bit & 1],
         "abi": dict(contract.abi),
         # coverage: whether this module pushes the speculative coverage guards.
-        "policy": {"rob_len": ROB_LEN, "options": asdict(options), "coverage": contract.emits_coverage(options),
+        "policy": {"rob_len": ROB_LEN, "options": recorded_options, "coverage": contract.emits_coverage(options),
                    "fault_training": options.enable_fault_training, "fault_publishing": options.enable_fault_publishing},
     }
     if component_id is not None:

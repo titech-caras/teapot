@@ -12,6 +12,7 @@ from teapot.configs.runtime import (
 )
 from teapot.configs.slots import AARCH64_SHADOW_STACK_CONTROL_OFFSET
 from teapot.utils.misc import generate_distinct_label_name
+from teapot.utils.nested_policy import outcome_stubs
 
 
 class AArch64CheckpointPatchesMixin:
@@ -26,7 +27,7 @@ class AArch64CheckpointPatchesMixin:
     def _checkpoint_source_offset(cls, register: str) -> int:
         return cls.checkpoint_register_state_offset(int(register[1:]))
 
-    def checkpoint_patch(self, block_uuid: UUID, spare_registers=()):
+    def checkpoint_patch(self, block_uuid: UUID, spare_registers=(), *, site_index=None, branch=None):
         spare_registers = tuple(spare_registers)
 
         @self.constraints(scratch_registers=0)
@@ -53,7 +54,7 @@ class AArch64CheckpointPatchesMixin:
             branch_counter = generate_distinct_label_name(".__branch_counter_", block_uuid)
             return_landing = generate_distinct_label_name(".__return_landing_", block_uuid)
             after_checkpoint = f".L__after_checkpoint{SYMBOL_SUFFIX}"
-            return f"""
+            setup = f"""
                 {register_spill}
                 {fixed_spill}
                 {self.load_address("x16", trampoline_landing)}
@@ -67,7 +68,11 @@ class AArch64CheckpointPatchesMixin:
                 str x16, [x17, #{CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS[0]}]
                 mov x16, #{source_offsets[1]}
                 str x16, [x17, #{CHECKPOINT_TARGET_FIXED_REG_SOURCE_OFFSETS[1]}]
-                b make_checkpoint_aarch64
+            """
+            entry_jump = "b make_checkpoint_aarch64"
+            body = (setup + entry_jump if site_index is None else
+                    outcome_stubs(self, setup, entry_jump, branch, site_index))
+            return body + f"""
             {return_landing}:
                 {self.load_address("x16", "checkpoint_target_metadata")}
                 ldr x16, [x16, #{self.CHECKPOINT_TARGET_SCRATCH_REG_ADDR}]

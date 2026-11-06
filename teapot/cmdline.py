@@ -112,6 +112,12 @@ def main():
         ),
     )
     parser.add_argument(
+        "--nested-policy", choices=("paper", "hashed"), default=None,
+        help=("Nested sampling policy (default: paper); requires --enable-nested-speculation. "
+              "Hashed mode uses checkpoint_nested_hashed and a seed from argv[1], "
+              "overridden by TEAPOT_NESTED_SEED=<hex u64>."),
+    )
+    parser.add_argument(
         "--disable-indirect-transform",
         action="store_true",
         help="Skip text indirect-branch target markers.",
@@ -140,6 +146,8 @@ def main():
         ),
     )
     args = parser.parse_args()
+    if args.nested_policy is not None and not args.enable_nested_speculation:
+        parser.error("--nested-policy requires --enable-nested-speculation")
 
     if args.input is None or args.output is None:
         parser.error("input and output are required")
@@ -170,6 +178,7 @@ def main():
         enable_port_gadgets=not args.disable_port_gadgets,
         enable_gadget_asan_check=not args.disable_gadget_asan_check,
         enable_nested_speculation=args.enable_nested_speculation,
+        nested_policy=args.nested_policy or "paper",
         aarch64_tag_storage=args.aarch64_tag_storage,
         target_identification=args.target_identification,
         debug_source=args.debug_source,
