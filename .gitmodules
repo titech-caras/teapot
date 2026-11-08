@@ -4,3 +4,4 @@
 [submodule "honggfuzz"]
 	path = honggfuzz
 	url = https://github.com/lin-toto/teapot-honggfuzz
+	branch = multiarch
