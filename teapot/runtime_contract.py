@@ -222,11 +222,10 @@ class RuntimeContract:
         if options.target_identification == "aarch64-bti-pac":
             required.add("aarch64_bti_pac")
         if options.enable_nested_speculation:
-            required.add("nested")
-        if options.nested_policy == "hashed":
-            required.add("hashed_nested")
-        elif "hashed_nested" in self.capabilities:
-            problems.append("nested policy: the hashed runtime requires --nested-policy=hashed")
+            required.update(("nested", "hashed_nested"))
+        elif "nested" in self.capabilities:
+            problems.append("nested runtime requires --enable-nested-speculation; "
+                            "single-level rewrites use libcheckpoint.contract.json")
         # DIFT propagation reads the DIFT shadow, and so do the x64 and AArch64
         # port-contention policies; the RISC-V one reads register tags only.
         if options.enable_dift or (options.enable_gadgets and options.enable_port_gadgets and
@@ -243,14 +242,14 @@ class RuntimeContract:
         if self.emits_coverage(options):
             required.add("coverage")
         remedies = {
-            "hashed_nested": "--nested-policy=hashed needs libcheckpoint_nested_hashed.contract.json",
+            "hashed_nested": "--enable-nested-speculation needs libcheckpoint_nested_hashed.contract.json",
             "shadow_mapping_enforcement": "unchanged-tag elision needs -DTEAPOT_SHADOW_MAPPING_ENFORCEMENT=ON",
             "fault_training": "training metadata needs -DTEAPOT_ENABLE_FAULT_TRAINING=ON (no text patching yet)",
             "fault_publishing": "adaptive prechecks need -DTEAPOT_ENABLE_FAULT_PUBLISHING=ON and fault training",
             "coverage": ("the module pushes speculative coverage guards, which only a runtime built "
                          "with -DTEAPOT_ENABLE_COVERAGE=ON replays"),
             "aarch64_bti_pac": "the BTI+PAC mode needs a runtime built with -DTEAPOT_EXPERIMENTAL_AARCH64_BTI=ON",
-            "nested": ("nested speculation needs the nested runtime: libcheckpoint_nested.contract.json "
+            "nested": ("nested speculation needs the nested runtime: libcheckpoint_nested_hashed.contract.json "
                        "(build it with -DTEAPOT_BUILD_NESTED_RUNTIME=ON)"),
             "dift_runtime": ("DIFT and the port-contention policies read the DIFT shadow, which a runtime "
                              "built with -DTEAPOT_ENABLE_DIFT_RUNTIME=OFF does not map"),
@@ -445,6 +444,8 @@ def load_runtime_contract(path) -> RuntimeContract:
     _require(set(data["capabilities"]) == set(names), path,
              "unknown or missing capabilities: " + ", ".join(sorted(set(data["capabilities"]) ^ set(names))))
     capabilities = frozenset(name for name, present in data["capabilities"].items() if present is True)
+    _require(("nested" in capabilities) == ("hashed_nested" in capabilities), path,
+             "unsupported nested runtime contract; build and use libcheckpoint_nested_hashed.contract.json")
     _require(capability_bits(capabilities) == data["capability_bits"], path,
              "capability_bits disagrees with the named capabilities")
     # Both come from the archive's COVERAGE switch.

@@ -13,13 +13,14 @@
 #include <stdio.h>
 #include <string.h>
 #include "checkpoint.h"
+#include "nested_policy.h"
 #include "signal_handler.h"
 
 extern uint64_t max_checkpoints;
 extern memory_history_t *memory_history_top;
 extern uint32_t *guard_list_top;
 uint32_t __guard_start__teapot__[1], __guard_end__teapot__[1];
-uint32_t branch_counter;
+struct teapot_nested_site branch_counter[2];
 
 void __asan_poison_memory_region(void const volatile *p, size_t n) { (void)p; (void)n; }
 void __asan_unpoison_memory_region(void const volatile *p, size_t n) { (void)p; (void)n; }
@@ -54,7 +55,7 @@ static void run(probe_fn probe) {
     instruction_cnt = 0;
     memory_history_top = memory_history;
     guard_list_top = guard_list;
-    branch_counter = 0;
+    memset(branch_counter, 0, sizeof(branch_counter));
     libcheckpoint_enabled = true;
     probe();
     assert(checkpoint_cnt == 1 && memory_history_top == memory_history);

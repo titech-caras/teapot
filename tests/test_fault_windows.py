@@ -456,7 +456,7 @@ int main(int argc, char **argv) {
                  "-DTEAPOT_ENABLE_COVERAGE=OFF","-DTEAPOT_ENABLE_DIFT_RUNTIME=OFF",
                  "-DTEAPOT_BUILD_NESTED_RUNTIME=ON","-DTEAPOT_ENABLE_FAULT_TRAINING=ON",
                  "-DTEAPOT_ENABLE_FAULT_PUBLISHING=ON"],
-                ["cmake","--build","build","--target","checkpoint_nested","-j","2"])
+                ["cmake","--build","build","--target","checkpoint_nested_hashed","-j","2"])
             log=[]
             for command in commands:
                 result=subprocess.run(command,cwd=root,text=True,capture_output=True,timeout=120)
@@ -492,6 +492,7 @@ test_report_site:
 #define _GNU_SOURCE
 #undef NDEBUG
 #include "checkpoint.h"
+#include "nested_policy.h"
 #include "fault_sites.h"
 #include "signal_handler.h"
 #include "runtime_contract.h"
@@ -508,7 +509,8 @@ static const struct libcheckpoint_contract_record record={
     .magic=LIBCHECKPOINT_CONTRACT_MAGIC,.version=LIBCHECKPOINT_CONTRACT_VERSION,
     .kind=LIBCHECKPOINT_CONTRACT_KIND_MODULE,.header_size=LIBCHECKPOINT_CONTRACT_HEADER_SIZE,
     .fingerprint=LIBCHECKPOINT_CONTRACT_FINGERPRINT,
-    .capabilities=LIBCHECKPOINT_CAPABILITY_NESTED|LIBCHECKPOINT_CAPABILITY_FAULT_TRAINING|
+    .capabilities=LIBCHECKPOINT_CAPABILITY_NESTED|LIBCHECKPOINT_CAPABILITY_HASHED_NESTED|
+                  LIBCHECKPOINT_CAPABILITY_FAULT_TRAINING|
                   LIBCHECKPOINT_CAPABILITY_FAULT_PUBLISHING,
     .anchor=LIBCHECKPOINT_CONTRACT_ANCHOR,.fault_sites=&__start_teapot_fault_sites};
 extern memory_history_t *memory_history_top;
@@ -518,7 +520,7 @@ extern void poison_protected_zone(void);
 extern int checkpoint_rollback_probe(void);
 extern void report_before_check(void);
 extern uint64_t window_test(const uint64_t *);
-static uint32_t branch_counter;
+static struct teapot_nested_site branch_site;
 static uint64_t word=0x5555;
 static unsigned nested,restart,step,report_steps;
 static void *fault_page;
@@ -550,12 +552,12 @@ int main(int argc,char **argv) {
     assert(argc==3); nested=atoi(argv[1]);restart=atoi(argv[2]);
     fault_page=mmap(NULL,(size_t)sysconf(_SC_PAGESIZE),PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     assert(fault_page!=MAP_FAILED);
-    checkpoint_target_metadata[CHECKPOINT_TARGET_BRANCH_COUNTER_ADDR/8]=(uintptr_t)&branch_counter;
+    checkpoint_target_metadata[CHECKPOINT_TARGET_BRANCH_COUNTER_ADDR/8]=(uintptr_t)&branch_site;
     checkpoint_target_metadata[CHECKPOINT_TARGET_FIXED_REG0_SOURCE/8]=UINTPTR_MAX;
     checkpoint_target_metadata[CHECKPOINT_TARGET_FIXED_REG1_SOURCE/8]=UINTPTR_MAX;
     libcheckpoint_enabled=true;setup_signal_handler();poison_protected_zone();
     for (unsigned iteration=0;iteration<4;iteration++) {
-        branch_counter=0;max_checkpoints=MAX_CHECKPOINTS;step=0;
+        branch_site=(struct teapot_nested_site){0};max_checkpoints=MAX_CHECKPOINTS;step=0;
         assert(checkpoint_cnt==0 && word==0x5555);
         assert(checkpoint_rollback_probe()==1);
         assert(checkpoint_cnt==0 && word==0x5555 && !in_restore_memlog);
@@ -581,9 +583,9 @@ int main(int argc,char **argv) {
 }
 ''')
             command=["gcc","-O2","-UNDEBUG","-fno-pie","-no-pie","-DDIFT_XOR_MASK=0x300000000000ULL",
-                "-DENABLE_NESTED_SPECULATION","-DENABLE_FAULT_TRAINING","-DENABLE_FAULT_PUBLISHING",
+                "-DENABLE_NESTED_SPECULATION","-DENABLE_HASHED_NESTED","-DENABLE_FAULT_TRAINING","-DENABLE_FAULT_PUBLISHING",
                 "-I"+str(runtime/"include"),"-Ibuild/include","probe.c","probe.S","fixed.S",
-                "build/libcheckpoint_nested.a","-Wl,-z,separate-code","-Wl,--no-as-needed",
+                "build/libcheckpoint_nested_hashed.a","-Wl,-z,separate-code","-Wl,--no-as-needed",
                 "-lasan","-lm","-ldl","-o","probe"]
             result=subprocess.run(command,cwd=root,text=True,capture_output=True,timeout=60)
             log.append({"argv":command,"exit":result.returncode,"stdout":result.stdout,"stderr":result.stderr})

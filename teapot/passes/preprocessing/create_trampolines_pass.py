@@ -28,13 +28,13 @@ class CreateTrampolinesPass(VisitorPassMixin):
                  text_section: gtirb.Section, trampoline_section: gtirb.Section, branch_counter_section: gtirb.Section,
                  text_transient_mapping: CopiedSectionMapping, decoder: GtirbInstructionDecoder,
                  arch: Architecture, reg_manager=None, landing_pad_targets=None,
-                 checkpoint_spare_registers=None, *, nested_policy="paper", checkpoint_site_indices=None):
+                 checkpoint_spare_registers=None, *, hashed_nested=False, checkpoint_site_indices=None):
         self.text_section = text_section
         self.trampoline_section = trampoline_section
         self.branch_counter_section = branch_counter_section
         self.text_transient_mapping = text_transient_mapping
         self.arch = arch
-        self.nested_policy = nested_policy
+        self.hashed_nested = hashed_nested
         self.checkpoint_site_indices = checkpoint_site_indices if checkpoint_site_indices is not None else {}
         self.reg_manager = reg_manager
         self.landing_pad_targets = landing_pad_targets if landing_pad_targets is not None else set()
@@ -67,7 +67,7 @@ class CreateTrampolinesPass(VisitorPassMixin):
         return block
 
     def __initialize_empty_counter_data_block(self):
-        size = BRANCH_COUNTER_WIDTH + (8 if self.nested_policy == "hashed" else 0)
+        size = BRANCH_COUNTER_WIDTH + (8 if self.hashed_nested else 0)
 
         self.branch_counter_byte_interval.contents += bytes([0x00] * size)
         self.branch_counter_byte_interval.size += size
@@ -147,7 +147,7 @@ class CreateTrampolinesPass(VisitorPassMixin):
                     landing_pad_targets=self.landing_pad_targets))
 
             trampoline_block = self.__initialize_empty_trampoline_code_block()
-            mnemonic, operands = (checkpoint_branch(self.arch, last_instruction) if self.nested_policy == "hashed"
+            mnemonic, operands = (checkpoint_branch(self.arch, last_instruction) if self.hashed_nested
                                   else (last_instruction.mnemonic, last_instruction.op_str))
             trampoline_patch = self.arch.trampoline_patch(
                 block.uuid, self.text_transient_mapping.code_blocks_map[block.uuid].uuid,
@@ -160,7 +160,7 @@ class CreateTrampolinesPass(VisitorPassMixin):
                 trampoline_block, 0, trampoline_block.size, Patch.from_function(trampoline_patch))
 
             counter_block = self.__initialize_empty_counter_data_block()
-            if self.nested_policy == "hashed":
+            if self.hashed_nested:
                 index = counter_block.offset // (BRANCH_COUNTER_WIDTH + 8)
                 self.checkpoint_site_indices[block.uuid] = index
                 self.checkpoint_site_indices[self.text_transient_mapping.code_blocks_map[block.uuid].uuid] = index

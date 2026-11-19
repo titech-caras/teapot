@@ -130,7 +130,6 @@ class InstrumentationOptions:
     enable_memlog: bool = True
     enable_checkpoints: bool = True
     enable_nested_speculation: bool = False
-    nested_policy: str = "paper"
     enable_indirect_transform: bool = True
     enable_indirect_check: bool = True
     enable_conditional_branch_relax: bool = True
@@ -250,7 +249,7 @@ class TeapotPipeline:
         self.mode = validate_options(self.options, self.arch.name, component=self.linked_component is not None)
         if self.mode.architecture is not None:
             self.arch = self.mode.architecture()
-        object.__setattr__(self.arch, "hashed_nested", self.options.nested_policy == "hashed")
+        object.__setattr__(self.arch, "hashed_nested", self.options.enable_nested_speculation)
         from teapot.riscv_profile import PURE
         if self.riscv_profile == PURE:
             if self.arch.name != "riscv64":
@@ -717,7 +716,7 @@ class TeapotPipeline:
             self.reg_manager,
             self.landing_pad_targets,
             self.checkpoint_spare_registers,
-            nested_policy=self.options.nested_policy,
+            hashed_nested=self.options.enable_nested_speculation,
             checkpoint_site_indices=self.checkpoint_site_indices)
         pass_manager.add(trampolines)
         for arch_pass in self.arch.preprocess_passes(

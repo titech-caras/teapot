@@ -182,7 +182,7 @@ class RuntimeContractCheckTests(unittest.TestCase):
                                                              "enable_nested_speculation": nested})
                     bits, layout = contract.check(arch, abi, options_here)
                     self.assertEqual(layout.name, contract.abi["dift.layout"])
-                    expected = {"dift_runtime"} | ({"nested"} if nested else set())
+                    expected = {"dift_runtime"} | ({"nested", "hashed_nested"} if nested else set())
                     expected |= {"x64_vector_full"} if isa == "x64" else set()
                     expected |= ({"aarch64_bti_pac"} if options.target_identification == "aarch64-bti-pac"
                                  else set())
@@ -233,13 +233,13 @@ class RuntimeContractCheckTests(unittest.TestCase):
                            edit=lambda data: data.update(
                                capabilities=dict(data["capabilities"], x64_vector_full=False),
                                capability_bits=data["capability_bits"] & ~capability_bits({"x64_vector_full"})))
-        # A rewrite that asks less of the runtime still links with one that provides more.
+        # A single-level rewrite can ask for less vector state than the archive provides.
         arch, abi = arch_and_abi("x64")
-        bits, _ = runtime_contract("x64", nested=True).check(
+        bits, _ = runtime_contract("x64").check(
             arch, abi, InstrumentationOptions(enable_dift=False, enable_port_gadgets=False,
                                               x64_vector_state="xmm0-7"))
         self.assertEqual(bits, 0)
-        bits, _ = runtime_contract("x64", nested=True).check(
+        bits, _ = runtime_contract("x64").check(
             arch, abi, InstrumentationOptions(enable_dift=False, enable_port_gadgets=False,
                                               x64_vector_state="sse"))
         self.assertEqual(bits, capability_bits({"x64_vector_sse"}))
@@ -516,7 +516,7 @@ class FixtureRegenerationTests(unittest.TestCase):
                     for header in ("checkpoint.h", "config.h", "dift_support.h", "runtime_contract.h", "shadow_mapping.h"):
                         self.assertIn(f"libcheckpoint/include/{header}", depends)
                     for nested in (False, True):
-                        archive = "libcheckpoint_nested" if nested else "libcheckpoint"
+                        archive = "libcheckpoint_nested_hashed" if nested else "libcheckpoint"
                         generated = json.loads((Path(directory) / f"{archive}.contract.json").read_text())
                         fixture = json.loads(fixture_contract_path(name, nested=nested).read_text())
                         # These archived fixtures deliberately exercise old-runtime

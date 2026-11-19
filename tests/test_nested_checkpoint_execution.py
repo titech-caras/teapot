@@ -12,26 +12,29 @@ from teapot.configs.slots import AARCH64_SHADOW_STACK_SIZE, RISCV64_ORIGINAL_TP_
 from teapot.utils.misc import generate_distinct_label_name
 
 
-def checkpoint(arch, block, spares):
+def checkpoint(arch, block, spares, *, branch, site_index):
     # Rewriting normally namespaces patch-local labels for each insertion.
-    return arch.checkpoint_patch(block, spares)(SimpleNamespace()).replace(
-        ".L__after_checkpoint__teapot__", f".Lafter_{block.hex}")
+    asm = arch.checkpoint_patch(block, spares, branch=branch, site_index=site_index)(SimpleNamespace())
+    return (asm.replace(".L__after_checkpoint__teapot__", f".Lafter_{block.hex}")
+               .replace(".L__checkpoint_taken__teapot__", f".Ltaken_{block.hex}"))
 
 
-def probe(arch, count, taken):
+def probe(arch, count, taken, *, branch_info=None, site_index=None):
     text, transient = uuid4(), uuid4()
     name = f"probe_{count}_{taken}"
     spares = (("x10", "x11") if arch.name == "aarch64" else ("t3", "t4"))[:count]
-    outer = checkpoint(arch, text, spares)
-    inner = checkpoint(arch, transient, spares)
+    if branch_info is None:
+        branch_info = ("b.eq", "unused") if arch.name == "aarch64" else ("beq", "a2, zero, unused")
+    if site_index is None:
+        site_index = 2 * count + taken
+    outer = checkpoint(arch, text, spares, branch=branch_info, site_index=site_index)
+    inner = checkpoint(arch, transient, spares, branch=branch_info, site_index=site_index)
     counter = generate_distinct_label_name(".__branch_counter_", text)
     nested_counter = generate_distinct_label_name(".__branch_counter_", transient)
     fall, branch = f".Lfall_{name}", f".Lbranch_{name}"
     # Both checkpoint copies use exactly the same saved-register assignment.
     trampoline = arch.trampoline_patch(
-        text, transient, "b.eq" if arch.name == "aarch64" else "beq",
-        "unused" if arch.name == "aarch64" else "a2, zero, unused",
-        fall, branch, checkpoint_spare_registers=spares)(SimpleNamespace())
+        text, transient, *branch_info, fall, branch, checkpoint_spare_registers=spares)(SimpleNamespace())
     if arch.name == "aarch64":
         condition = f"mov x8, #{1 - taken}\ncmp x8, #0"
         check = "cmp x16, #0x123\nb.ne 9f\ncmp x17, #0x456\nb.ne 9f"
@@ -82,7 +85,7 @@ def probe(arch, count, taken):
         .balign 4
         {counter}:
         {nested_counter}:
-            .word 0
+            .zero 12
         """
     return f"""
         .option norelax
@@ -142,7 +145,7 @@ def probe(arch, count, taken):
         .balign 4
         {counter}:
         {nested_counter}:
-            .word 0
+            .zero 12
         """
 
 
@@ -168,7 +171,8 @@ class NestedCheckpointExecutionTests(unittest.TestCase):
                 probe(arch, count, taken) for count in range(3) for taken in range(2)) +
                 '\n.section .note.GNU-stack,"",@progbits\n')
             executable = root / "probe"
-            command = [compiler, "-O2", "-no-pie", "-DENABLE_NESTED_SPECULATION",
+            command = [compiler, "-O2", "-no-pie", "-DENABLE_NESTED_SPECULATION", "-DENABLE_HASHED_NESTED",
+                       "-DTEST_CONTRACT_REQUIRED=LIBCHECKPOINT_CAPABILITY_HASHED_NESTED",
                        "-DDISABLE_DIFT_RUNTIME", "-DDIFT_XOR_MASK=0", "-fno-stack-protector",
                        "-DTEAPOT_SHADOW_MAPPING_ENFORCEMENT=1",
                        "-I", str(runtime / "include"), "-I", str(contract / "include"),
@@ -178,7 +182,7 @@ class NestedCheckpointExecutionTests(unittest.TestCase):
                        str(runtime / "tests/contract_module_record.c")]
             command += [str(runtime / "src" / source) for source in (
                 "checkpoint.c", "signal_handler.c", "fault_sites.c", "dift_support.c", "shadow_mapping.c", "report_gadget.c",
-                "dift_wrappers/dift_wrappers.c")]
+                "dift_wrappers/dift_wrappers.c", "nested_policy.c")]
             if arch.name == "riscv64":
                 command += ["-Wl,--no-relax"]
             result = subprocess.run(command + ["-o", str(executable), "-lm"],

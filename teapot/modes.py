@@ -62,7 +62,6 @@ COMPONENT_FIXED = {
     "enable_gadgets": "drop --disable-gadgets",
     "enable_memlog": "drop --disable-memlog",
     "enable_checkpoints": "drop --disable-checkpoints",
-    "nested_policy": "nested policies are not supported for components; use paper",
     "enable_nested_speculation": "nested speculation is not supported; drop --enable-nested-speculation",
     "enable_indirect_transform": "drop --disable-indirect-transform",
     "enable_indirect_check": "drop --disable-indirect-check",
@@ -110,10 +109,6 @@ def validate_options(options, isa: str, *, component: bool = False) -> ModeSpec:
                    if getattr(options, field) != getattr(defaults, field)]
         if changed:
             raise ModeError("component rewriting requires the default instrumentation: " + "; ".join(changed))
-    if options.nested_policy not in ("paper", "hashed"):
-        raise ModeError(f"unknown nested_policy {options.nested_policy!r}; choose paper or hashed")
-    if options.nested_policy == "hashed" and not options.enable_nested_speculation:
-        raise ModeError("--nested-policy=hashed requires --enable-nested-speculation")
     return mode
 
 

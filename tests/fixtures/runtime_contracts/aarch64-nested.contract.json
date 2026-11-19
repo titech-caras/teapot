@@ -1,9 +1,9 @@
 {
   "schema": "libcheckpoint-runtime-contract",
   "version": 2,
-  "archive": "libcheckpoint_nested.a",
+  "archive": "libcheckpoint_nested_hashed.a",
   "fingerprint": "5b64f5b3a191011b",
-  "anchor": "__libcheckpoint_contract_v2_5b64f5b3a191011b",
+  "anchor": "__libcheckpoint_contract_v2_5b64f5b3a191011b_hashed",
   "abi": {
     "aarch64.shadow_stack.abi_offset": 448,
     "aarch64.shadow_stack.asan_offset": 128,
@@ -162,7 +162,7 @@
     "target_metadata.trampoline": 0,
     "word_size": 8
   },
-  "capability_bits": 205,
+  "capability_bits": 2253,
   "capabilities": {
     "nested": true,
     "aarch64_bti_pac": false,
@@ -173,14 +173,15 @@
     "x64_vector_sse": true,
     "x64_vector_avx": true,
     "fault_training": false,
-    "fault_publishing": false
+    "fault_publishing": false,
+    "hashed_nested": true
   },
   "runtime": {
     "max_checkpoints": 6,
     "mem_history_len": 1048576,
     "guard_list_len": 1048576,
     "checkpoint_metadata_size": 512,
-    "target_metadata_size": 48,
+    "target_metadata_size": 64,
     "verbose": 0,
     "time": 0,
     "branch_exec_count": 1

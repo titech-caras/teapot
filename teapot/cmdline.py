@@ -41,7 +41,7 @@ def main():
     parser.add_argument(
         "--runtime-contract", metavar="JSON", required=True,
         help=("The lib<archive>.contract.json beside the libcheckpoint archive this rewrite will be "
-              "linked with (libcheckpoint_nested.contract.json for --enable-nested-speculation). "
+              "linked with (libcheckpoint_nested_hashed.contract.json for --enable-nested-speculation). "
               "Teapot refuses a runtime whose layout it does not emit and takes the DIFT layout from it, "
               "and its coverage mode: speculative coverage guards are pushed only for a runtime built "
               "for a fuzzer (-DTEAPOT_ENABLE_COVERAGE=ON)."),
@@ -107,15 +107,9 @@ def main():
         "--enable-nested-speculation",
         action="store_true",
         help=(
-            "Insert checkpoints inside the transient copy as well. "
-            "The instrumented binary must link libcheckpoint target checkpoint_nested."
+            "Use hashed scheduling for root and nested checkpoints. "
+            "Link checkpoint_nested_hashed. The seed comes from argv[1] or TEAPOT_NESTED_SEED=<hex u64>."
         ),
-    )
-    parser.add_argument(
-        "--nested-policy", choices=("paper", "hashed"), default=None,
-        help=("Nested sampling policy (default: paper); requires --enable-nested-speculation. "
-              "Hashed mode uses checkpoint_nested_hashed and a seed from argv[1], "
-              "overridden by TEAPOT_NESTED_SEED=<hex u64>."),
     )
     parser.add_argument(
         "--disable-indirect-transform",
@@ -146,8 +140,6 @@ def main():
         ),
     )
     args = parser.parse_args()
-    if args.nested_policy is not None and not args.enable_nested_speculation:
-        parser.error("--nested-policy requires --enable-nested-speculation")
 
     if args.input is None or args.output is None:
         parser.error("input and output are required")
@@ -178,7 +170,6 @@ def main():
         enable_port_gadgets=not args.disable_port_gadgets,
         enable_gadget_asan_check=not args.disable_gadget_asan_check,
         enable_nested_speculation=args.enable_nested_speculation,
-        nested_policy=args.nested_policy or "paper",
         aarch64_tag_storage=args.aarch64_tag_storage,
         target_identification=args.target_identification,
         debug_source=args.debug_source,

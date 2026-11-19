@@ -1,6 +1,5 @@
 """Real outcome stubs, hash decisions, rollback, replay and relocation on each ISA."""
 from contextlib import contextmanager
-from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -17,22 +16,6 @@ from test_nested_checkpoint_execution import probe
 from test_coverage_execution import x64_probe
 
 RUNTIME = Path(__file__).resolve().parents[1] / "libcheckpoint"
-
-
-class HashedEmitter:
-    def __init__(self, arch, index, branch):
-        self.arch, self.index, self.branch = arch, index, branch
-
-    def __getattr__(self, name):
-        return getattr(self.arch, name)
-
-    def checkpoint_patch(self, block, *args, **kwargs):
-        patch = self.arch.checkpoint_patch(block, *args, **kwargs,
-                                          site_index=self.index, branch=self.branch)
-        return lambda ctx: patch(ctx).replace(".L__checkpoint_taken__teapot__", f".Ltaken_{block.hex}")
-
-    def trampoline_patch(self, text, transient, mnemonic, operands, *args, **kwargs):
-        return self.arch.trampoline_patch(text, transient, *self.branch, *args, **kwargs)
 
 
 X64_CONDITIONS = "o no b ae e ne be a s ns p np l ge le g c nae nb nc z nz na nbe pe po nge nl ng nle".split()
@@ -85,8 +68,9 @@ def assembly(arch):
         for spares in range(1 if arch.name == "x64" else 3):
             for taken in range(2):
                 index = len(names)
-                emitter = HashedEmitter(arch, index, branch_case(arch, variant, taken))
-                code = (x64_probe if arch.name == "x64" else probe)(emitter, spares, taken)
+                branch = branch_case(arch, variant, taken)
+                emit = x64_probe if arch.name == "x64" else probe
+                code = emit(arch, spares, taken, branch_info=branch, site_index=index)
                 if arch.name == "x64":
                     flags = condition_flags(arch, X64_CONDITIONS[variant], taken)
                     code = code.replace(f"mov ecx, {1-taken}\ncmp ecx, 0", f"push {flags}\npopfq")
@@ -97,9 +81,6 @@ def assembly(arch):
                 name = f"hashed_probe_{index}"
                 names.append(name)
                 code = code.replace(old, name)
-                # The second checkpoint reuses the same site's counter words,
-                # exactly as the architectural/transient copies of a branch do.
-                code = code.replace(".word 0", ".word 0\n.zero 8").replace(".long 0", ".long 0\n.zero 8")
                 if arch.name == "x64":
                     code = code.replace("call probe_outer", f"call probe_outer\n.Lrepeat_{index}:")
                     code = code.replace("call probe_inner_restored", f"call probe_inner_restored\ntest eax,eax\njnz .Lrepeat_{index}")
@@ -129,15 +110,16 @@ class HashedNestedTests(unittest.TestCase):
     def test_contract_policy_is_bidirectional(self):
         options = InstrumentationOptions(enable_nested_speculation=True)
         for arch in (X64Architecture(), AArch64Architecture(), RISCV64Architecture()):
-            paper = fixture_contract(arch.name, nested=True)
-            hashed = replace(paper, capabilities=paper.capabilities | {"hashed_nested"})
-            self.assertEqual(hashed.anchor, paper.anchor + "_hashed")
+            single = fixture_contract(arch.name)
+            hashed = fixture_contract(arch.name, nested=True)
+            self.assertEqual(hashed.anchor, single.anchor + "_hashed")
             self.assertEqual(capability_bits({"hashed_nested"}), 0x800)
+            bits, _ = hashed.check(arch, arch.abi, options)
+            self.assertTrue(bits & capability_bits({"hashed_nested"}))
+            with self.assertRaisesRegex(RuntimeContractError, "requires --enable-nested-speculation"):
+                hashed.check(arch, arch.abi, InstrumentationOptions())
             with self.assertRaisesRegex(RuntimeContractError, "hashed"):
-                hashed.check(arch, arch.abi, options)
-            with self.assertRaisesRegex(RuntimeContractError, "hashed"):
-                paper.check(arch, arch.abi, replace(options, nested_policy="hashed"))
-            hashed.check(arch, arch.abi, replace(options, nested_policy="hashed"))
+                single.check(arch, arch.abi, options)
 
     def check_arch(self, arch, compiler, emulator):
         if not all(shutil.which(tool) for tool in (compiler, "cmake", *emulator[:1])):
@@ -154,7 +136,7 @@ class HashedNestedTests(unittest.TestCase):
             if arch.name != "x64":
                 configure += ["-DCMAKE_SYSTEM_NAME=Linux", f"-DCMAKE_SYSTEM_PROCESSOR={arch.name}"]
             run(configure)
-            run(["cmake", "--build", build, "--target", "checkpoint_nested_hashed", "checkpoint_nested", "-j1"])
+            run(["cmake", "--build", build, "--target", "checkpoint_nested_hashed", "checkpoint", "-j1"])
             code, names = assembly(arch)
             (root / "probe.S").write_text(code)
             (root / "cases.h").write_text("\n".join(f"extern void {name}(void *);" for name in names) +
@@ -171,16 +153,16 @@ class HashedNestedTests(unittest.TestCase):
             run([compiler, *flags, "-c", Path(__file__).with_name("fixtures") / "hashed_nested.c", "-o", "driver.o"])
             run([compiler, *flags, "-c", "probe.S", "-o", "probe.o"])
             run([compiler, *flags, "-c", RUNTIME / "tests/contract_module_record.c", "-o", "record.o"])
-            paper_flags = [flag for flag in flags if flag != "-DENABLE_HASHED_NESTED" and
+            single_flags = [flag for flag in flags if flag != "-DENABLE_HASHED_NESTED" and
                            not str(flag).startswith("-DTEST_CONTRACT_REQUIRED=")]
-            run([compiler, *paper_flags, "-c", RUNTIME / "tests/contract_module_record.c", "-o", "paper-record.o"])
-            for record, archive, suffix in (("record.o", "checkpoint_nested", "_hashed"),
-                                             ("paper-record.o", "checkpoint_nested_hashed", "")):
+            run([compiler, *single_flags, "-c", RUNTIME / "tests/contract_module_record.c", "-o", "single-record.o"])
+            for record, archive, suffix in (("record.o", "checkpoint", "_hashed"),
+                                             ("single-record.o", "checkpoint_nested_hashed", "")):
                 mismatch = subprocess.run(list(map(str, [compiler, "-no-pie", "driver.o", "probe.o", record,
                     build / f"lib{archive}.a", "-lm", "-o", "mismatch"])), cwd=root,
                     capture_output=True, text=True, timeout=30)
                 self.assertNotEqual(mismatch.returncode, 0)
-                anchor = json.loads((build / "libcheckpoint_nested.contract.json").read_text())["anchor"] + suffix
+                anchor = json.loads((build / "libcheckpoint.contract.json").read_text())["anchor"] + suffix
                 self.assertIn(anchor, mismatch.stderr)
                 (root / f"mismatch-{record}.stderr").write_text(mismatch.stderr)
             outputs = []

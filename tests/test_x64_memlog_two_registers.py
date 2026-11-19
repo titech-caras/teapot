@@ -319,7 +319,7 @@ class TwoRegisterNestedRollbackTests(unittest.TestCase):
                 mov qword ptr checkpoint_target_metadata, rax
                 lea rax, [rip + .L{label}_restored_{name}]
                 mov qword ptr [checkpoint_target_metadata + 8], rax
-                lea rax, [rip + branch_counter]
+                lea rax, [rip + branch_counter + {12 if label == "inner" else 0}]
                 mov qword ptr [checkpoint_target_metadata + 16], rax
                 jmp make_checkpoint_integer
             """

@@ -31,19 +31,23 @@ GUARDS = {"probe_outer": 0, "probe_inner": 1, "probe_inner_restored": 2}
 PUSH_REGISTERS = {"x64": ("rax",), "aarch64": ("x12", "x13"), "riscv64": ("t5", "t6")}
 
 
-def x64_probe(arch, count, taken):
+def x64_probe(arch, count, taken, *, branch_info=("je", ""), site_index=None):
     """test_nested_checkpoint_execution.probe for x64: one chain, two windows."""
     text, transient = uuid4(), uuid4()
     name = f"probe_{count}_{taken}"
+    if site_index is None:
+        site_index = 2 * count + taken
 
     def checkpoint(block):
-        return arch.checkpoint_patch(block, vector_case=0)(SimpleNamespace(scratch_registers=("rax",))).replace(
-            ".L__after_checkpoint__teapot__", f".Lafter_{block.hex}")
+        patch = arch.checkpoint_patch(block, vector_case=0, branch=branch_info, site_index=site_index)
+        return (patch(SimpleNamespace(scratch_registers=("rax",)))
+                .replace(".L__after_checkpoint__teapot__", f".Lafter_{block.hex}")
+                .replace(".L__checkpoint_taken__teapot__", f".Ltaken_{block.hex}"))
 
     counter = generate_distinct_label_name(".__branch_counter_", text)
     nested_counter = generate_distinct_label_name(".__branch_counter_", transient)
     fall, branch = f".Lfall_{name}", f".Lbranch_{name}"
-    trampoline = arch.trampoline_patch(text, transient, "je", "", fall, branch)(SimpleNamespace())
+    trampoline = arch.trampoline_patch(text, transient, *branch_info, fall, branch)(SimpleNamespace())
     condition = f"mov ecx, {1 - taken}\ncmp ecx, 0"
     return f"""
         .text
@@ -80,7 +84,7 @@ def x64_probe(arch, count, taken):
         .balign 4
         {counter}:
         {nested_counter}:
-            .long 0
+            .zero 12
         """
 
 
@@ -131,7 +135,8 @@ class CoverageExecutionTests(unittest.TestCase):
                 assembly = root / "probes.S"
                 assembly.write_text(program(arch))
                 executable = root / "probes"
-                command = [compiler, "-O2", "-no-pie", "-DENABLE_NESTED_SPECULATION", "-DDISABLE_DIFT_RUNTIME",
+                command = [compiler, "-O2", "-no-pie", "-DENABLE_NESTED_SPECULATION", "-DENABLE_HASHED_NESTED",
+                           "-DTEST_CONTRACT_REQUIRED=LIBCHECKPOINT_CAPABILITY_HASHED_NESTED", "-DDISABLE_DIFT_RUNTIME",
                            "-DDIFT_XOR_MASK=0", "-fno-stack-protector", "-DTEAPOT_SHADOW_MAPPING_ENFORCEMENT=1",
                            "-DCOVERAGE" if coverage else "-DEXPECT_NO_COVERAGE",
                            "-I", str(RUNTIME / "include"), "-I", str(contract / "include"),
@@ -141,7 +146,7 @@ class CoverageExecutionTests(unittest.TestCase):
                            str(RUNTIME / "tests/contract_module_record.c")]
                 command += [str(RUNTIME / "src" / source) for source in (
                     "checkpoint.c", "signal_handler.c", "fault_sites.c", "dift_support.c", "shadow_mapping.c", "report_gadget.c",
-                    "dift_wrappers/dift_wrappers.c")]
+                    "dift_wrappers/dift_wrappers.c", "nested_policy.c")]
                 if arch.name == "riscv64":
                     command += ["-Wl,--no-relax"]
                 result = subprocess.run(command + ["-o", str(executable), "-lm"], text=True, capture_output=True)

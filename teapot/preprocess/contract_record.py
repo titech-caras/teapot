@@ -40,9 +40,9 @@ RECORD_HEADER_SIZE = FAULT_SITES_OFFSET + 8
 
 def module_contract(contract, required_bits: int, options, component_id=None) -> dict:
     recorded_options = asdict(options)
-    # Paper records retain their byte-for-byte pre-policy representation.
-    if recorded_options.get("nested_policy") == "paper":
-        del recorded_options["nested_policy"]
+    if options.enable_nested_speculation:
+        # The emitted contract retains this field for existing hashed binaries.
+        recorded_options["nested_policy"] = "hashed"
     record = {
         "schema": "teapot-module-contract",
         "version": contract.version,

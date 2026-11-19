@@ -282,7 +282,7 @@ def chain_probe(arch, name, make_point, chain):
             mov qword ptr checkpoint_target_metadata, rax
             lea rax, [rip + .L{label}_restored_{name}]
             mov qword ptr [checkpoint_target_metadata + 8], rax
-            lea rax, [rip + branch_counter]
+            lea rax, [rip + branch_counter + {12 if label == "inner" else 0}]
             mov qword ptr [checkpoint_target_metadata + 16], rax
             jmp make_checkpoint_integer
         """
@@ -344,7 +344,8 @@ def run_with_x64_runtime(test, root, fixture, probes, header, name):
     (root / "cases.h").write_text(header)
     (root / "probe.S").write_text(".intel_syntax noprefix\n.text\n" + "".join(probes) +
                                   '\n.section .note.GNU-stack,"",@progbits\n')
-    command = ["cc", "-O2", "-no-pie", "-DENABLE_NESTED_SPECULATION", "-DDISABLE_DIFT_RUNTIME",
+    command = ["cc", "-O2", "-no-pie", "-DENABLE_NESTED_SPECULATION", "-DENABLE_HASHED_NESTED",
+               "-DTEST_CONTRACT_REQUIRED=LIBCHECKPOINT_CAPABILITY_HASHED_NESTED", "-DDISABLE_DIFT_RUNTIME",
                "-DDIFT_XOR_MASK=0", "-DTEAPOT_X64_VECTOR_MODE=0", "-fno-stack-protector",
                "-DTEAPOT_SHADOW_MAPPING_ENFORCEMENT=1",
                "-I", str(root), "-I", str(runtime / "include"), "-I", str(contract / "include"),
@@ -354,7 +355,7 @@ def run_with_x64_runtime(test, root, fixture, probes, header, name):
                str(runtime / "tests/contract_module_record.c")]
     command += [str(runtime / "src" / source) for source in (
         "checkpoint.c", "signal_handler.c", "fault_sites.c", "fault_x64.c", "dift_support.c", "shadow_mapping.c", "report_gadget.c",
-        "dift_wrappers/dift_wrappers.c")]
+        "dift_wrappers/dift_wrappers.c", "nested_policy.c")]
     build = subprocess.run(command + ["-o", str(root / name), "-lm"], text=True, capture_output=True)
     test.assertEqual(build.returncode, 0, build.stderr[-4000:])
     result = subprocess.run([str(root / name)], text=True, capture_output=True, timeout=60)

@@ -133,7 +133,7 @@ instruction anchors may be zero-size private CodeBlocks outside the function
 metadata; passes walking section blocks must ignore empty blocks.
 
 Teapot and the runtime share one contract. Configuring libcheckpoint writes
-`libcheckpoint.contract.json` beside each archive (`libcheckpoint_nested.contract.json`
+`libcheckpoint.contract.json` beside each archive (`libcheckpoint_nested_hashed.contract.json`
 for the nested one), with every layout fact both sides depend on, read from the
 runtime's compiled headers, and what that archive can do. Teapot needs the file
 of the archive the rewrite will be linked with (`--runtime-contract`), compares
@@ -262,7 +262,7 @@ sysroot is left unchanged.
 
 ## Usage
 
-Nested speculation defaults to the paper policy. To opt into per-outcome root sampling and hashed per-root tree sampling, use `--enable-nested-speculation --nested-policy hashed` with `libcheckpoint_nested_hashed.contract.json` and link `checkpoint_nested_hashed` (built alongside `checkpoint_nested` with `TEAPOT_BUILD_NESTED_RUNTIME=ON`). Hashed mode seeds from the bytes of `argv[1]`; `TEAPOT_NESTED_SEED=<hex u64>` overrides the seed for stdin or replay, and `VERBOSE` statistics print it.
+With `--enable-nested-speculation`, Teapot samples roots by branch outcome and uses hashed sampling inside each root. Configure libcheckpoint with `TEAPOT_BUILD_NESTED_RUNTIME=ON`, pass `libcheckpoint_nested_hashed.contract.json`, and link `checkpoint_nested_hashed`. The seed comes from the bytes of the file named by `argv[1]`. Set `TEAPOT_NESTED_SEED=<hex u64>` to supply a seed directly for stdin or replay. `VERBOSE` statistics print the seed.
 
 Hashed-mode automatic seeding reads only regular files; non-regular inputs use the no-input seed, so use `TEAPOT_NESTED_SEED` for streams.
 A speculative application store that aliases the hashed site records can corrupt or rewind their tree/generation state; this inherited runtime-state aliasing limitation is accepted.
@@ -350,9 +350,9 @@ semantics.
 
 Nested speculation is disabled by default.  Use
 `--enable-nested-speculation` to also insert checkpoints in the transient copy,
-and link the instrumented binary with the nested-capable `checkpoint_nested`
+and link the instrumented binary with the nested-capable `checkpoint_nested_hashed`
 runtime target rather than the default `checkpoint` target; pass its
-`libcheckpoint_nested.contract.json`.
+`libcheckpoint_nested_hashed.contract.json`.
 
 3. Dump the assembly of the instrumented GTIRB file. The pinned `gtirb-pprinter` prints the flags of
 Teapot's sections and its global symbols itself, so the output assembles as it is.
